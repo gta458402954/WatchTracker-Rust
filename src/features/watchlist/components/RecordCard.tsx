@@ -136,7 +136,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               {record.releaseYear && ` · ${record.releaseYear}`}
             </span>
             {record.genres && (() => {
-              const genresList = record.genres.split(',').map(g => translateGenre(g.trim())).filter(Boolean);
+              const genresList = record.genres.split(',').map(g => translateGenre(g.trim())).filter(g => g && g !== '未知' && g !== '未知类型');
               const hasOthers = genresList.some(g => g !== '剧情');
               const displayList = hasOthers ? genresList.filter(g => g !== '剧情') : genresList;
               const displayStr = displayList.slice(0, 2).join(',');
