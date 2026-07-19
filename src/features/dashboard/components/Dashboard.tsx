@@ -19,12 +19,30 @@ interface DashboardProps {
 
 const COLORS = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899', '#06B6D4', '#F97316'];
 
+const getCategoryEmoji = (category: string) => {
+  const defaults: Record<string, string> = {
+    "电影": "🎬",
+    "纪录片": "🌍",
+    "动画": "🦄",
+    "美剧": "🇺🇸",
+    "英剧": "🇬🇧",
+    "日剧": "🇯🇵",
+    "韩剧": "🇰🇷",
+    "国产剧": "🇨🇳",
+    "港剧": "🇭🇰",
+    "台剧": "🇹🇼",
+    "综艺": "🎭",
+  };
+  return defaults[category] || "🎬";
+};
+
 export default function Dashboard({ onClose, records }: DashboardProps) {
   const [totalStats, setTotalStats] = useState<any>(null);
   const [platforms, setPlatforms] = useState<any[]>([]);
   const [genres, setGenres] = useState<any[]>([]);
   const [eras, setEras] = useState<any[]>([]);
-  const [topShows, setTopShows] = useState<any[]>([]);
+  const [topRatedShow, setTopRatedShow] = useState<WatchRecord | null>(null);
+  const [recentActivity, setRecentActivity] = useState<WatchRecord[]>([]);
 
   useEffect(() => {
     // 计算统计指标
@@ -47,16 +65,31 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
     setGenres(getGenreDistribution(records));
     setEras(getEraDistribution(records));
 
-    // 计算最长影视剧集
-    const tvShows = records.filter(r => r.category !== '电影' && r.category !== '纪录片' && r.category !== '动画');
-    const sortedShows = tvShows.map(r => {
-      const episodes = r.totalEpisodes || 1;
-      const rt = r.episodeRuntime || 45;
-      const hours = Math.round((episodes * rt) / 60);
-      return { name: r.chineseName, hours };
-    }).sort((a, b) => b.hours - a.hours).slice(0, 5);
+    // 计算最佳资产 (殿堂神作)
+    const watchedShows = records.filter(r => r.status === '已看');
+    const ratedShows = watchedShows.filter(r => r.rating !== null && r.rating !== undefined);
     
-    setTopShows(sortedShows);
+    if (ratedShows.length > 0) {
+      // 按照评分降序，完结时间或创建时间降序排序
+      const sortedRated = [...ratedShows].sort((a, b) => {
+        const ratingDiff = (b.rating || 0) - (a.rating || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        const timeA = a.endDate || a.createdAt || '';
+        const timeB = b.endDate || b.createdAt || '';
+        return timeB.localeCompare(timeA);
+      });
+      setTopRatedShow(sortedRated[0]);
+    } else {
+      setTopRatedShow(null);
+    }
+
+    // 获取最近看完的 4 条记录
+    const sortedWatched = [...watchedShows].sort((a, b) => {
+      const timeA = a.endDate || a.createdAt || '';
+      const timeB = b.endDate || b.createdAt || '';
+      return timeB.localeCompare(timeA);
+    });
+    setRecentActivity(sortedWatched.slice(0, 4));
 
     // ESC 键退出
     const handler = (e: KeyboardEvent) => {
@@ -125,12 +158,16 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
             <p className="text-[10px] text-gray-400 mt-2">总计约 {Math.round(totalStats.runtime.totalMinutes / 60).toLocaleString()} 小时</p>
           </div>
 
-          {/* 卡片 4: 最长剧集 */}
-          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-4 relative overflow-hidden shadow-lg backdrop-blur-sm">
-            <div className="absolute top-0 right-0 p-4 opacity-10 text-4xl">👑</div>
-            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">重仓项目（最长剧集）</p>
-            <h3 className="text-lg font-bold text-white truncate" title={topShows[0]?.name}>{topShows[0]?.name || '-'}</h3>
-            <p className="text-[10px] text-gray-400 mt-2">投入约 <span className="text-purple-400 font-bold">{topShows[0]?.hours || 0}</span> 小时</p>
+          {/* 卡片 4: 殿堂神作 */}
+          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-4 relative overflow-hidden shadow-lg backdrop-blur-sm animate-fade-in">
+            <div className="absolute top-0 right-0 p-4 opacity-10 text-4xl">🏆</div>
+            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">殿堂神作</p>
+            <h3 className="text-lg font-bold text-white truncate" title={topRatedShow?.chineseName || '暂无评分'}>
+              {topRatedShow?.chineseName || '暂无评分'}
+            </h3>
+            <p className="text-[10px] text-gray-400 mt-2">
+              {topRatedShow ? `个人评分 ⭐ ${topRatedShow.rating}.0` : '期待你的第一个打分'}
+            </p>
           </div>
         </div>
 
@@ -218,6 +255,42 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
               </LineChart>
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* 近期动态板块 */}
+        <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 shadow-lg backdrop-blur-sm">
+          <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2 select-none">
+            <span className="w-1.5 h-3 bg-indigo-500 rounded-full"></span> ⚡ 近期动态
+          </h4>
+          {recentActivity.length === 0 ? (
+            <div className="text-center py-6 text-xs text-gray-500 select-none">
+              暂无近期已看影视记录
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {recentActivity.map(item => {
+                const watchDate = item.endDate || item.startDate || item.createdAt || '';
+                const displayDate = watchDate ? watchDate.slice(5, 10) || watchDate : '未知时间';
+                return (
+                  <div key={item.id} className="bg-gray-950/40 border border-gray-800/80 rounded-xl p-3.5 flex flex-col justify-between hover:border-indigo-500/50 transition-colors shadow-inner">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <span className="text-lg select-none shrink-0">{getCategoryEmoji(item.category)}</span>
+                      <div className="min-w-0">
+                        <h5 className="text-sm font-semibold text-white truncate" title={item.chineseName}>{item.chineseName}</h5>
+                        <p className="text-[10px] text-gray-500 mt-1 font-mono">{displayDate} 看完</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between border-t border-gray-900/60 pt-2.5">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">{item.category}</span>
+                      <span className="text-xs text-amber-500 font-bold">
+                        {item.rating ? '★'.repeat(item.rating) : '未打分'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
       </div>
