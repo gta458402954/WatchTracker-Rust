@@ -5,6 +5,40 @@ import { open } from '@tauri-apps/plugin-shell';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+const translateGenre = (genre: string): string => {
+  const mapping: Record<string, string> = {
+    // 电视剧类型 (TV Show Genres)
+    "Sci-Fi & Fantasy": "科幻/奇幻",
+    "Action & Adventure": "动作/冒险",
+    "War & Politics": "战争/政治",
+    "Reality": "真人秀",
+    "Soap": "肥皂剧",
+    "Talk": "脱口秀",
+    
+    // 电影及通用类型 (Movie & Common Genres)
+    "Science Fiction": "科幻",
+    "Fantasy": "奇幻",
+    "Action": "动作",
+    "Adventure": "冒险",
+    "Drama": "剧情",
+    "Comedy": "喜剧",
+    "Thriller": "惊悚",
+    "Horror": "恐怖",
+    "Mystery": "悬疑",
+    "Crime": "犯罪",
+    "Documentary": "纪录片",
+    "Animation": "动画",
+    "Family": "家庭",
+    "History": "历史",
+    "Music": "音乐",
+    "Romance": "爱情",
+    "TV Movie": "电视电影",
+    "War": "战争",
+    "Western": "西部",
+  };
+  return mapping[genre] || genre;
+};
+
 interface RecordCardProps {
   record: WatchRecord;
   onEdit: (record: WatchRecord) => void;
@@ -102,7 +136,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               {record.releaseYear && ` · ${record.releaseYear}`}
             </span>
             {record.genres && (() => {
-              const genresList = record.genres.split(',').map(g => g.trim()).filter(Boolean);
+              const genresList = record.genres.split(',').map(g => translateGenre(g.trim())).filter(Boolean);
               const hasOthers = genresList.some(g => g !== '剧情');
               const displayList = hasOthers ? genresList.filter(g => g !== '剧情') : genresList;
               const displayStr = displayList.slice(0, 2).join(',');
