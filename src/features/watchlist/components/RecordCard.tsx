@@ -280,12 +280,17 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
       </div>
 
       {/* Rating */}
-      <div className="flex items-center justify-between text-sm">
-        <div className="text-amber-500 text-sm tracking-wider">
-          {record.rating !== null
-            ? <>{'★'.repeat(record.rating)}<span className="text-gray-300">{'★'.repeat(5 - record.rating)}</span></>
-            : <span className="text-gray-300 text-xs">暂未评分</span>
-          }
+      <div className="flex items-center justify-between text-sm select-none">
+        <div className="flex items-center gap-1 font-medium">
+          {record.rating !== null ? (
+            <>
+              <span className="text-amber-500 text-sm">★</span>
+              <span className="font-bold text-amber-600 text-sm">{record.rating}</span>
+              <span className="text-gray-400 text-xs">/10</span>
+            </>
+          ) : (
+            <span className="text-gray-300 text-xs">暂未评分</span>
+          )}
         </div>
         <div className="text-xs text-gray-400 flex items-center gap-1">
           {record.startDate && <span>▶ {record.startDate}</span>}

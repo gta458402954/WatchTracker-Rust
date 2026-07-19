@@ -746,13 +746,13 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
           ) : (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">评分</label>
-              <div className="flex gap-2 items-center">
-                {[1, 2, 3, 4, 5].map(star => (
+              <div className="flex gap-1.5 items-center flex-wrap">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
                   <button
                     key={star}
                     type="button"
                     onClick={() => set('rating', form.rating === star ? null : star)}
-                    className={`text-2xl transition-transform hover:scale-110 ${
+                    className={`text-xl transition-transform hover:scale-110 ${
                       form.rating != null && star <= (form.rating ?? 0)
                         ? 'text-amber-400'
                         : 'text-gray-200 hover:text-amber-300'
@@ -762,8 +762,8 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
                   </button>
                 ))}
                 {form.rating != null && (
-                  <span className="text-sm text-gray-400 ml-1">
-                    {['', '一般', '还行', '不错', '很好', '极好'][form.rating ?? 0]}
+                  <span className="text-xs text-gray-500 ml-1.5 font-medium bg-gray-50 border border-gray-150 px-2 py-0.5 rounded-md">
+                    {['', '很差 (1/10)', '差 (2/10)', '较差 (3/10)', '一般 (4/10)', '还行 (5/10)', '较好 (6/10)', '好 (7/10)', '很好 (8/10)', '超棒 (9/10)', '神作 (10/10)'][form.rating ?? 0]}
                   </span>
                 )}
               </div>

@@ -283,7 +283,7 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
                     <div className="mt-3 flex items-center justify-between border-t border-gray-900/60 pt-2.5">
                       <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">{item.category}</span>
                       <span className="text-xs text-amber-500 font-bold">
-                        {item.rating ? '★'.repeat(item.rating) : '未打分'}
+                        {item.rating ? `★ ${item.rating}/10` : '未打分'}
                       </span>
                     </div>
                   </div>

@@ -203,9 +203,13 @@ fn setup_db(conn: &Connection) -> Result<()> {
         ", [])?;
     }
 
+    if current_version < 9 {
+        conn.execute("UPDATE records SET rating = rating * 2 WHERE rating IS NOT NULL AND rating >= 1 AND rating <= 5;", [])?;
+    }
+
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
-        params!["8"],
+        params!["9"],
     )?;
 
     Ok(())
