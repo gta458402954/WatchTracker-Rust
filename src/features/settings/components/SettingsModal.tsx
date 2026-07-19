@@ -7,6 +7,33 @@ import {
 import type { CategoryItem } from '../../categories/hooks/useCategories';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../../../shared/lib/database';
 
+const POPULAR_EMOJIS = ['🎬', '📺', '🎭', '🍿', '🌍', '👾', '🦄', '🇺🇸', '🇬🇧', '🇯🇵', '🇰🇷', '🇨🇳', '🇭🇰', '🇹🇼', '🏷️'];
+
+const isEmoji = (str: string) => {
+  if (!str) return false;
+  const wordRegex = /[\u4e00-\u9fa5a-zA-Z0-9]/;
+  return !wordRegex.test(str);
+};
+
+const getBgColor = (name: string) => {
+  const colors = [
+    'bg-red-50 text-red-600 border-red-100',
+    'bg-amber-50 text-amber-600 border-amber-100',
+    'bg-emerald-50 text-emerald-600 border-emerald-100',
+    'bg-blue-50 text-blue-600 border-blue-100',
+    'bg-indigo-50 text-indigo-600 border-indigo-100',
+    'bg-purple-50 text-purple-600 border-purple-100',
+    'bg-rose-50 text-rose-600 border-rose-100',
+    'bg-sky-50 text-sky-600 border-sky-100',
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % colors.length;
+  return colors[index];
+};
+
 interface SettingsModalProps {
   onClose: () => void;
   records: WatchRecord[];
@@ -713,59 +740,123 @@ export default function SettingsModal({
                   <span className="text-2xl">➕</span>
                   <div>
                     <h4 className="font-bold text-gray-800">添加新分类</h4>
-                    <p className="text-[11px] text-gray-400">输入你自定义的影视大类及其对应专属表情符</p>
+                    <p className="text-[11px] text-gray-400">输入自定义的影视类别，可选配一个专属表情图标</p>
                   </div>
                 </div>
-                <div className="flex gap-3">
-                  <input
-                    type="text"
-                    value={newCatName}
-                    onChange={(e) => setNewCatName(e.target.value)}
-                    placeholder="分类名称 (如：科幻剧)"
-                    className="flex-1 px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  />
-                  <input
-                    type="text"
-                    value={newCatEmoji}
-                    onChange={(e) => setNewCatEmoji(e.target.value)}
-                    placeholder="Emoji"
-                    className="w-20 px-2 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-center transition-all"
-                  />
-                  <button
-                    onClick={handleAddCategory}
-                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors"
-                  >
-                    添加
-                  </button>
+                <div className="space-y-3">
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      placeholder="分类名称 (如：科幻剧)"
+                      className="flex-1 px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                    />
+                    <input
+                      type="text"
+                      value={newCatEmoji}
+                      onChange={(e) => setNewCatEmoji(e.target.value)}
+                      placeholder="图标 (如 🎬)"
+                      className="w-24 px-2 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-center transition-all"
+                    />
+                    <button
+                      onClick={handleAddCategory}
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
+                    >
+                      添加分类
+                    </button>
+                  </div>
+
+                  {/* Preset Emojis Selector */}
+                  <div className="flex flex-wrap gap-1.5 pt-1.5 items-center">
+                    <span className="text-[11px] font-bold text-gray-400 mr-1 select-none">快捷图标:</span>
+                    {POPULAR_EMOJIS.map(em => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setNewCatEmoji(em)}
+                        className={`w-7 h-7 flex items-center justify-center rounded-lg border text-sm hover:bg-indigo-50 hover:border-indigo-200 transition-all select-none ${
+                          newCatEmoji === em ? 'bg-indigo-50 border-indigo-300 scale-105 shadow-sm' : 'bg-gray-50 border-gray-150'
+                        }`}
+                      >
+                        {em}
+                      </button>
+                    ))}
+                    {newCatEmoji && (
+                      <button
+                        type="button"
+                        onClick={() => setNewCatEmoji('')}
+                        className="text-[10px] text-gray-400 hover:text-red-500 font-bold ml-1 transition-colors"
+                      >
+                        清除选择
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* Categories list */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
                 <h4 className="font-bold text-gray-800 border-b border-gray-50 pb-3">已有分类列表</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
                   {categories.map(cat => (
-                    <div key={cat.name} className="flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-2xl p-3.5 hover:border-gray-200 transition-colors">
+                    <div key={cat.name} className="flex items-center gap-3.5 bg-gray-50 border border-gray-100 rounded-2xl p-4 hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all duration-200">
                       {editingCat === cat.name ? (
-                        <div className="flex gap-2 w-full items-center">
-                          <input
-                            type="text"
-                            value={editCatName}
-                            onChange={(e) => setEditCatName(e.target.value)}
-                            className="flex-1 px-2.5 py-1 text-xs border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none animate-fade-in"
-                          />
-                          <input
-                            type="text"
-                            value={editCatEmoji}
-                            onChange={(e) => setEditCatEmoji(e.target.value)}
-                            className="w-12 px-1 py-1 text-xs border rounded-lg text-center focus:ring-2 focus:ring-indigo-500 outline-none animate-fade-in"
-                          />
-                          <button onClick={handleSaveEdit} className="px-2.5 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold rounded-lg shadow-sm">保存</button>
-                          <button onClick={() => setEditingCat(null)} className="px-2.5 py-1.5 bg-gray-200 text-gray-600 text-[10px] font-bold rounded-lg">取消</button>
+                        <div className="flex flex-col gap-2.5 w-full">
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              value={editCatName}
+                              onChange={(e) => setEditCatName(e.target.value)}
+                              className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+                            />
+                            <input
+                              type="text"
+                              value={editCatEmoji}
+                              onChange={(e) => setEditCatEmoji(e.target.value)}
+                              placeholder="Emoji"
+                              className="w-16 px-2 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-center transition-all outline-none"
+                            />
+                            <button onClick={handleSaveEdit} className="px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-xl shadow-sm transition-colors">保存</button>
+                            <button onClick={() => setEditingCat(null)} className="px-3.5 py-2 bg-gray-250 hover:bg-gray-300 text-gray-700 text-xs font-bold rounded-xl transition-colors">取消</button>
+                          </div>
+                          
+                          {/* Edit Preset Emojis Selector */}
+                          <div className="flex flex-wrap gap-1 items-center">
+                            {POPULAR_EMOJIS.map(em => (
+                              <button
+                                key={em}
+                                type="button"
+                                onClick={() => setEditCatEmoji(em)}
+                                className={`w-6 h-6 flex items-center justify-center rounded border text-xs hover:bg-indigo-50 hover:border-indigo-200 transition-all select-none ${
+                                  editCatEmoji === em ? 'bg-indigo-50 border-indigo-300 scale-105' : 'bg-white border-gray-150'
+                                }`}
+                              >
+                                {em}
+                              </button>
+                            ))}
+                            {editCatEmoji && (
+                              <button
+                                type="button"
+                                onClick={() => setEditCatEmoji('')}
+                                className="text-[10px] text-gray-400 hover:text-red-500 font-bold ml-1 transition-colors"
+                              >
+                                清除
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <>
-                          <span className="w-8 h-8 flex items-center justify-center rounded-xl bg-white shadow-sm border border-gray-100 text-lg select-none">{cat.emoji}</span>
+                          {isEmoji(cat.emoji) ? (
+                            <span className="w-10 h-10 flex items-center justify-center rounded-2xl bg-white shadow-sm border border-gray-100 text-xl select-none shrink-0 transition-transform hover:scale-105">
+                              {cat.emoji}
+                            </span>
+                          ) : (
+                            <span className={`w-10 h-10 flex items-center justify-center rounded-2xl border text-sm font-bold select-none shrink-0 transition-transform hover:scale-105 ${getBgColor(cat.name)}`}>
+                              {cat.name.charAt(0)}
+                            </span>
+                          )}
                           <span className="flex-1 text-sm font-semibold text-gray-700 select-none">{cat.name}</span>
                           <div className="flex items-center gap-1.5">
                             <button
