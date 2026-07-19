@@ -101,11 +101,18 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               {getEmoji ? getEmoji(record.category) : record.category}
               {record.releaseYear && ` · ${record.releaseYear}`}
             </span>
-            {record.genres && (
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={record.genres}>
-                {record.genres.split(',').slice(0, 2).join(',')}
-              </span>
-            )}
+            {record.genres && (() => {
+              const genresList = record.genres.split(',').map(g => g.trim()).filter(Boolean);
+              const hasOthers = genresList.some(g => g !== '剧情');
+              const displayList = hasOthers ? genresList.filter(g => g !== '剧情') : genresList;
+              const displayStr = displayList.slice(0, 2).join(',');
+              
+              return displayStr ? (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={record.genres}>
+                  {displayStr}
+                </span>
+              ) : null;
+            })()}
             {record.imdbId && (
               <a
                 href={`https://www.imdb.com/title/${record.imdbId}/`}
