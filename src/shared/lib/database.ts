@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord } from '../types';
-import { CategoryItem } from '../hooks/useCategories';
+import { CategoryItem } from '../../features/categories/hooks/useCategories';
 
 export async function initDatabase(): Promise<void> {
   // Tauri 后端在 setup 中自动初始化
@@ -16,6 +16,7 @@ export async function insertRecord(r: WatchRecord) {
     await invoke('insert_record', { r });
   } catch (err) {
     console.error('[DB] Insert record failed:', err);
+    throw err;
   }
 }
 
@@ -24,6 +25,7 @@ export async function updateRecord(id: string, updates: Partial<WatchRecord>) {
     await invoke('update_record', { id, updates });
   } catch (err) {
     console.error('[DB] Update record failed:', err);
+    throw err;
   }
 }
 
@@ -32,6 +34,7 @@ export async function deleteRecord(id: string) {
     await invoke('delete_record', { id });
   } catch (err) {
     console.error('[DB] Delete record failed:', err);
+    throw err;
   }
 }
 
@@ -73,6 +76,14 @@ export async function reorderCategories(names: string[]) {
     await invoke('reorder_categories', { names });
   } catch (err) {
     console.error('[DB] Reorder categories failed:', err);
+  }
+}
+
+export async function reorderRecords(ids: string[]) {
+  try {
+    await invoke('reorder_records', { ids });
+  } catch (err) {
+    console.error('[DB] Reorder records failed:', err);
   }
 }
 

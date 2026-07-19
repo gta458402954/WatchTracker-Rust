@@ -21,7 +21,16 @@ export interface WatchRecord {
   category: Category;
   notes: string;
   createdAt: string;
+  imdbId: string | null;
+  isLocked?: boolean;
+  sortOrder?: number;
+  genres?: string | null;
+  originCountry?: string | null;
+  imdbRating?: number | null;
+  tmdbStatus?: string | null;
+  interestLevel?: number | null;
+  episodeRuntime?: number | null;
 }
 
-export type SortField = 'chineseName' | 'status' | 'rating' | 'startDate' | 'endDate' | 'createdAt';
+export type SortField = 'chineseName' | 'status' | 'rating' | 'startDate' | 'endDate' | 'createdAt' | 'watchValue';
 export type SortOrder = 'asc' | 'desc';

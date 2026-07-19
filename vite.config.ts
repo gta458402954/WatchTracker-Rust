@@ -17,6 +17,9 @@ export default defineConfig({
     port: 5173,
     // Tauri 需要固定的端口
     strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/**'],
+    },
   },
   // 环境变量前缀
   envPrefix: ['VITE_', 'TAURI_'],

@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { WatchRecord, Category, Status } from '../types';
-import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../utils/constants';
-import type { CategoryItem } from '../hooks/useCategories';
-import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../utils/database';
+import { WatchRecord, Category, Status } from '../../../shared/types';
+import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
+import type { CategoryItem } from '../../categories/hooks/useCategories';
+import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
   categories: CategoryItem[];
-  onSave: (data: Omit<WatchRecord, 'id' | 'createdAt'>) => void;
+  onSave: (data: Omit<WatchRecord, 'id' | 'createdAt'>) => Promise<boolean | void> | boolean | void;
+  onDelete?: (id: string) => void;
   onClose: () => void;
 }
 
@@ -47,7 +48,7 @@ function smartProgress(raw: string): string {
   return t;
 }
 
-export default function RecordForm({ record, categories, onSave, onClose }: RecordFormProps) {
+export default function RecordForm({ record, categories, onSave, onDelete, onClose }: RecordFormProps) {
   const [form, setForm] = useState<Omit<WatchRecord, 'id' | 'createdAt'>>(
     record
       ? {
@@ -66,6 +67,13 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
           endDate: record.endDate,
           category: record.category,
           notes: record.notes,
+          imdbId: record.imdbId || null,
+          genres: record.genres || null,
+          originCountry: record.originCountry || null,
+          imdbRating: record.imdbRating || null,
+          tmdbStatus: record.tmdbStatus || null,
+          interestLevel: record.interestLevel || null,
+          episodeRuntime: record.episodeRuntime || null,
         }
       : getEmptyRecord()
   );
@@ -106,7 +114,7 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
   }
 
   async function handleTMDBSearch() {
-    let query = form.chineseName || form.originalName;
+    let query = form.imdbId || form.chineseName || form.originalName;
     if (!query) return;
 
     // 智能清洗搜索词：去掉“第x季”、“Season x”等干扰词，因为 TMDB 搜索剧集名时不带季节
@@ -157,15 +165,19 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
     const API_KEY = await getTMDBApiKey();
     if (!API_KEY) return;
 
-    const isTV = isTVCategory(form.category);
+    let type = item.media_type || (isTVCategory(form.category) ? 'tv' : 'movie');
+    const isSeason = type === 'tv_season';
+    const isEpisode = type === 'tv_episode';
+    const isTV = type === 'tv' || isSeason || isEpisode;
+    const fetchId = isSeason || isEpisode ? item.show_id : item.id;
+    const fetchType = isSeason || isEpisode ? 'tv' : type;
 
     try {
       setSearchError(null);
-      const type = isTV ? 'tv' : 'movie';
       const result = await getTmdbDetailAsync({
         apiKey: API_KEY,
-        id: item.id,
-        mediaType: type,
+        id: fetchId,
+        mediaType: fetchType,
         language: 'zh-CN'
       });
 
@@ -174,6 +186,57 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
         return;
       }
       const detail = result.data;
+
+      if (isSeason || isEpisode) {
+        const targetSeason = detail.seasons?.find((s: any) => s.season_number === item.season_number) || item;
+        const seriesName = detail.name || detail.title;
+        const seriesOriginalName = detail.original_name || detail.original_title;
+        const year = targetSeason.air_date ? targetSeason.air_date.split('-')[0] : (detail.first_air_date?.split('-')[0] || null);
+        const poster = targetSeason.poster_path || detail.poster_path || null;
+        
+        if (poster) downloadPosterAsync(poster);
+        
+        let query = form.imdbId || form.chineseName || form.originalName || '';
+        
+        const originCountry = detail.origin_country?.join(', ') || null;
+        let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
+        if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
+          networkName = '';
+        } else {
+          if (networkName === 'CBS All Access') networkName = 'CBS';
+          if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
+        }
+        const genres = detail.genres?.map((g: any) => g.name).join(', ') || null;
+        
+        const updates: any = {
+          chineseName: `${seriesName} ${targetSeason.name || `第 ${targetSeason.season_number} 季`}`,
+          originalName: `${seriesOriginalName} Season ${targetSeason.season_number}`,
+          totalEpisodes: targetSeason.episode_count || null,
+          releaseYear: year,
+          posterPath: poster,
+          imdbId: query.startsWith('tt') ? query : (detail.external_ids?.imdb_id || detail.imdb_id || form.imdbId),
+          genres,
+          originCountry,
+          imdbRating: detail.vote_average || null,
+          tmdbStatus: detail.status || null,
+          episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
+        };
+        
+        if (networkName && (!form.platform || form.platform.trim() === '')) {
+          updates.platform = networkName;
+        }
+        
+        if (isEpisode && item.episode_number) {
+          updates.progress = `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`;
+        }
+        
+        setForm(prev => ({
+          ...prev,
+          ...updates
+        }));
+        setShowResults(false);
+        return;
+      }
 
       if (isTV && detail.seasons && detail.seasons.length > 0) {
         // 如果是电视剧且有多季，展示季节选择
@@ -190,18 +253,43 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
       // 触发后台下载海报
       if (poster) downloadPosterAsync(poster);
 
+      const originCountry = detail.origin_country?.join(', ') || null;
+      let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
+      if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
+        networkName = '';
+      } else {
+        if (networkName === 'CBS All Access') networkName = 'CBS';
+        if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
+      }
+      const genres = detail.genres?.map((g: any) => g.name).join(', ') || null;
+
       // 电影或单季剧集直接填充
       const updates: Partial<typeof form> = {
         chineseName: detail.name || detail.title || item.name || item.title || form.chineseName,
         originalName: detail.original_name || detail.original_title || item.original_name || item.original_title || form.originalName,
         releaseYear: year,
         posterPath: poster,
+        genres,
+        originCountry,
+        imdbRating: detail.vote_average || null,
+        tmdbStatus: detail.status || null,
+        episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
       };
+
+      if (networkName && (!form.platform || form.platform.trim() === '')) {
+        updates.platform = networkName;
+      }
 
       if (isTV) {
         updates.totalEpisodes = detail.number_of_episodes || null;
       } else {
         updates.movieDuration = detail.runtime ? detail.runtime * 60 : null;
+      }
+
+      if (detail.external_ids?.imdb_id) {
+        updates.imdbId = detail.external_ids.imdb_id;
+      } else if (detail.imdb_id) {
+        updates.imdbId = detail.imdb_id;
       }
 
       setForm(prev => ({ ...prev, ...updates }));
@@ -222,6 +310,16 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
     // 触发后台下载海报
     if (poster) downloadPosterAsync(poster);
 
+    const originCountry = selectedSeries.origin_country?.join(', ') || null;
+    let networkName = selectedSeries.networks?.[0]?.name || selectedSeries.production_companies?.[0]?.name;
+    if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
+      networkName = '';
+    } else {
+      if (networkName === 'CBS All Access') networkName = 'CBS';
+      if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
+    }
+    const genres = selectedSeries.genres?.map((g: any) => g.name).join(', ') || null;
+
     setForm(prev => ({
       ...prev,
       chineseName: `${seriesName} ${season.name || `第 ${season.season_number} 季`}`,
@@ -229,6 +327,13 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
       totalEpisodes: season.episode_count || null,
       releaseYear: year,
       posterPath: poster,
+      imdbId: selectedSeries.external_ids?.imdb_id || selectedSeries.imdb_id || prev.imdbId,
+      genres,
+      originCountry,
+      imdbRating: selectedSeries.vote_average || null,
+      tmdbStatus: selectedSeries.status || null,
+      episodeRuntime: selectedSeries.episode_run_time?.[0] || selectedSeries.runtime || 0,
+      ...(networkName && (!prev.platform || prev.platform.trim() === '') ? { platform: networkName } : {}),
     }));
     setShowResults(false);
     setSeasons([]);
@@ -260,11 +365,13 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
     }
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.chineseName.trim() && !form.originalName.trim()) return;
-    onSave(form);
-    onClose();
+    const result = await onSave(form);
+    if (result !== false) {
+      onClose();
+    }
   }
 
   return (
@@ -407,7 +514,11 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
                           <div className="w-10 h-14 bg-gray-100 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-400">无图</div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-bold text-gray-900 truncate">{item.title || item.name}</div>
+                          <div className="text-sm font-bold text-gray-900 truncate">
+                            {item.media_type === 'movie' && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded mr-1">电影</span>}
+                            {item.media_type === 'tv' && <span className="text-[10px] bg-green-100 text-green-600 px-1 py-0.5 rounded mr-1">剧集</span>}
+                            {item.title || item.name}
+                          </div>
                           <div className="text-xs text-gray-400 truncate">{item.original_title || item.original_name}</div>
                           <div className="text-[10px] text-gray-400 mt-1">
                             {item.release_date || item.first_air_date || '未知日期'}
@@ -472,6 +583,19 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            
+            {/* IMDb ID */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">IMDb ID</label>
+              <input
+                type="text"
+                value={form.imdbId || ''}
+                onChange={e => set('imdbId', e.target.value || null)}
+                placeholder="如 tt0111161"
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+              />
+            </div>
+            
             {!isMovieCategory(form.category) && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -575,48 +699,76 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
             </div>
           )}
 
-          {/* Quick progress hint - Optional, keeping for clarity if needed, or remove completely */}
           {/* Platform */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">平台</label>
-            <input
-              type="text"
-              value={form.platform}
-              onChange={e => set('platform', e.target.value)}
-              placeholder="Netflix / 爱奇艺 / B站..."
-              list="platform-list"
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
-            />
-            <datalist id="platform-list">
-              {PLATFORMS.map(p => <option key={p} value={p} />)}
-            </datalist>
-          </div>
-
-          {/* Rating */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">评分</label>
-            <div className="flex gap-2 items-center">
-              {[1, 2, 3, 4, 5].map(star => (
-                <button
-                  key={star}
-                  type="button"
-                  onClick={() => set('rating', form.rating === star ? null : star)}
-                  className={`text-2xl transition-transform hover:scale-110 ${
-                    form.rating !== null && star <= form.rating
-                      ? 'text-amber-400'
-                      : 'text-gray-200 hover:text-amber-300'
-                  }`}
-                >
-                  ★
-                </button>
-              ))}
-              {form.rating !== null && (
-                <span className="text-sm text-gray-400 ml-1">
-                  {['', '一般', '还行', '不错', '很好', '极好'][form.rating]}
-                </span>
-              )}
+          {form.category !== '电影' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">平台</label>
+              <input
+                type="text"
+                value={form.platform}
+                onChange={e => set('platform', e.target.value)}
+                placeholder="Netflix / 爱奇艺 / B站..."
+                list="platform-list"
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+              />
+              <datalist id="platform-list">
+                {PLATFORMS.map(p => <option key={p} value={p} />)}
+              </datalist>
             </div>
-          </div>
+          )}
+
+          {/* Rating / Interest Level */}
+          {form.status === '未看' ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">期待值 (Watch Value)</label>
+              <div className="flex gap-2 items-center">
+                {[1, 2, 3, 4, 5].map(star => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => set('interestLevel', form.interestLevel === star ? null : star)}
+                    className={`text-2xl transition-transform hover:scale-110 ${
+                      form.interestLevel != null && star <= (form.interestLevel ?? 0)
+                        ? 'text-rose-400'
+                        : 'text-gray-200 hover:text-rose-300'
+                    }`}
+                  >
+                    ❤
+                  </button>
+                ))}
+                {form.interestLevel != null && (
+                  <span className="text-sm text-gray-400 ml-1">
+                    {['', '随便看看', '有点兴趣', '值得一看', '非常期待', '必看神作'][form.interestLevel ?? 0]}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">评分</label>
+              <div className="flex gap-2 items-center">
+                {[1, 2, 3, 4, 5].map(star => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => set('rating', form.rating === star ? null : star)}
+                    className={`text-2xl transition-transform hover:scale-110 ${
+                      form.rating != null && star <= (form.rating ?? 0)
+                        ? 'text-amber-400'
+                        : 'text-gray-200 hover:text-amber-300'
+                    }`}
+                  >
+                    ★
+                  </button>
+                ))}
+                {form.rating != null && (
+                  <span className="text-sm text-gray-400 ml-1">
+                    {['', '一般', '还行', '不错', '很好', '极好'][form.rating ?? 0]}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Dates */}
           <div className="grid grid-cols-2 gap-3">
@@ -654,6 +806,15 @@ export default function RecordForm({ record, categories, onSave, onClose }: Reco
 
           {/* Buttons */}
           <div className="flex gap-3 pt-2">
+            {record && onDelete && (
+              <button
+                type="button"
+                onClick={() => { onDelete(record.id); onClose(); }}
+                className="px-4 py-2.5 rounded-xl border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+              >
+                删除
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}

@@ -49,6 +49,7 @@ fn setup_logging(app_handle: &tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .register_uri_scheme_protocol("poster", |context, request| {
             let path = request.uri().path();
             let file_name = path.trim_start_matches('/');
@@ -108,6 +109,7 @@ pub fn run() {
             commands::delete_category,
             commands::rename_category,
             commands::reorder_categories,
+            commands::reorder_records,
             commands::get_setting,
             commands::set_setting,
             commands::vacuum_db,
@@ -116,6 +118,7 @@ pub fn run() {
             commands::search_tmdb,
             commands::get_tmdb_detail,
             commands::download_poster,
+            commands::webdav_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

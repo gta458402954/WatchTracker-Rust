@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WatchTracker",
   "version": "1.0.0",
-  "identifier": "com.watchtracker.app",
+  "identifier": "com.watchtracker.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:5173",

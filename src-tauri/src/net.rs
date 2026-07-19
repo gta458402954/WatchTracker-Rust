@@ -6,8 +6,13 @@ use tauri::AppHandle;
 use tauri::Manager;
 use serde_json::Value;
 
-pub async fn search_tmdb(api_key: String, query: String, media_type: String, language: String, proxy: Option<String>) -> Result<Value, String> {
-    log::info!("[TMDB] Searching {} for: {}", media_type, query);
+pub async fn search_tmdb(api_key: String, query: String, _media_type: String, language: String, proxy: Option<String>) -> Result<Value, String> {
+    let is_imdb_id = query.starts_with("tt") && query.len() > 2 && query[2..].chars().all(|c| c.is_ascii_digit());
+    if is_imdb_id {
+        log::info!("[TMDB] IMDb ID Searching for: {}", query);
+    } else {
+        log::info!("[TMDB] Multi Searching for: {}", query);
+    }
     
     let mut builder = Client::builder();
     if let Some(p) = proxy {
@@ -17,12 +22,34 @@ pub async fn search_tmdb(api_key: String, query: String, media_type: String, lan
     }
     let client = builder.build().map_err(|e| e.to_string())?;
 
-    let url = format!(
-        "https://api.themoviedb.org/3/search/{}?api_key={}&query={}&language={}&include_adult=false",
-        media_type, api_key, urlencoding::encode(&query), language
-    );
+    let is_jwt = api_key.contains('.') || api_key.len() > 40;
 
-    let res = client.get(url).send().await.map_err(|e| {
+    let url = if is_imdb_id {
+        if is_jwt {
+            format!("https://api.themoviedb.org/3/find/{}?external_source=imdb_id&language={}", query, language)
+        } else {
+            format!("https://api.themoviedb.org/3/find/{}?api_key={}&external_source=imdb_id&language={}", query, api_key, language)
+        }
+    } else {
+        if is_jwt {
+            format!(
+                "https://api.themoviedb.org/3/search/multi?query={}&language={}&include_adult=false",
+                urlencoding::encode(&query), language
+            )
+        } else {
+            format!(
+                "https://api.themoviedb.org/3/search/multi?api_key={}&query={}&language={}&include_adult=false",
+                api_key, urlencoding::encode(&query), language
+            )
+        }
+    };
+
+    let mut req = client.get(&url).header("accept", "application/json");
+    if is_jwt {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+
+    let res = req.send().await.map_err(|e| {
         let err = format!("Network error: {}", e);
         log::error!("[TMDB] {}", err);
         err
@@ -45,22 +72,131 @@ pub async fn search_tmdb(api_key: String, query: String, media_type: String, lan
         return Err(err);
     }
 
+    let mut final_json = json;
+
+    // 如果是 IMDb ID，转换结果格式使其与 search/multi 一致
+    if is_imdb_id {
+        let mut combined_results = Vec::new();
+        if let Some(movies) = final_json.get("movie_results").and_then(|r| r.as_array()) {
+            for m in movies {
+                let mut item = m.clone();
+                if item.get("media_type").is_none() {
+                    item["media_type"] = serde_json::json!("movie");
+                }
+                combined_results.push(item);
+            }
+        }
+        if let Some(tvs) = final_json.get("tv_results").and_then(|r| r.as_array()) {
+            for t in tvs {
+                let mut item = t.clone();
+                if item.get("media_type").is_none() {
+                    item["media_type"] = serde_json::json!("tv");
+                }
+                combined_results.push(item);
+            }
+        }
+        if let Some(seasons) = final_json.get("tv_season_results").and_then(|r| r.as_array()) {
+            for s in seasons {
+                let mut item = s.clone();
+                if item.get("media_type").is_none() {
+                    item["media_type"] = serde_json::json!("tv_season");
+                }
+                combined_results.push(item);
+            }
+        }
+        if let Some(episodes) = final_json.get("tv_episode_results").and_then(|r| r.as_array()) {
+            for e in episodes {
+                let mut item = e.clone();
+                if item.get("media_type").is_none() {
+                    item["media_type"] = serde_json::json!("tv_episode");
+                }
+                combined_results.push(item);
+            }
+        }
+        final_json = serde_json::json!({
+            "results": combined_results
+        });
+    }
+
     // 如果中文没搜到，尝试英文
-    if let Some(results) = json.get("results").and_then(|r| r.as_array()) {
+    if let Some(results) = final_json.get("results").and_then(|r| r.as_array()) {
         if results.is_empty() && language != "en-US" {
              log::info!("[TMDB] No zh-CN results, trying en-US...");
-             let en_url = format!(
-                "https://api.themoviedb.org/3/search/{}?api_key={}&query={}&include_adult=false",
-                media_type, api_key, urlencoding::encode(&query)
-            );
-            let en_res = client.get(en_url).send().await.map_err(|e| e.to_string())?;
-            let en_json: Value = en_res.json().await.map_err(|e| e.to_string())?;
+             let en_url = if is_imdb_id {
+                 if is_jwt {
+                     format!("https://api.themoviedb.org/3/find/{}?external_source=imdb_id&language=en-US", query)
+                 } else {
+                     format!("https://api.themoviedb.org/3/find/{}?api_key={}&external_source=imdb_id&language=en-US", query, api_key)
+                 }
+             } else {
+                 if is_jwt {
+                     format!(
+                         "https://api.themoviedb.org/3/search/multi?query={}&language=en-US&include_adult=false",
+                         urlencoding::encode(&query)
+                     )
+                 } else {
+                     format!(
+                         "https://api.themoviedb.org/3/search/multi?api_key={}&query={}&language=en-US&include_adult=false",
+                         api_key, urlencoding::encode(&query)
+                     )
+                 }
+             };
+             let mut en_req = client.get(&en_url).header("accept", "application/json");
+             if is_jwt {
+                 en_req = en_req.header("Authorization", format!("Bearer {}", api_key));
+             }
+            let en_res = en_req.send().await.map_err(|e| e.to_string())?;
+            let mut en_json: Value = en_res.json().await.map_err(|e| e.to_string())?;
+            
+            if is_imdb_id {
+                let mut combined_results = Vec::new();
+                if let Some(movies) = en_json.get("movie_results").and_then(|r| r.as_array()) {
+                    for m in movies {
+                        let mut item = m.clone();
+                        if item.get("media_type").is_none() {
+                            item["media_type"] = serde_json::json!("movie");
+                        }
+                        combined_results.push(item);
+                    }
+                }
+                if let Some(tvs) = en_json.get("tv_results").and_then(|r| r.as_array()) {
+                    for t in tvs {
+                        let mut item = t.clone();
+                        if item.get("media_type").is_none() {
+                            item["media_type"] = serde_json::json!("tv");
+                        }
+                        combined_results.push(item);
+                    }
+                }
+                if let Some(seasons) = en_json.get("tv_season_results").and_then(|r| r.as_array()) {
+                    for s in seasons {
+                        let mut item = s.clone();
+                        if item.get("media_type").is_none() {
+                            item["media_type"] = serde_json::json!("tv_season");
+                        }
+                        combined_results.push(item);
+                    }
+                }
+                if let Some(episodes) = en_json.get("tv_episode_results").and_then(|r| r.as_array()) {
+                    for e in episodes {
+                        let mut item = e.clone();
+                        if item.get("media_type").is_none() {
+                            item["media_type"] = serde_json::json!("tv_episode");
+                        }
+                        combined_results.push(item);
+                    }
+                }
+                en_json = serde_json::json!({
+                    "results": combined_results
+                });
+            }
+            
             return Ok(en_json);
         }
         log::info!("[TMDB] Found {} results", results.len());
     }
 
-    Ok(json)
+    Ok(final_json)
 }
 
 pub async fn get_tmdb_detail(api_key: String, id: i32, media_type: String, language: String, proxy: Option<String>) -> Result<Value, String> {
@@ -74,12 +210,26 @@ pub async fn get_tmdb_detail(api_key: String, id: i32, media_type: String, langu
     }
     let client = builder.build().map_err(|e| e.to_string())?;
 
-    let url = format!(
-        "https://api.themoviedb.org/3/{}/{}?api_key={}&language={}",
-        media_type, id, api_key, language
-    );
+    let is_jwt = api_key.contains('.') || api_key.len() > 40;
 
-    let res = client.get(url).send().await.map_err(|e| {
+    let url = if is_jwt {
+        format!(
+            "https://api.themoviedb.org/3/{}/{}?append_to_response=external_ids&language={}",
+            media_type, id, language
+        )
+    } else {
+        format!(
+            "https://api.themoviedb.org/3/{}/{}?api_key={}&append_to_response=external_ids&language={}",
+            media_type, id, api_key, language
+        )
+    };
+
+    let mut req = client.get(&url).header("accept", "application/json");
+    if is_jwt {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+
+    let res = req.send().await.map_err(|e| {
         log::error!("[TMDB] Detail network error: {}", e);
         e.to_string()
     })?;
@@ -139,3 +289,64 @@ pub async fn download_poster(app_handle: &AppHandle, poster_path: String, proxy:
 
     Ok(true)
 }
+
+pub async fn webdav_request(
+    method: &str,
+    url: &str,
+    username: &str,
+    password: &str,
+    body: Option<String>,
+    proxy: Option<String>
+) -> Result<Value, String> {
+    log::info!("[WebDAV] {} Request to: {}", method, url);
+    
+    let mut builder = Client::builder();
+    if let Some(p) = proxy {
+        if !p.trim().is_empty() {
+            builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
+        }
+    }
+    let client = builder.build().map_err(|e| e.to_string())?;
+
+    let mut req_builder = match method {
+        "MKCOL" => client.request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), url),
+        "PUT" => client.put(url),
+        "GET" => client.get(url),
+        _ => return Err(format!("Unsupported method: {}", method)),
+    };
+
+    req_builder = req_builder.basic_auth(username, Some(password));
+
+    if let Some(b) = body {
+        req_builder = req_builder.header("Content-Type", "application/json").body(b);
+    }
+
+    let res = req_builder.send().await.map_err(|e| {
+        log::error!("[WebDAV] Request error: {}", e);
+        e.to_string()
+    })?;
+
+    let status = res.status();
+    
+    if method == "GET" && status.is_success() {
+        let json: Value = res.json().await.map_err(|e| {
+            log::error!("[WebDAV] JSON parse error: {}", e);
+            e.to_string()
+        })?;
+        return Ok(json);
+    }
+
+    // 对于 MKCOL，如果返回 405 (Method Not Allowed)，通常意味着目录已存在，视作成功
+    if method == "MKCOL" && status.as_u16() == 405 {
+        return Ok(Value::Null);
+    }
+
+    if status.is_success() || status.as_u16() == 201 || status.as_u16() == 204 {
+        Ok(Value::Null)
+    } else {
+        let err = format!("HTTP Error: {}", status);
+        log::error!("[WebDAV] {}", err);
+        Err(err)
+    }
+}
+

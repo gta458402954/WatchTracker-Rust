@@ -5,7 +5,7 @@ import {
   renameCategory,
   deleteCategoryDb,
   reorderCategories,
-} from '../utils/database';
+} from '../../../shared/lib/database';
 
 export interface CategoryItem {
   name: string;

@@ -35,6 +35,26 @@ npm run tauri dev
 npm run tauri build
 ```
 
+
+## 📁 项目结构
+
+```text
+src/
+├── app/                 # 应用装配与页面级样式
+├── features/            # 按业务域组织的界面与状态逻辑
+│   ├── categories/
+│   ├── dashboard/
+│   ├── settings/
+│   └── watchlist/
+└── shared/              # 跨业务域复用的组件、类型和基础设施
+    ├── components/
+    ├── lib/
+    └── types/
+
+src-tauri/               # Tauri / Rust 后端
+public/                  # 静态资源
+docs/                    # 架构说明与历史记录
+```
 ## 📄 开源协议
 
 本项目采用 [MIT License](LICENSE) 开源协议。

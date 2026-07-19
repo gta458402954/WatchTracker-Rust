@@ -1,6 +1,6 @@
-import { Category, Status, WatchRecord } from '../types';
-import { STATUS_CONFIG } from '../utils/constants';
-import type { CategoryItem } from '../hooks/useCategories';
+import { Category, Status, WatchRecord } from '../../../shared/types';
+import { STATUS_CONFIG } from '../../../shared/lib/constants';
+import type { CategoryItem } from '../../categories/hooks/useCategories';
 
 interface StatsBarProps {
   records: WatchRecord[];

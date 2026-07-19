@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { WatchRecord } from '../types';
+import { invoke } from '@tauri-apps/api/core';
+import { WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds,
-} from '../utils/webdav';
-import type { CategoryItem } from '../hooks/useCategories';
-import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../utils/database';
+} from '../../../shared/lib/webdav';
+import type { CategoryItem } from '../../categories/hooks/useCategories';
+import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../../../shared/lib/database';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -14,12 +15,13 @@ interface SettingsModalProps {
   onUpdateCategory: (oldName: string, newName: string, newEmoji: string) => boolean | Promise<boolean>;
   onDeleteCategory: (name: string) => void;
   onImport: (records: WatchRecord[]) => void;
+  onRefresh?: () => any;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
 }
 
 export default function SettingsModal({ 
-  onClose, records, categories, onAddCategory, onUpdateCategory, onDeleteCategory, onImport,
+  onClose, records, categories, onAddCategory, onUpdateCategory, onDeleteCategory, onImport, onRefresh,
   syncInterval, onSyncIntervalChange
 }: SettingsModalProps) {
   // WebDAV 状态
@@ -47,6 +49,12 @@ export default function SettingsModal({
   const [editCatEmoji, setEditCatEmoji] = useState('');
   const [catMsg, setCatMsg] = useState('');
   const [vacuumStatus, setVacuumStatus] = useState<string>('');
+
+  // 批量同步状态
+  const [batchSyncing, setBatchSyncing] = useState(false);
+  const [batchStatus, setBatchStatus] = useState('');
+  const [batchProgress, setBatchProgress] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
 
   // 初始化加载设置
   useEffect(() => {
@@ -161,6 +169,99 @@ export default function SettingsModal({
     setTimeout(() => setVacuumStatus(''), 3000);
   }
 
+  // 批量同步元数据
+  async function handleBatchSync() {
+    const targets = records.filter(r => r.imdbId && !r.isLocked && (!r.genres || r.episodeRuntime === null));
+    if (targets.length === 0) {
+      setBatchStatus('🎉 所有带 IMDb 编号的记录均已包含完整元数据！');
+      setTimeout(() => setBatchStatus(''), 3000);
+      return;
+    }
+    
+    if (!confirm(`发现 ${targets.length} 条缺失部分元数据的老记录。是否开始批量同步？\n\n注意：期间请保持网络畅通。`)) return;
+
+    setBatchSyncing(true);
+    setBatchTotal(targets.length);
+    setBatchProgress(0);
+    setBatchStatus('正在连接 TMDB...');
+
+    let success = 0;
+    let fail = 0;
+    const tmdbCache = new Map<string, any>();
+
+    for (let i = 0; i < targets.length; i++) {
+      const r = targets[i];
+      setBatchProgress(i + 1);
+      setBatchStatus(`正在同步: ${r.chineseName}`);
+      
+      try {
+        const searchMediaType = (r.category === '电影' || r.category === '纪录片' || r.category === '动画') ? 'movie' : 'tv';
+        
+        let updates: any = null;
+        if (r.imdbId && tmdbCache.has(r.imdbId)) {
+          updates = tmdbCache.get(r.imdbId);
+        } else {
+          const result = await invoke<any>('search_tmdb', {
+            apiKey: tmdbKey,
+            query: r.imdbId,
+            mediaType: searchMediaType,
+            proxy,
+            language: 'zh-CN'
+          });
+
+          // 针对 IMDb ID 的精确查找，如果有返回，且位于 tv_results / movie_results
+          const resultsArray = result.tv_results || result.movie_results || result.results || [];
+          const item = resultsArray[0];
+
+          if (item) {
+            const detail = await invoke<any>('get_tmdb_detail', {
+              apiKey: tmdbKey,
+              id: item.id,
+              mediaType: searchMediaType,
+              proxy,
+              language: 'zh-CN'
+            });
+
+            const genresStr = detail.genres?.map((g: any) => g.name).join(', ');
+            const genres = genresStr ? genresStr : '未知';
+            const originCountry = detail.origin_country?.join(', ') || null;
+            updates = {
+              genres,
+              originCountry,
+              imdbRating: detail.vote_average || null,
+              tmdbStatus: detail.status || null,
+              episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
+            };
+            
+            if (r.imdbId) {
+              tmdbCache.set(r.imdbId, updates);
+            }
+          }
+        }
+
+        if (updates) {
+          await invoke('update_record', { id: r.id, updates });
+          success++;
+        } else {
+          fail++;
+        }
+      } catch (e) {
+        console.error('Failed to sync record', r.chineseName, e);
+        fail++;
+      }
+      
+      // 适度延时避免请求过频
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    setBatchSyncing(false);
+    setBatchStatus(`✅ 同步完成！成功: ${success}, 失败: ${fail}`);
+    if (onRefresh) {
+      await onRefresh();
+    }
+    setTimeout(() => setBatchStatus(''), 5000);
+  }
+
   // 分类管理逻辑
   function handleAddCategory() {
     if (!newCatName.trim()) {
@@ -271,6 +372,7 @@ export default function SettingsModal({
             category: item.category || '电影',
             notes: item.notes || '',
             createdAt: item.createdAt || new Date().toISOString(),
+            imdbId: item.imdbId || null,
           }));
 
           onImport(completeData);
@@ -537,8 +639,26 @@ export default function SettingsModal({
               <span className="text-xl">🛠️</span>
               <h3 className="font-semibold text-gray-800">高级维护</h3>
             </div>
-            <button onClick={handleVacuum} className="w-full py-2 rounded-xl border border-gray-300 text-sm text-gray-600 hover:bg-gray-100 transition-colors flex items-center justify-center gap-2">🧹 立即压缩数据库</button>
-            {vacuumStatus && <p className="text-xs text-center mt-2 text-gray-500">{vacuumStatus}</p>}
+            <button onClick={handleVacuum} className="w-full py-2 rounded-xl border border-gray-300 text-sm text-gray-600 hover:bg-gray-100 transition-colors flex items-center justify-center gap-2 mb-3">🧹 立即压缩数据库</button>
+            {vacuumStatus && <p className="text-xs text-center mb-3 text-gray-500">{vacuumStatus}</p>}
+
+            <button 
+              onClick={handleBatchSync} 
+              disabled={batchSyncing || !tmdbSaved}
+              className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              title={!tmdbSaved ? "请先配置 TMDB 密钥" : "自动为老数据补充类型、国家、评分等缺失信息"}
+            >
+              {batchSyncing ? '⏳ 正在同步...' : '✨ 一键补全缺失元数据'}
+            </button>
+            {batchSyncing && batchTotal > 0 && (
+              <div className="mt-2">
+                <div className="w-full bg-gray-200 rounded-full h-1.5 mb-1">
+                  <div className="bg-amber-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${(batchProgress / batchTotal) * 100}%` }}></div>
+                </div>
+                <p className="text-xs text-center text-gray-500">{batchProgress} / {batchTotal}</p>
+              </div>
+            )}
+            {batchStatus && <p className="text-xs text-center mt-2 text-amber-600 font-medium">{batchStatus}</p>}
           </div>
         </div>
 

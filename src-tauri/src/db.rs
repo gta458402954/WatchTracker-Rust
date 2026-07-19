@@ -123,9 +123,89 @@ fn setup_db(conn: &Connection) -> Result<()> {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_originalName ON records(originalName);", [])?;
     }
 
+    if current_version < 4 {
+        let exists: bool = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('records') WHERE name='imdbId'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        
+        if !exists {
+            conn.execute("ALTER TABLE records ADD COLUMN imdbId TEXT", [])?;
+        }
+    }
+
+    if current_version < 5 {
+        let exists: bool = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('records') WHERE name='isLocked'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        
+        if !exists {
+            conn.execute("ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0", [])?;
+        }
+    }
+
+    if current_version < 6 {
+        let exists: bool = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('records') WHERE name='sortOrder'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        
+        if !exists {
+            conn.execute("ALTER TABLE records ADD COLUMN sortOrder INTEGER", [])?;
+        }
+    }
+
+    if current_version < 7 {
+        let cols = vec![
+            ("genres", "TEXT"),
+            ("originCountry", "TEXT"),
+            ("imdbRating", "REAL"),
+            ("tmdbStatus", "TEXT"),
+            ("interestLevel", "INTEGER"),
+        ];
+        
+        for (name, col_type) in cols {
+            let exists: bool = conn.query_row(
+                &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+                [],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            
+            if !exists {
+                conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+            }
+        }
+    }
+
+    if current_version < 8 {
+        let exists: bool = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('records') WHERE name='episodeRuntime'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        
+        if !exists {
+            conn.execute("ALTER TABLE records ADD COLUMN episodeRuntime INTEGER", [])?;
+        }
+
+        conn.execute("
+            CREATE TABLE IF NOT EXISTS watch_logs (
+                id TEXT PRIMARY KEY,
+                record_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                watched_seconds INTEGER NOT NULL,
+                FOREIGN KEY(record_id) REFERENCES records(id) ON DELETE CASCADE
+            );
+        ", [])?;
+    }
+
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
-        params!["3"],
+        params!["8"],
     )?;
 
     Ok(())
@@ -160,7 +240,7 @@ pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
                 }
             },
             platform: row.get("platform")?,
-            rating: row.get("rating").unwrap_or(0),
+            rating: row.get("rating").unwrap_or(None),
             start_date: row.get("startDate")?,
             end_date: row.get("endDate")?,
             category: row.get("category")?,
@@ -168,9 +248,26 @@ pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
             created_at: row.get("createdAt")?,
             movie_progress: row.get("movieProgress").unwrap_or(None),
             movie_duration: row.get("movieDuration").unwrap_or(None),
-            release_year: row.get("releaseYear").unwrap_or(None),
+            release_year: {
+                if let Ok(val) = row.get::<_, String>("releaseYear") {
+                    Some(val)
+                } else if let Ok(val) = row.get::<_, i32>("releaseYear") {
+                    Some(val.to_string())
+                } else {
+                    None
+                }
+            },
             poster_path: row.get("posterPath").unwrap_or(None),
             updated_at: row.get("updatedAt").unwrap_or(None),
+            imdb_id: row.get("imdbId").unwrap_or(None),
+            is_locked: row.get::<_, Option<i32>>("isLocked").unwrap_or(None).map(|v| v != 0),
+            sort_order: row.get("sortOrder").unwrap_or(None),
+            genres: row.get("genres").unwrap_or(None),
+            origin_country: row.get("originCountry").unwrap_or(None),
+            imdb_rating: row.get("imdbRating").unwrap_or(None),
+            tmdb_status: row.get("tmdbStatus").unwrap_or(None),
+            interest_level: row.get("interestLevel").unwrap_or(None),
+            episode_runtime: row.get("episodeRuntime").unwrap_or(None),
         })
     })?;
 
@@ -185,40 +282,61 @@ pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
 }
 
 pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
+    log::info!("[DB] Inserting/Updating record: {} ({})", r.chinese_name, r.id);
+    let is_locked_int = r.is_locked.map(|b| if b { 1 } else { 0 });
     conn.execute(
-        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, category, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, category, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt, imdbId, isLocked, sortOrder, genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         params![
             r.id, r.original_name, r.chinese_name, r.progress, r.total_episodes,
             r.status, r.platform, r.rating, r.start_date, r.end_date,
             r.category, r.notes, r.created_at, r.movie_progress, r.movie_duration,
-            r.release_year, r.poster_path, r.updated_at
+            r.release_year, r.poster_path, r.updated_at, r.imdb_id, is_locked_int, r.sort_order,
+            r.genres, r.origin_country, r.imdb_rating, r.tmdb_status, r.interest_level, r.episode_runtime
         ],
     )?;
     Ok(())
 }
 
 pub fn delete_record(conn: &Connection, id: String) -> Result<()> {
+    log::info!("[DB] Deleting record: {}", id);
     conn.execute("DELETE FROM records WHERE id = ?", params![id])?;
     Ok(())
 }
 
 pub fn replace_all_records(conn: &Connection, records: Vec<WatchRecord>) -> Result<()> {
-    // 开启事务
-    // 注意：这里简化了，实际应用中应该在命令层处理事务或传入特定逻辑
-    conn.execute("DELETE FROM records", [])?;
-    for r in records {
-        insert_record(conn, r)?;
+    conn.execute("BEGIN TRANSACTION", [])?;
+    let res = (|| {
+        // 先获取所有被锁定的记录 ID
+        let mut stmt = conn.prepare("SELECT id FROM records WHERE isLocked = 1")?;
+        let locked_ids: Vec<String> = stmt.query_map([], |row| row.get(0))?.filter_map(Result::ok).collect();
+        
+        // 删除所有未锁定的记录
+        conn.execute("DELETE FROM records WHERE isLocked IS NULL OR isLocked = 0", [])?;
+        
+        for r in records {
+            // 如果云端下发的数据对应的本地记录已锁定，直接跳过不覆盖
+            if locked_ids.contains(&r.id) {
+                log::info!("[DB] Sync skipping locked record: {}", r.id);
+                continue;
+            }
+            insert_record(conn, r)?;
+        }
+        conn.execute("COMMIT", [])?;
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = conn.execute("ROLLBACK", []);
     }
-    Ok(())
+    res
 }
 
 pub fn get_all_categories(conn: &Connection) -> Result<Vec<Category>> {
     let mut stmt = conn.prepare("SELECT * FROM categories ORDER BY sortOrder ASC")?;
     let rows = stmt.query_map([], |row| {
         Ok(Category {
-            name: row.get(0)?,
-            emoji: row.get(1)?,
-            sort_order: row.get(2)?,
+            name: row.get("name")?,
+            emoji: row.get("emoji")?,
+            sort_order: row.get("sortOrder")?,
         })
     })?;
 
@@ -243,9 +361,19 @@ pub fn delete_category(conn: &Connection, name: String) -> Result<()> {
 }
 
 pub fn rename_category(conn: &Connection, old_name: String, new_name: String, emoji: String) -> Result<()> {
+    // 先查出原分类的 sortOrder，避免重命名后顺序丢失
+    let original_sort_order: i32 = conn.query_row(
+        "SELECT sortOrder FROM categories WHERE name = ?",
+        params![old_name],
+        |row| row.get(0),
+    ).unwrap_or(0);
+
     conn.execute("UPDATE records SET category = ? WHERE category = ?", params![new_name, old_name])?;
     conn.execute("DELETE FROM categories WHERE name = ?", params![old_name])?;
-    conn.execute("INSERT OR REPLACE INTO categories (name, emoji, sortOrder) VALUES (?, ?, 0)", params![new_name, emoji])?;
+    conn.execute(
+        "INSERT OR REPLACE INTO categories (name, emoji, sortOrder) VALUES (?, ?, ?)",
+        params![new_name, emoji, original_sort_order],
+    )?;
     Ok(())
 }
 
@@ -253,6 +381,19 @@ pub fn reorder_categories(conn: &Connection, names: Vec<String>) -> Result<()> {
     for (i, name) in names.iter().enumerate() {
         conn.execute("UPDATE categories SET sortOrder = ? WHERE name = ?", params![i as i32, name])?;
     }
+    Ok(())
+}
+
+pub fn reorder_records(conn: &Connection, ids: Vec<String>) -> Result<()> {
+    // Start transaction for atomic bulk update
+    conn.execute("BEGIN TRANSACTION", [])?;
+    for (i, id) in ids.iter().enumerate() {
+        if let Err(e) = conn.execute("UPDATE records SET sortOrder = ? WHERE id = ?", params![i as i32, id]) {
+            let _ = conn.execute("ROLLBACK", []);
+            return Err(e);
+        }
+    }
+    conn.execute("COMMIT", [])?;
     Ok(())
 }
 

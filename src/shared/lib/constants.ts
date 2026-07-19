@@ -34,6 +34,13 @@ export function getEmptyRecord(): Omit<WatchRecord, 'id' | 'createdAt'> {
     endDate: '',
     category: '电影',
     notes: '',
+    imdbId: null,
+    genres: null,
+    originCountry: null,
+    imdbRating: null,
+    tmdbStatus: null,
+    interestLevel: null,
+    episodeRuntime: null,
   };
 }
 

@@ -1,13 +1,14 @@
 import { useState, useCallback, useRef } from 'react';
-import { WatchRecord } from '../types';
+import { WatchRecord } from '../../../shared/types';
 import {
   getAllRecordsAsync,
   insertRecord,
   updateRecord as dbUpdateRecord,
   deleteRecord as dbDeleteRecord,
   replaceAllRecords,
-} from '../utils/database';
-import { syncToWebDAV, hasCreds } from '../utils/webdav';
+  reorderRecords as dbReorderRecords,
+} from '../../../shared/lib/database';
+import { syncToWebDAV, hasCreds } from '../../../shared/lib/webdav';
 
 export function useWatchList(syncInterval = 30) {
   const [records, setRecords] = useState<WatchRecord[]>([]);
@@ -58,13 +59,13 @@ export function useWatchList(syncInterval = 30) {
     });
   }, []);
 
-  const addRecord = useCallback((record: Omit<WatchRecord, 'id' | 'createdAt'>) => {
+  const addRecord = useCallback(async (record: Omit<WatchRecord, 'id' | 'createdAt'>) => {
     const newRecord: WatchRecord = {
       ...record,
       id: Date.now().toString(),
       createdAt: new Date().toISOString(),
     };
-    insertRecord(newRecord);
+    await insertRecord(newRecord);
     setRecords(prev => {
       const updated = [newRecord, ...prev];
       autoSyncDebounced(updated);
@@ -72,8 +73,8 @@ export function useWatchList(syncInterval = 30) {
     });
   }, [autoSyncDebounced]);
 
-  const updateRecord = useCallback((id: string, updates: Partial<WatchRecord>) => {
-    dbUpdateRecord(id, updates);
+  const updateRecord = useCallback(async (id: string, updates: Partial<WatchRecord>) => {
+    await dbUpdateRecord(id, updates);
     setRecords(prev => {
       const updated = prev.map(r => r.id === id ? { ...r, ...updates } : r);
       autoSyncDebounced(updated);
@@ -81,8 +82,8 @@ export function useWatchList(syncInterval = 30) {
     });
   }, [autoSyncDebounced]);
 
-  const deleteRecord = useCallback((id: string) => {
-    dbDeleteRecord(id);
+  const deleteRecord = useCallback(async (id: string) => {
+    await dbDeleteRecord(id);
     setRecords(prev => {
       const updated = prev.filter(r => r.id !== id);
       autoSyncDebounced(updated);
@@ -101,5 +102,27 @@ export function useWatchList(syncInterval = 30) {
     setRecords(newRecords);
   }, []);
 
-  return { records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, isSyncPaused, toggleSyncPause };
+  const reorderRecords = useCallback(async (ids: string[]) => {
+    await dbReorderRecords(ids);
+    setRecords(prev => {
+      // Create a map for quick lookup
+      const idToIndex = new Map(ids.map((id, index) => [id, index]));
+      // Sort the existing array according to the new order
+      const updated = [...prev].sort((a, b) => {
+        const indexA = idToIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const indexB = idToIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return indexA - indexB;
+      });
+      // Also update their sortOrder properties
+      updated.forEach((r) => {
+        if (idToIndex.has(r.id)) {
+          r.sortOrder = idToIndex.get(r.id);
+        }
+      });
+      autoSyncDebounced(updated);
+      return updated;
+    });
+  }, [autoSyncDebounced]);
+
+  return { records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords, isSyncPaused, toggleSyncPause };
 }
