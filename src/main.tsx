@@ -5,9 +5,7 @@ import ErrorBoundary from './shared/components/ErrorBoundary.tsx'
 import './index.css'
 
 // 禁用全局右键菜单 (屏蔽浏览器默认的上下文菜单)
-if (import.meta.env.PROD) {
-  document.addEventListener('contextmenu', e => e.preventDefault());
-}
+document.addEventListener('contextmenu', e => e.preventDefault());
 
 // 立即挂载 React 应用
 ReactDOM.createRoot(document.getElementById('root')!).render(
