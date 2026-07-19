@@ -82,6 +82,16 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
   const [movieProgressStr, setMovieProgressStr] = useState('');
   const [movieDurationStr, setMovieDurationStr] = useState('');
 
+  const [startYearOnly, setStartYearOnly] = useState(
+    !!record?.startDate && /^\d{4}$/.test(record.startDate)
+  );
+  const [endYearOnly, setEndYearOnly] = useState(
+    !!record?.endDate && /^\d{4}$/.test(record.endDate)
+  );
+
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: currentYear - 1950 + 1 }, (_, i) => currentYear - i);
+
   // TMDB 搜索相关状态
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -773,22 +783,90 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
           {/* Dates */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
-              <input
-                type="date"
-                value={form.startDate}
-                onChange={e => set('startDate', e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium text-gray-700">开始时间</label>
+                <label className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={startYearOnly}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setStartYearOnly(checked);
+                      if (checked) {
+                        const yr = form.startDate ? form.startDate.slice(0, 4) : new Date().getFullYear().toString();
+                        set('startDate', yr);
+                      } else {
+                        const dateVal = form.startDate && /^\d{4}$/.test(form.startDate) ? `${form.startDate}-01-01` : '';
+                        set('startDate', dateVal);
+                      }
+                    }}
+                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3 h-3"
+                  />
+                  仅选年份
+                </label>
+              </div>
+              {startYearOnly ? (
+                <select
+                  value={form.startDate || ''}
+                  onChange={e => set('startDate', e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition bg-white"
+                >
+                  <option value="">选择年份</option>
+                  {years.map(y => (
+                    <option key={y} value={y.toString()}>{y}年</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="date"
+                  value={form.startDate}
+                  onChange={e => set('startDate', e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+                />
+              )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
-              <input
-                type="date"
-                value={form.endDate}
-                onChange={e => set('endDate', e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium text-gray-700">结束时间</label>
+                <label className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={endYearOnly}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setEndYearOnly(checked);
+                      if (checked) {
+                        const yr = form.endDate ? form.endDate.slice(0, 4) : new Date().getFullYear().toString();
+                        set('endDate', yr);
+                      } else {
+                        const dateVal = form.endDate && /^\d{4}$/.test(form.endDate) ? `${form.endDate}-01-01` : '';
+                        set('endDate', dateVal);
+                      }
+                    }}
+                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3 h-3"
+                  />
+                  仅选年份
+                </label>
+              </div>
+              {endYearOnly ? (
+                <select
+                  value={form.endDate || ''}
+                  onChange={e => set('endDate', e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition bg-white"
+                >
+                  <option value="">选择年份</option>
+                  {years.map(y => (
+                    <option key={y} value={y.toString()}>{y}年</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="date"
+                  value={form.endDate}
+                  onChange={e => set('endDate', e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
+                />
+              )}
             </div>
           </div>
 
