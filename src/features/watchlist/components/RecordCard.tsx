@@ -123,7 +123,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
                   }
                 }}
               >
-                IMDb
+                IMDb {record.imdbRating ? ` ${record.imdbRating}` : ''}
               </a>
             )}
           </div>
