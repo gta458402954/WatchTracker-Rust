@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord } from '../../../shared/types';
 import {
-  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds, getSyncConflicts, clearSyncConflicts, type SyncConflict,
+  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import type { CategoryItem } from '../../categories/hooks/useCategories';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../../../shared/lib/database';
@@ -112,7 +112,7 @@ export default function SettingsModal({
         }
       }
 
-      setSyncConflicts(await getSyncConflicts());
+      setSyncConflicts(await clearResolvedSyncConflicts(records));
 
       // 3. 加载代理设置
       const savedProxy = await getSettingAsync('network_proxy');

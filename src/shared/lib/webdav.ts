@@ -13,6 +13,21 @@ interface SyncPayload { schemaVersion: 2; updatedAt: string; records: WatchRecor
 export interface SyncResult { ok: boolean; error?: string; records?: WatchRecord[]; conflictCount?: number; }
 export interface SyncConflict { id: string; kept: 'local' | 'remote'; at: string; discarded: WatchRecord; }
 
+/** 按键名规范化对象，避免云端 JSON 字段顺序不同造成伪冲突。 */
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, stableValue(item)]));
+  }
+  return value;
+}
+function recordsEqual(left: WatchRecord, right: WatchRecord) {
+  return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+
 export async function saveCreds(creds: WebDAVCreds) {
   const encrypted = await safeEncrypt(`${creds.username}:${creds.password}`, 'webdav_creds');
   await setSettingAsync('webdav_creds', encrypted);
@@ -64,7 +79,7 @@ function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombston
     const previous = records.get(record.id);
     if (!previous) { records.set(record.id, record); continue; }
     const localWins = record.isLocked || timeOf(record) >= timeOf(previous);
-    if (JSON.stringify(record) !== JSON.stringify(previous)) conflicts.push({ id: record.id, kept: localWins ? 'local' : 'remote', at: new Date().toISOString(), discarded: localWins ? previous : record });
+    if (!recordsEqual(record, previous)) conflicts.push({ id: record.id, kept: localWins ? 'local' : 'remote', at: new Date().toISOString(), discarded: localWins ? previous : record });
     if (localWins) records.set(record.id, record);
   }
   for (const [id, tombstone] of tombstones) {
@@ -108,4 +123,15 @@ export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: WatchRecor
 }
 export async function getSyncConflicts(): Promise<SyncConflict[]> { try { return JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]'); } catch { return []; } }
 export async function clearSyncConflicts() { await setSettingAsync(CONFLICTS_KEY, '[]'); }
+/** 清除已与当前记录完全相同的旧冲突备份，保留真实差异以便恢复。 */
+export async function clearResolvedSyncConflicts(records: WatchRecord[]): Promise<SyncConflict[]> {
+  const currentById = new Map(records.map(record => [record.id, record]));
+  const conflicts = await getSyncConflicts();
+  const remaining = conflicts.filter(conflict => {
+    const current = currentById.get(conflict.id);
+    return !current || !recordsEqual(current, conflict.discarded);
+  });
+  if (remaining.length !== conflicts.length) await setSettingAsync(CONFLICTS_KEY, JSON.stringify(remaining));
+  return remaining;
+}
 export async function clearRecordDeletion(id: string) { await clearDeletion(id); }
