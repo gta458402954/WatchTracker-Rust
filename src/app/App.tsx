@@ -33,7 +33,7 @@ export default function App() {
   const [searchText, setSearchText] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<WatchRecord | null>(null);
-  const [sortBy, setSortBy] = useState<'createdAt' | 'startDate' | 'rating' | 'releaseYear' | 'watchValue' | 'custom'>('createdAt');
+  const [sortBy, setSortBy] = useState<'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue' | 'custom'>('createdAt');
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
   const [lockFilter, setLockFilter] = useState<'all' | 'locked' | 'unlocked'>('all');
@@ -113,8 +113,11 @@ export default function App() {
         if (sortBy === 'releaseYear') {
           return (b.releaseYear || '0') > (a.releaseYear || '0') ? 1 : -1;
         }
-        if (sortBy === 'startDate') {
-          return (b.startDate || '0') > (a.startDate || '0') ? 1 : -1;
+        if (sortBy === 'endDate') {
+          if (!a.endDate && !b.endDate) return 0;
+          if (!a.endDate) return 1;
+          if (!b.endDate) return -1;
+          return b.endDate.localeCompare(a.endDate);
         }
         if (sortBy === 'watchValue') {
           const valA = calculateWatchValue(a, records);
