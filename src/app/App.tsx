@@ -142,6 +142,9 @@ export default function App() {
   }
 
   async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>) {
+    const today = new Date().toISOString().split('T')[0];
+    if (data.status === '在看' && !data.startDate) data.startDate = today;
+    if (data.status === '已看' && !data.endDate) data.endDate = today;
     if (data.originCountry && (data.originCountry.includes('CN') || data.originCountry.includes('中国'))) {
       data.platform = '';
     }
