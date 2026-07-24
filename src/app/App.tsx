@@ -255,7 +255,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen overflow-hidden bg-gray-50 flex flex-col">
       {/* Top Header Bar */}
       <Header
         searchText={searchText}
@@ -290,7 +290,7 @@ export default function App() {
       />
 
       {/* Content Main Area */}
-      <main className="max-w-5xl mx-auto w-full px-4 pb-8 flex-1 mt-4">
+      <main className="custom-scrollbar min-h-0 max-w-5xl mx-auto w-full flex-1 overflow-y-auto px-4 pb-8 mt-4">
         {loading ? (
           <div className="space-y-8 animate-pulse">
             {[1, 2].map(group => (
