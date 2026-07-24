@@ -2,8 +2,6 @@ import React from 'react';
 import { WatchRecord, Status } from '../../../shared/types';
 import { STATUS_CONFIG, formatMovieProgress } from '../../../shared/lib/constants';
 import { open } from '@tauri-apps/plugin-shell';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 
 const translateGenre = (genre: string): string => {
   const mapping: Record<string, string> = {
@@ -47,27 +45,11 @@ interface RecordCardProps {
   onProgressChange?: (id: string, progress: string) => void;  // 新增：进度更新回调
   onLockToggle?: (id: string) => void;
   getEmoji?: (category: string) => string;  // 获取分类 emoji
-  isSortable?: boolean;
 }
 
-export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle, getEmoji, isSortable }: RecordCardProps) {
+export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle, getEmoji }: RecordCardProps) {
   const statusConf = STATUS_CONFIG[record.status];
 
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: record.id, disabled: !isSortable });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 10 : undefined,
-    opacity: isDragging ? 0.8 : 1,
-  };
 
   // 计算显示的进度文本
   const getProgressDisplay = () => {
@@ -111,11 +93,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
   };
 
   return (
-    <div 
-      ref={setNodeRef}
-      style={style}
-      className={`bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow p-4 flex flex-col gap-3 relative ${isDragging ? 'shadow-xl border-indigo-300' : ''}`}
-    >
+    <div className="relative flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -210,18 +188,6 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
                 </svg>
               </button>
             </>
-          )}
-          {isSortable && (
-            <button
-              {...attributes}
-              {...listeners}
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing transition-colors"
-              title="拖拽排序"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
-              </svg>
-            </button>
           )}
         </div>
       </div>

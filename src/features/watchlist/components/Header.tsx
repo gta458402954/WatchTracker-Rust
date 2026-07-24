@@ -2,8 +2,8 @@
 interface HeaderProps {
   searchText: string;
   onSearchChange: (value: string) => void;
-  sortBy: 'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue' | 'custom';
-  onSortByChange: (value: 'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue' | 'custom') => void;
+  sortBy: 'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue';
+  onSortByChange: (value: 'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue') => void;
   lockFilter: 'all' | 'locked' | 'unlocked';
   onLockFilterChange: (value: 'all' | 'locked' | 'unlocked') => void;
   hasWebDAVCreds: boolean;
@@ -72,7 +72,6 @@ export default function Header({
           <option value="releaseYear">上映年份</option>
           <option value="rating">评分</option>
           <option value="watchValue">待看价值</option>
-          <option value="custom">自定义排序</option>
         </select>
 
         {/* Hide watched toggle */}

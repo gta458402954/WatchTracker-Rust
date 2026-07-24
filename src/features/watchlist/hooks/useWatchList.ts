@@ -6,7 +6,6 @@ import {
   updateRecord as dbUpdateRecord,
   deleteRecord as dbDeleteRecord,
   replaceAllRecords,
-  reorderRecords as dbReorderRecords,
 } from '../../../shared/lib/database';
 import { syncToWebDAV, hasCreds, markRecordDeleted, clearRecordDeletion } from '../../../shared/lib/webdav';
 
@@ -125,27 +124,6 @@ export function useWatchList(syncInterval = 30) {
     setRecords(newRecords);
   }, []);
 
-  const reorderRecords = useCallback(async (ids: string[]) => {
-    await dbReorderRecords(ids);
-    setRecords(prev => {
-      // Create a map for quick lookup
-      const idToIndex = new Map(ids.map((id, index) => [id, index]));
-      // Sort the existing array according to the new order
-      const updated = [...prev].sort((a, b) => {
-        const indexA = idToIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-        const indexB = idToIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-        return indexA - indexB;
-      });
-      // Also update their sortOrder properties
-      updated.forEach((r) => {
-        if (idToIndex.has(r.id)) {
-          r.sortOrder = idToIndex.get(r.id);
-        }
-      });
-      autoSyncDebounced(updated);
-      return updated;
-    });
-  }, [autoSyncDebounced]);
 
   const restoreRecord = useCallback(async (record: WatchRecord) => {
     const restored = { ...record, updatedAt: new Date().toISOString() };
@@ -166,5 +144,5 @@ export function useWatchList(syncInterval = 30) {
     }
     return result;
   }, [records]);
-  return { records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords, syncNow, restoreRecord, isSyncPaused, toggleSyncPause };
+  return { records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow, restoreRecord, isSyncPaused, toggleSyncPause };
 }

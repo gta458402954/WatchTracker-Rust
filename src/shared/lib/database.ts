@@ -79,13 +79,6 @@ export async function reorderCategories(names: string[]) {
   }
 }
 
-export async function reorderRecords(ids: string[]) {
-  try {
-    await invoke('reorder_records', { ids });
-  } catch (err) {
-    console.error('[DB] Reorder records failed:', err);
-  }
-}
 
 export async function downloadPosterAsync(path: string): Promise<boolean> {
   const proxy = await getSettingAsync('network_proxy');

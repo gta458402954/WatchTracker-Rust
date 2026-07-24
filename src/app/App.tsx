@@ -1,6 +1,4 @@
 import { useState, useMemo, useEffect } from 'react';
-import { KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord, Category, Status } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
@@ -22,7 +20,7 @@ type FilterStatus = Status | 'all';
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
   const { 
-    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords, syncNow, restoreRecord,
+    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow, restoreRecord,
     isSyncPaused, toggleSyncPause 
   } = useWatchList(syncInterval);
   
@@ -33,7 +31,7 @@ export default function App() {
   const [searchText, setSearchText] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<WatchRecord | null>(null);
-  const [sortBy, setSortBy] = useState<'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue' | 'custom'>('createdAt');
+  const [sortBy, setSortBy] = useState<'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue'>('createdAt');
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
   const [lockFilter, setLockFilter] = useState<'all' | 'locked' | 'unlocked'>('all');
@@ -124,20 +122,10 @@ export default function App() {
           const valB = calculateWatchValue(b, records);
           return valB - valA;
         }
-        if (sortBy === 'custom') {
-          return (a.sortOrder || 0) - (b.sortOrder || 0);
-        }
         return (b.createdAt || '') > (a.createdAt || '') ? 1 : -1;
       });
   }, [records, activeCategory, filterStatus, searchText, sortBy, lockFilter]);
 
-  // 排序必须基于完整记录集，否则筛选后的局部顺序会与未筛选记录发生冲突。
-  const canReorder =
-    sortBy === 'custom' &&
-    activeCategory === 'all' &&
-    filterStatus === 'all' &&
-    lockFilter === 'all' &&
-    searchText.trim() === '';
 
   function handleEdit(record: WatchRecord) {
     setEditingRecord(record);
@@ -190,29 +178,6 @@ export default function App() {
 
   async function handleImport(imported: WatchRecord[]) {
     await replaceRecords(imported);
-  }
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  function handleDragEnd(event: DragEndEvent) {
-    if (!canReorder) return;
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIndex = filtered.findIndex((r) => r.id === active.id);
-      const newIndex = filtered.findIndex((r) => r.id === over.id);
-      const newFiltered = arrayMove(filtered, oldIndex, newIndex);
-      const newIds = newFiltered.map(r => r.id);
-      reorderRecords(newIds);
-    }
   }
 
   async function handleLockToggle(id: string) {
@@ -323,25 +288,15 @@ export default function App() {
             )}
           </div>
         ) : viewMode === 'list' ? (
-          <>
-            {sortBy === 'custom' && !canReorder && (
-              <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                清除分类、状态、锁定和搜索筛选后，才可调整自定义排序。
-              </p>
-            )}
             <ListView
               filtered={filtered}
-              sensors={sensors}
-              onDragEnd={handleDragEnd}
               onEdit={handleEdit}
               onDelete={handleDelete}
               onLockToggle={handleLockToggle}
               onStatusChange={handleStatusChange}
               onProgressChange={handleProgressChange}
               getEmoji={getEmoji}
-              canReorder={canReorder}
             />
-          </>
         ) : (
           <PosterWall
             filtered={filtered}
