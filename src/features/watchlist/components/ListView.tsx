@@ -22,7 +22,7 @@ interface ListViewProps {
   onStatusChange: (id: string, status: Status) => void;
   onProgressChange: (id: string, progress: string) => void;
   getEmoji: (category: string) => string;
-  sortBy: string;
+  canReorder: boolean;
 }
 
 export default function ListView({
@@ -35,33 +35,39 @@ export default function ListView({
   onStatusChange,
   onProgressChange,
   getEmoji,
-  sortBy
+  canReorder
 }: ListViewProps) {
+  const cards = (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {filtered.map(record => (
+        <RecordCard
+          key={record.id}
+          record={record}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onLockToggle={onLockToggle}
+          onStatusChange={onStatusChange}
+          onProgressChange={onProgressChange}
+          getEmoji={getEmoji}
+          isSortable={canReorder}
+        />
+      ))}
+    </div>
+  );
+
+  if (!canReorder) return cards;
+
   return (
-    <DndContext 
+    <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragEnd={onDragEnd}
     >
-      <SortableContext 
+      <SortableContext
         items={filtered.map(r => r.id)}
         strategy={rectSortingStrategy}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map(record => (
-            <RecordCard
-              key={record.id}
-              record={record}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onLockToggle={onLockToggle}
-              onStatusChange={onStatusChange}
-              onProgressChange={onProgressChange}
-              getEmoji={getEmoji}
-              isSortable={sortBy === 'custom'}
-            />
-          ))}
-        </div>
+        {cards}
       </SortableContext>
     </DndContext>
   );

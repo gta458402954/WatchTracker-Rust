@@ -5,7 +5,7 @@ mod auth;
 mod net;
 
 use tauri::Manager;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 fn setup_logging(app_handle: &tauri::AppHandle) -> Result<(), String> {
     // 优先使用便携式 data 目录
@@ -53,6 +53,18 @@ pub fn run() {
         .register_uri_scheme_protocol("poster", |context, request| {
             let path = request.uri().path();
             let file_name = path.trim_start_matches('/');
+
+            // `poster://` 只应访问海报目录中的单个文件。拒绝目录、绝对路径和
+            // `..`，避免来自导入数据的 posterPath 跳出 posters 目录。
+            let mut components = Path::new(file_name).components();
+            let is_safe_file_name = matches!(components.next(), Some(Component::Normal(_)))
+                && components.next().is_none();
+            if !is_safe_file_name {
+                return tauri::http::Response::builder()
+                    .status(400)
+                    .body(Vec::new())
+                    .unwrap();
+            }
             
             // 优先检查可执行文件同级目录下的 data 文件夹
             let app_dir = if let Ok(exe_path) = std::env::current_exe() {

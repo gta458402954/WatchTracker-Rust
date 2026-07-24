@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord } from '../../../shared/types';
 import {
-  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds,
+  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds, getSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import type { CategoryItem } from '../../categories/hooks/useCategories';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../../../shared/lib/database';
@@ -42,13 +42,15 @@ interface SettingsModalProps {
   onUpdateCategory: (oldName: string, newName: string, newEmoji: string) => boolean | Promise<boolean>;
   onDeleteCategory: (name: string) => void;
   onImport: (records: WatchRecord[]) => void;
+  onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
+  onRestoreConflict?: (record: WatchRecord) => Promise<void>;
   onRefresh?: () => any;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
 }
 
 export default function SettingsModal({ 
-  onClose, records, categories, onAddCategory, onUpdateCategory, onDeleteCategory, onImport, onRefresh,
+  onClose, records, categories, onAddCategory, onUpdateCategory, onDeleteCategory, onImport, onSync, onRestoreConflict, onRefresh,
   syncInterval, onSyncIntervalChange
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
@@ -59,6 +61,7 @@ export default function SettingsModal({
   const [saved, setSaved] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [importStatus, setImportStatus] = useState<string>('');
+  const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([]);
 
   // 自动同步频率状态
   const [localInterval, setLocalInterval] = useState(syncInterval);
@@ -108,6 +111,8 @@ export default function SettingsModal({
           console.error('[Settings] Failed to decrypt TMDB Key:', e);
         }
       }
+
+      setSyncConflicts(await getSyncConflicts());
 
       // 3. 加载代理设置
       const savedProxy = await getSettingAsync('network_proxy');
@@ -177,8 +182,8 @@ export default function SettingsModal({
   async function handleSync() {
     setSyncStatus('正在同步...');
     try {
-      const result = await syncToWebDAV(records);
-      if (result.ok) setSyncStatus('✅ 同步成功');
+      const result = onSync ? await onSync() : await syncToWebDAV(records);
+      if (result.ok) setSyncStatus(result.conflictCount ? `✅ 同步成功，已自动合并  处冲突` : '✅ 同步成功');
       else setSyncStatus(`❌ 同步失败: ${result.error}`);
     } catch (e: any) {
       setSyncStatus(`❌ 出错: ${e.message}`);
@@ -186,7 +191,24 @@ export default function SettingsModal({
     setTimeout(() => setSyncStatus(''), 3000);
   }
 
-  // 从云端导入
+  async function handleRestoreConflict(conflict: SyncConflict) {
+    if (!onRestoreConflict) return;
+    if (!confirm(`确定恢复「${conflict.discarded.chineseName}」的被覆盖版本吗？恢复后会在下次同步时上传。`)) return;
+    await onRestoreConflict(conflict.discarded);
+    const remaining = syncConflicts.filter(item => item !== conflict);
+    await clearSyncConflicts();
+    // 保留未处理的记录。
+    if (remaining.length) {
+      await setSettingAsync('sync_conflicts', JSON.stringify(remaining));
+    }
+    setSyncConflicts(remaining);
+  }
+
+  async function handleClearConflicts() {
+    if (!confirm('确定清空全部冲突记录吗？此操作不会删除任何影视条目。')) return;
+    await clearSyncConflicts();
+    setSyncConflicts([]);
+  }  // 从云端导入
   async function handleImport() {
     if (confirm('导入将覆盖当前所有本地数据，确定吗？')) {
       setImportStatus('下载并解密中...');
@@ -509,7 +531,7 @@ export default function SettingsModal({
       </div>
 
       {/* 右侧核心内容区 */}
-      <div className="flex-1 overflow-y-auto bg-gray-50/50 p-6 sm:p-10 md:p-12">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-gray-50/50 p-6 pr-4 sm:p-10 sm:pr-6 md:p-12 md:pr-8 custom-scrollbar">
         <div className="max-w-3xl mx-auto space-y-8">
           {/* Tab 1: 基础配置 */}
           {activeTab === 'basic' && (
@@ -695,7 +717,35 @@ export default function SettingsModal({
                 {importStatus && <p className="text-xs text-center text-green-600 font-medium mt-1">{importStatus}</p>}
               </div>
 
-              {/* Auto Sync Settings */}
+              {/* Conflict history */}
+              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
+                <div className="flex items-center justify-between border-b border-gray-50 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">⚖️</span>
+                    <div>
+                      <h4 className="font-bold text-gray-800">同步冲突记录</h4>
+                      <p className="text-[11px] text-gray-400">自动合并时被覆盖的旧版本会暂存于此，可按需恢复</p>
+                    </div>
+                  </div>
+                  {syncConflicts.length > 0 && <button onClick={handleClearConflicts} className="text-xs text-red-500 hover:underline font-bold">清空记录</button>}
+                </div>
+                {syncConflicts.length === 0 ? (
+                  <p className="py-4 text-center text-sm text-gray-400">暂无同步冲突记录</p>
+                ) : (
+                  <div className="space-y-3 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                    {syncConflicts.map((conflict, index) => (
+                      <div key={`${conflict.id}-${conflict.at}-${index}`} className="rounded-2xl border border-amber-100 bg-amber-50/50 p-4 flex items-center gap-3">
+                        <span className="text-xl">⚠️</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-bold text-gray-800">{conflict.discarded.chineseName || '未命名条目'}</p>
+                          <p className="text-[11px] text-gray-500">保留了{conflict.kept === 'local' ? '本机' : '云端'}版本 · {new Date(conflict.at).toLocaleString('zh-CN')}</p>
+                        </div>
+                        <button onClick={() => handleRestoreConflict(conflict)} disabled={!onRestoreConflict} className="shrink-0 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:bg-gray-300">恢复此版本</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>              {/* Auto Sync Settings */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
                 <div className="flex items-center gap-2.5 border-b border-gray-50 pb-4">
                   <span className="text-2xl">⏱️</span>

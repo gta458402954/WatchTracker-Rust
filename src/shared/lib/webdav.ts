@@ -1,118 +1,111 @@
-/**
- * webdav.ts - 坚果云 WebDAV 同步工具
- * 
- * 凭据存储已升级为 Electron safeStorage 加密模式
- */
-
+/** WebDAV 同步：按记录时间合并，兼容旧版 JSON 数组。 */
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt } from './database';
+import { WatchRecord } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 const WEBDAV_URL = 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/records.json';
+const TOMBSTONES_KEY = 'sync_tombstones';
+const CONFLICTS_KEY = 'sync_conflicts';
 
-export interface WebDAVCreds {
-  username: string;
-  password: string;
-}
+export interface WebDAVCreds { username: string; password: string; }
+interface Tombstone { id: string; deletedAt: string; }
+interface SyncPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: Tombstone[]; }
+export interface SyncResult { ok: boolean; error?: string; records?: WatchRecord[]; conflictCount?: number; }
+export interface SyncConflict { id: string; kept: 'local' | 'remote'; at: string; discarded: WatchRecord; }
 
-/** 保存 WebDAV 凭据（同步至数据库以支持便携化） */
 export async function saveCreds(creds: WebDAVCreds) {
-  const plainText = `${creds.username}:${creds.password}`;
-  const encrypted = await safeEncrypt(plainText, 'webdav_creds');
+  const encrypted = await safeEncrypt(`${creds.username}:${creds.password}`, 'webdav_creds');
   await setSettingAsync('webdav_creds', encrypted);
 }
-
-/** 获取并解密 WebDAV 凭据 */
 export async function getCreds(): Promise<WebDAVCreds | null> {
   const stored = await getSettingAsync('webdav_creds');
   if (!stored) return null;
   try {
     const decrypted = await safeDecrypt(stored);
+    if (!decrypted || decrypted.startsWith('__ERR_DECRYPT')) return null;
+    const separator = decrypted.indexOf(':');
+    return separator < 0 ? null : { username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1) };
+  } catch { return null; }
+}
+export async function clearCreds() { await setSettingAsync('webdav_creds', ''); }
+export async function hasCreds(): Promise<boolean> { return !!(await getSettingAsync('webdav_creds')); }
 
-    // 检查主进程返回的加密错误标记
-    if (decrypted === '__ERR_DECRYPT_FAILED__' || decrypted === '__ERR_DECRYPT_VERSION_MISMATCH__') {
-      throw new Error('DECRYPT_FAILED');
-    }
-    
-    if (!decrypted) return null;
-    const [username, password] = decrypted.split(':');
-    return { username, password };
-  } catch (e: any) {
-    if (e.message === 'DECRYPT_FAILED') throw e;
-    return null;
+function parsePayload(data: unknown): SyncPayload {
+  if (Array.isArray(data)) return { schemaVersion: 2, updatedAt: '', records: data as WatchRecord[], tombstones: [] };
+  if (data && typeof data === 'object') {
+    const value = data as Partial<SyncPayload>;
+    return { schemaVersion: 2, updatedAt: value.updatedAt ?? '', records: Array.isArray(value.records) ? value.records : [], tombstones: Array.isArray(value.tombstones) ? value.tombstones : [] };
   }
+  return { schemaVersion: 2, updatedAt: '', records: [], tombstones: [] };
+}
+function timeOf(record: WatchRecord) { const time = Date.parse(record.updatedAt || record.createdAt || ''); return Number.isNaN(time) ? 0 : time; }
+function timeOfDeletion(tombstone: Tombstone) { const time = Date.parse(tombstone.deletedAt); return Number.isNaN(time) ? 0 : time; }
+async function getTombstones(): Promise<Tombstone[]> { try { return JSON.parse((await getSettingAsync(TOMBSTONES_KEY)) || '[]'); } catch { return []; } }
+async function setTombstones(tombstones: Tombstone[]) { await setSettingAsync(TOMBSTONES_KEY, JSON.stringify(tombstones)); }
+
+/** 删除墓碑会在下一次同步时上传，防止另一设备将已删记录重新带回。 */
+export async function markRecordDeleted(id: string) {
+  const tombstones = (await getTombstones()).filter(item => item.id !== id);
+  tombstones.push({ id, deletedAt: new Date().toISOString() });
+  await setTombstones(tombstones);
+}
+async function clearDeletion(id: string) { const tombstones = (await getTombstones()).filter(item => item.id !== id); await setTombstones(tombstones); }
+
+function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombstones: Tombstone[]) {
+  const records = new Map<string, WatchRecord>();
+  const tombstones = new Map<string, Tombstone>();
+  const conflicts: SyncConflict[] = [];
+  for (const tombstone of [...remote.tombstones, ...localTombstones]) {
+    const previous = tombstones.get(tombstone.id);
+    if (!previous || timeOfDeletion(tombstone) > timeOfDeletion(previous)) tombstones.set(tombstone.id, tombstone);
+  }
+  for (const record of remote.records) records.set(record.id, record);
+  for (const record of local) {
+    const previous = records.get(record.id);
+    if (!previous) { records.set(record.id, record); continue; }
+    const localWins = record.isLocked || timeOf(record) >= timeOf(previous);
+    if (JSON.stringify(record) !== JSON.stringify(previous)) conflicts.push({ id: record.id, kept: localWins ? 'local' : 'remote', at: new Date().toISOString(), discarded: localWins ? previous : record });
+    if (localWins) records.set(record.id, record);
+  }
+  for (const [id, tombstone] of tombstones) {
+    const record = records.get(id);
+    if (record && (record.isLocked || timeOf(record) > timeOfDeletion(tombstone))) { tombstones.delete(id); continue; }
+    records.delete(id);
+  }
+  return { records: [...records.values()], tombstones: [...tombstones.values()], conflicts };
 }
 
-/** 清除 WebDAV 凭据 */
-export async function clearCreds() {
-  await setSettingAsync('webdav_creds', '');
+async function webdavRequest(method: 'MKCOL' | 'PUT' | 'GET', creds: WebDAVCreds, proxy: string | null, body?: string) {
+  return invoke('webdav_request', { method, url: method === 'MKCOL' ? 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/' : WEBDAV_URL, username: creds.username, password: creds.password, proxy, body });
 }
 
-/** 检查是否已配置 WebDAV 凭据 */
-export async function hasCreds(): Promise<boolean> {
-  const stored = await getSettingAsync('webdav_creds');
-  return !!stored;
-}
-
-/** 同步数据到坚果云 WebDAV */
-export async function syncToWebDAV(records: unknown): Promise<{ ok: boolean; error?: string }> {
+/** 合并本机与云端数据，再写回云端。冲突按 updatedAt 决定，锁定记录始终优先本机。 */
+export async function syncToWebDAV(localRecords: WatchRecord[]): Promise<SyncResult> {
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
-
   const proxy = await getSettingAsync('network_proxy');
-
   try {
-    // 先尝试创建目录（如果不存在）
-    // 忽略错误，因为如果目录已存在，MKCOL 会返回 405
-    try {
-      await invoke('webdav_request', {
-        method: 'MKCOL',
-        url: 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/',
-        username: creds.username,
-        password: creds.password,
-        proxy
-      });
-    } catch (e) {
-      // 忽略目录创建错误，继续尝试上传
-      console.log('MKCOL note:', e);
+    try { await webdavRequest('MKCOL', creds, proxy); } catch { /* 已存在时忽略 */ }
+    let remote = parsePayload([]);
+    try { remote = parsePayload(await webdavRequest('GET', creds, proxy)); } catch (error) { if (!String(error).includes('404')) throw error; }
+    const merged = mergeSyncState(localRecords, remote, await getTombstones());
+    const payload: SyncPayload = { schemaVersion: 2, updatedAt: new Date().toISOString(), records: merged.records, tombstones: merged.tombstones };
+    await webdavRequest('PUT', creds, proxy, JSON.stringify(payload));
+    await setTombstones(merged.tombstones);
+    if (merged.conflicts.length) {
+      const old = JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]');
+      await setSettingAsync(CONFLICTS_KEY, JSON.stringify([...merged.conflicts, ...old].slice(0, 50)));
     }
-
-    // 上传文件
-    await invoke('webdav_request', {
-      method: 'PUT',
-      url: WEBDAV_URL,
-      username: creds.username,
-      password: creds.password,
-      body: JSON.stringify(records),
-      proxy
-    });
-
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e.toString() };
-  }
+    return { ok: true, records: merged.records, conflictCount: merged.conflicts.length };
+  } catch (error) { return { ok: false, error: String(error) }; }
 }
 
-/** 从坚果云 WebDAV 加载数据 */
-export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: WatchRecord[]; error?: string }> {
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
-
-  const proxy = await getSettingAsync('network_proxy');
-
-  try {
-    const data = await invoke('webdav_request', {
-      method: 'GET',
-      url: WEBDAV_URL,
-      username: creds.username,
-      password: creds.password,
-      proxy
-    });
-
-    return { ok: true, data };
-  } catch (e: any) {
-    if (e.toString().includes('404')) {
-      return { ok: false, error: '云端暂无数据' };
-    }
-    return { ok: false, error: e.toString() };
-  }
+  try { return { ok: true, data: parsePayload(await webdavRequest('GET', creds, await getSettingAsync('network_proxy'))).records }; }
+  catch (error) { return { ok: false, error: String(error).includes('404') ? '云端暂无数据' : String(error) }; }
 }
+export async function getSyncConflicts(): Promise<SyncConflict[]> { try { return JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]'); } catch { return []; } }
+export async function clearSyncConflicts() { await setSettingAsync(CONFLICTS_KEY, '[]'); }
+export async function clearRecordDeletion(id: string) { await clearDeletion(id); }

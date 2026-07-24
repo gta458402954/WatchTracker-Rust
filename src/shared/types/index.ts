@@ -21,6 +21,7 @@ export interface WatchRecord {
   category: Category;
   notes: string;
   createdAt: string;
+  updatedAt?: string | null;
   imdbId: string | null;
   isLocked?: boolean;
   sortOrder?: number;

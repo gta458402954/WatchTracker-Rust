@@ -9,7 +9,7 @@ import StatsBar from '../features/watchlist/components/StatsBar';
 import RecordForm from '../features/watchlist/components/RecordForm';
 import SettingsModal from '../features/settings/components/SettingsModal';
 import Dashboard from '../features/dashboard/components/Dashboard';
-import { syncToWebDAV, hasCreds } from '../shared/lib/webdav';
+import { hasCreds } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
 
 // New Split Components
@@ -22,7 +22,7 @@ type FilterStatus = Status | 'all';
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
   const { 
-    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords,
+    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords, syncNow, restoreRecord,
     isSyncPaused, toggleSyncPause 
   } = useWatchList(syncInterval);
   
@@ -77,7 +77,7 @@ export default function App() {
     }
     setSyncing(true);
     setSyncMsg('');
-    const result = await syncToWebDAV(records);
+    const result = await syncNow();
     setSyncing(false);
     if (result.ok) {
       setSyncMsg('✅ 已同步');
@@ -127,6 +127,14 @@ export default function App() {
         return (b.createdAt || '') > (a.createdAt || '') ? 1 : -1;
       });
   }, [records, activeCategory, filterStatus, searchText, sortBy, lockFilter]);
+
+  // 排序必须基于完整记录集，否则筛选后的局部顺序会与未筛选记录发生冲突。
+  const canReorder =
+    sortBy === 'custom' &&
+    activeCategory === 'all' &&
+    filterStatus === 'all' &&
+    lockFilter === 'all' &&
+    searchText.trim() === '';
 
   function handleEdit(record: WatchRecord) {
     setEditingRecord(record);
@@ -190,6 +198,7 @@ export default function App() {
   );
 
   function handleDragEnd(event: DragEndEvent) {
+    if (!canReorder) return;
     const { active, over } = event;
     if (over && active.id !== over.id) {
       const oldIndex = filtered.findIndex((r) => r.id === active.id);
@@ -308,18 +317,25 @@ export default function App() {
             )}
           </div>
         ) : viewMode === 'list' ? (
-          <ListView
-            filtered={filtered}
-            sensors={sensors}
-            onDragEnd={handleDragEnd}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onLockToggle={handleLockToggle}
-            onStatusChange={handleStatusChange}
-            onProgressChange={handleProgressChange}
-            getEmoji={getEmoji}
-            sortBy={sortBy}
-          />
+          <>
+            {sortBy === 'custom' && !canReorder && (
+              <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                清除分类、状态、锁定和搜索筛选后，才可调整自定义排序。
+              </p>
+            )}
+            <ListView
+              filtered={filtered}
+              sensors={sensors}
+              onDragEnd={handleDragEnd}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onLockToggle={handleLockToggle}
+              onStatusChange={handleStatusChange}
+              onProgressChange={handleProgressChange}
+              getEmoji={getEmoji}
+              canReorder={canReorder}
+            />
+          </>
         ) : (
           <PosterWall
             filtered={filtered}
@@ -353,6 +369,8 @@ export default function App() {
             setHasWebDAVCreds(credsOk);
           }}
           onImport={handleImport}
+          onSync={syncNow}
+          onRestoreConflict={restoreRecord}
           onRefresh={loadRecords}
           syncInterval={syncInterval}
           onSyncIntervalChange={setSyncInterval}

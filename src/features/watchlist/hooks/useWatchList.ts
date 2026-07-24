@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { WatchRecord } from '../../../shared/types';
 import {
   getAllRecordsAsync,
@@ -8,7 +8,7 @@ import {
   replaceAllRecords,
   reorderRecords as dbReorderRecords,
 } from '../../../shared/lib/database';
-import { syncToWebDAV, hasCreds } from '../../../shared/lib/webdav';
+import { syncToWebDAV, hasCreds, markRecordDeleted, clearRecordDeletion } from '../../../shared/lib/webdav';
 
 export function useWatchList(syncInterval = 30) {
   const [records, setRecords] = useState<WatchRecord[]>([]);
@@ -16,8 +16,19 @@ export function useWatchList(syncInterval = 30) {
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef(syncInterval);
 
-  // 同步最新的 interval
-  intervalRef.current = syncInterval;
+  // 同步最新的 interval，避免在 render 阶段修改 ref。
+  useEffect(() => {
+    intervalRef.current = syncInterval;
+  }, [syncInterval]);
+
+  // 组件卸载时清除尚未执行的同步任务。
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+      }
+    };
+  }, []);
 
   // 加载所有记录
   const loadRecords = useCallback(async () => {
@@ -28,7 +39,7 @@ export function useWatchList(syncInterval = 30) {
 
   // 自动同步到坚果云 WebDAV（增加防抖处理，避免频繁更新）
   const autoSyncDebounced = useCallback((updatedRecords: WatchRecord[]) => {
-    if (!hasCreds() || isSyncPaused) return;
+    if (isSyncPaused) return;
 
     // 清除之前的定时器
     if (syncTimerRef.current) {
@@ -38,11 +49,19 @@ export function useWatchList(syncInterval = 30) {
     // 使用配置的秒数（转为毫秒）
     const ms = intervalRef.current * 1000;
     
-    syncTimerRef.current = setTimeout(() => {
+    syncTimerRef.current = setTimeout(async () => {
+      // 凭据可能在定时器等待期间被清除，因此在实际发起请求前检查。
+      if (!(await hasCreds())) {
+        syncTimerRef.current = null;
+        return;
+      }
+
       console.log(`[Sync] Triggering debounced auto-sync after ${intervalRef.current}s...`);
-      syncToWebDAV(updatedRecords).catch(() => {
-        // 静默失败
-      });
+      const result = await syncToWebDAV(updatedRecords);
+      if (result.ok && result.records) {
+        await replaceAllRecords(result.records);
+        setRecords(await getAllRecordsAsync());
+      }
       syncTimerRef.current = null;
     }, ms); 
   }, [isSyncPaused]);
@@ -64,6 +83,7 @@ export function useWatchList(syncInterval = 30) {
       ...record,
       id: Date.now().toString(),
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     await insertRecord(newRecord);
     setRecords(prev => {
@@ -74,15 +94,18 @@ export function useWatchList(syncInterval = 30) {
   }, [autoSyncDebounced]);
 
   const updateRecord = useCallback(async (id: string, updates: Partial<WatchRecord>) => {
-    await dbUpdateRecord(id, updates);
+    const syncedUpdates = { ...updates, updatedAt: new Date().toISOString() };
+    await clearRecordDeletion(id);
+    await dbUpdateRecord(id, syncedUpdates);
     setRecords(prev => {
-      const updated = prev.map(r => r.id === id ? { ...r, ...updates } : r);
+      const updated = prev.map(r => r.id === id ? { ...r, ...syncedUpdates } : r);
       autoSyncDebounced(updated);
       return updated;
     });
   }, [autoSyncDebounced]);
 
   const deleteRecord = useCallback(async (id: string) => {
+    await markRecordDeleted(id);
     await dbDeleteRecord(id);
     setRecords(prev => {
       const updated = prev.filter(r => r.id !== id);
@@ -124,5 +147,24 @@ export function useWatchList(syncInterval = 30) {
     });
   }, [autoSyncDebounced]);
 
-  return { records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords, isSyncPaused, toggleSyncPause };
+  const restoreRecord = useCallback(async (record: WatchRecord) => {
+    const restored = { ...record, updatedAt: new Date().toISOString() };
+    await clearRecordDeletion(restored.id);
+    await insertRecord(restored);
+    setRecords(prev => {
+      const updated = prev.some(item => item.id === restored.id)
+        ? prev.map(item => item.id === restored.id ? restored : item)
+        : [restored, ...prev];
+      autoSyncDebounced(updated);
+      return updated;
+    });
+  }, [autoSyncDebounced]);  const syncNow = useCallback(async () => {
+    const result = await syncToWebDAV(records);
+    if (result.ok && result.records) {
+      await replaceAllRecords(result.records);
+      setRecords(await getAllRecordsAsync());
+    }
+    return result;
+  }, [records]);
+  return { records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, reorderRecords, syncNow, restoreRecord, isSyncPaused, toggleSyncPause };
 }

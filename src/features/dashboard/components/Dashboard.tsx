@@ -1,299 +1,89 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { WatchRecord } from '../../../shared/types';
-import {
-  calculateTotalRuntime,
-  getPlatformDistribution,
-  getGenreDistribution,
-  getEraDistribution
-} from '../../../shared/lib/analytics';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer,
-  Cell, Radar, RadarChart, PolarGrid, PolarAngleAxis,
-  LineChart, Line
-} from 'recharts';
+import { calculateWatchValue, getGenreDistribution } from '../../../shared/lib/analytics';
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-interface DashboardProps {
-  onClose: () => void;
-  records: WatchRecord[];
+interface DashboardProps { onClose: () => void; records: WatchRecord[]; }
+type DateRange = 'week' | 'month' | 'year' | 'all';
+const RANGE_LABELS: Record<DateRange, string> = { week: '本周', month: '近 30 天', year: '近一年', all: '全部' };
+
+function recordDate(record: WatchRecord) { return new Date(record.endDate || record.createdAt); }
+function estimatedMinutes(record: WatchRecord) {
+  if (['电影', '纪录片', '动画'].includes(record.category)) return Math.ceil((record.movieDuration || 120 * 60) / 60);
+  return record.episodeRuntime || 45;
 }
-
-const COLORS = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899', '#06B6D4', '#F97316'];
-
-const getCategoryEmoji = (category: string) => {
-  const defaults: Record<string, string> = {
-    "电影": "🎬",
-    "纪录片": "🌍",
-    "动画": "🦄",
-    "美剧": "🇺🇸",
-    "英剧": "🇬🇧",
-    "日剧": "🇯🇵",
-    "韩剧": "🇰🇷",
-    "国产剧": "🇨🇳",
-    "港剧": "🇭🇰",
-    "台剧": "🇹🇼",
-    "综艺": "🎭",
-  };
-  return defaults[category] || "🎬";
-};
+function formatDuration(minutes: number) { return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60 ? `${minutes % 60} 分` : ''}` : `${minutes} 分`; }
 
 export default function Dashboard({ onClose, records }: DashboardProps) {
-  const [totalStats, setTotalStats] = useState<any>(null);
-  const [platforms, setPlatforms] = useState<any[]>([]);
-  const [genres, setGenres] = useState<any[]>([]);
-  const [eras, setEras] = useState<any[]>([]);
-  const [topRatedShow, setTopRatedShow] = useState<WatchRecord | null>(null);
-  const [recentActivity, setRecentActivity] = useState<WatchRecord[]>([]);
+  const [range, setRange] = useState<DateRange>('all');
+  const [tonightMinutes, setTonightMinutes] = useState<30 | 60 | 120 | 0>(120);
+  const [recommendationIndex, setRecommendationIndex] = useState(0);
 
   useEffect(() => {
-    // 计算统计指标
-    const runtime = calculateTotalRuntime(records);
-    
-    const total = records.length;
-    const watched = records.filter(r => r.status === '已看').length;
-    const unwatched = records.filter(r => r.status === '未看').length;
-    const completionRate = total > 0 ? Math.round((watched / total) * 100) : 0;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
-    setTotalStats({
-      total,
-      watched,
-      unwatched,
-      completionRate,
-      runtime
+  const scopedRecords = useMemo(() => {
+    if (range === 'all') return records;
+    const start = new Date();
+    if (range === 'week') start.setDate(start.getDate() - 6);
+    if (range === 'month') start.setDate(start.getDate() - 29);
+    if (range === 'year') start.setFullYear(start.getFullYear() - 1);
+    return records.filter(record => recordDate(record) >= start);
+  }, [records, range]);
+
+  const summary = useMemo(() => {
+    const completed = scopedRecords.filter(record => record.status === '已看');
+    const watching = scopedRecords.filter(record => record.status === '在看');
+    const pending = scopedRecords.filter(record => record.status === '未看');
+    const minutes = completed.reduce((total, record) => total + estimatedMinutes(record), 0);
+    return { completed, watching, pending, minutes, completionRate: scopedRecords.length ? Math.round(completed.length / scopedRecords.length * 100) : 0 };
+  }, [scopedRecords]);
+
+  const candidates = useMemo(() => records.filter(record => record.status === '未看' && !record.isLocked && (!tonightMinutes || estimatedMinutes(record) <= tonightMinutes))
+    .sort((a, b) => calculateWatchValue(b, records) - calculateWatchValue(a, records)), [records, tonightMinutes]);
+  const recommendation = candidates.length ? candidates[recommendationIndex % candidates.length] : null;
+
+  const trend = useMemo(() => {
+    const count = range === 'week' ? 7 : range === 'month' ? 5 : 12;
+    const buckets = Array.from({ length: count }, () => ({ name: '', value: 0, start: new Date() }));
+    buckets.forEach((bucket, index) => {
+      const date = new Date();
+      if (range === 'week') date.setDate(date.getDate() - (count - 1 - index));
+      else if (range === 'month') date.setDate(date.getDate() - (count - 1 - index) * 7);
+      else date.setMonth(date.getMonth() - (count - 1 - index));
+      bucket.start = date;
+      bucket.name = range === 'week' ? `${date.getMonth() + 1}/${date.getDate()}` : range === 'month' ? `第 ${index + 1} 周` : `${date.getMonth() + 1} 月`;
     });
-
-    setPlatforms(getPlatformDistribution(records));
-    setGenres(getGenreDistribution(records));
-    setEras(getEraDistribution(records));
-
-    // 计算最佳资产 (殿堂神作)
-    const watchedShows = records.filter(r => r.status === '已看');
-    const ratedShows = watchedShows.filter(r => r.rating !== null && r.rating !== undefined);
-    
-    if (ratedShows.length > 0) {
-      // 按照评分降序，完结时间或创建时间降序排序
-      const sortedRated = [...ratedShows].sort((a, b) => {
-        const ratingDiff = (b.rating || 0) - (a.rating || 0);
-        if (ratingDiff !== 0) return ratingDiff;
-        const timeA = a.endDate || a.createdAt || '';
-        const timeB = b.endDate || b.createdAt || '';
-        return timeB.localeCompare(timeA);
-      });
-      setTopRatedShow(sortedRated[0]);
-    } else {
-      setTopRatedShow(null);
-    }
-
-    // 获取最近看完的 4 条记录
-    const sortedWatched = [...watchedShows].sort((a, b) => {
-      const timeA = a.endDate || a.createdAt || '';
-      const timeB = b.endDate || b.createdAt || '';
-      return timeB.localeCompare(timeA);
+    summary.completed.forEach(record => {
+      const date = recordDate(record);
+      let index = -1;
+      if (range === 'week') index = Math.floor((date.getTime() - buckets[0].start.getTime()) / 86_400_000);
+      else if (range === 'month') index = Math.floor((date.getTime() - buckets[0].start.getTime()) / (7 * 86_400_000));
+      else index = (date.getFullYear() - buckets[0].start.getFullYear()) * 12 + date.getMonth() - buckets[0].start.getMonth();
+      if (index >= 0 && index < buckets.length) buckets[index].value++;
     });
-    setRecentActivity(sortedWatched.slice(0, 4));
+    return buckets.map(({ name, value }) => ({ name, value }));
+  }, [range, summary.completed]);
 
-    // ESC 键退出
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [records, onClose]);
+  const recentCompleted = useMemo(() => [...summary.completed].sort((a, b) => recordDate(b).getTime() - recordDate(a).getTime()).slice(0, 3), [summary.completed]);
+  const genres = useMemo(() => getGenreDistribution(scopedRecords).slice(0, 5), [scopedRecords]);
 
-  if (!totalStats) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col p-4 sm:p-6 bg-[#0B1120] text-gray-300 font-sans overflow-hidden">
-      {/* 背景光晕 */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/20 via-[#0B1120] to-[#0B1120] pointer-events-none"></div>
-      
-      {/* 顶部栏 */}
-      <div className="flex items-center justify-between mb-6 shrink-0 relative z-10">
-        <div className="flex items-center gap-3 select-none">
-          <span className="text-4xl">📊</span>
-          <div>
-            <h2 className="text-2xl font-black text-white tracking-wider uppercase">影视投资看板</h2>
-            <p className="text-xs text-gray-500 font-mono">Watch Asset Dashboard</p>
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          className="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
-      {/* 滚动区域 */}
-      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-6 relative z-10">
-        
-        {/* 数据指标卡片 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 select-none">
-          {/* 卡片 1: 总库存 */}
-          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-4 relative overflow-hidden shadow-lg backdrop-blur-sm">
-            <div className="absolute top-0 right-0 p-4 opacity-10 text-4xl">📉</div>
-            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">总库存量</p>
-            <h3 className="text-2xl font-black text-white">{totalStats.total} <span className="text-xs text-gray-400 font-normal">部</span></h3>
-            <p className="text-[10px] text-gray-400 mt-2">
-              已看 <span className="text-green-400 font-bold">{totalStats.watched}</span> 未看 <span className="text-blue-400 font-bold">{totalStats.unwatched}</span>
-            </p>
-          </div>
-
-          {/* 卡片 2: 变现率 */}
-          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-4 relative overflow-hidden shadow-lg backdrop-blur-sm">
-            <div className="absolute top-0 right-0 p-4 opacity-10 text-4xl">🎯</div>
-            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">库存变现率</p>
-            <h3 className="text-2xl font-black text-white">{totalStats.completionRate} <span className="text-xs text-gray-400 font-normal">%</span></h3>
-            <div className="w-full bg-gray-800 h-1.5 rounded-full mt-3 overflow-hidden">
-              <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${totalStats.completionRate}%` }}></div>
-            </div>
-          </div>
-
-          {/* 卡片 3: 总时长 */}
-          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-4 relative overflow-hidden shadow-lg backdrop-blur-sm">
-            <div className="absolute top-0 right-0 p-4 opacity-10 text-4xl">⌛</div>
-            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">已变现总时长</p>
-            <h3 className="text-2xl font-black text-amber-500">{totalStats.runtime.days} <span className="text-xs text-gray-400 font-normal text-white">天</span> {totalStats.runtime.hours} <span className="text-xs text-gray-400 font-normal text-white">小时</span></h3>
-            <p className="text-[10px] text-gray-400 mt-2">总计约 {Math.round(totalStats.runtime.totalMinutes / 60).toLocaleString()} 小时</p>
-          </div>
-
-          {/* 卡片 4: 殿堂神作 */}
-          <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-4 relative overflow-hidden shadow-lg backdrop-blur-sm animate-fade-in">
-            <div className="absolute top-0 right-0 p-4 opacity-10 text-4xl">🏆</div>
-            <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">殿堂神作</p>
-            <h3 className="text-lg font-bold text-white truncate" title={topRatedShow?.chineseName || '暂无评分'}>
-              {topRatedShow?.chineseName || '暂无评分'}
-            </h3>
-            <p className="text-[10px] text-gray-400 mt-2">
-              {topRatedShow ? `个人评分 ⭐ ${topRatedShow.rating}.0` : '期待你的第一个打分'}
-            </p>
-          </div>
-        </div>
-
-        {/* 图表展示区 */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 厂牌持仓 Top 10 */}
-          <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 shadow-lg backdrop-blur-sm">
-            <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2 select-none">
-              <span className="w-1.5 h-3 bg-blue-500 rounded-full"></span> 厂牌来源持仓 (TOP 10)
-            </h4>
-            <div className="h-[300px] w-full select-none">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={platforms}
-                  margin={{ top: 10, right: 10, left: 40, bottom: 5 }}
-                >
-                  <XAxis type="number" hide />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    stroke="#9CA3AF"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <RechartsTooltip 
-                    cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
-                    contentStyle={{ backgroundColor: '#1F2937', borderColor: '#374151', borderRadius: '8px', color: '#FFF' }}
-                  />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14}>
-                    {platforms.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* 题材基因雷达 */}
-          <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 shadow-lg backdrop-blur-sm">
-            <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2 select-none">
-              <span className="w-1.5 h-3 bg-purple-500 rounded-full"></span> 题材基因雷达
-            </h4>
-            <div className="h-[300px] w-full flex items-center justify-center select-none">
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={genres}>
-                  <PolarGrid stroke="#374151" />
-                  <PolarAngleAxis dataKey="name" stroke="#9CA3AF" fontSize={11} />
-                  <Radar
-                    name="数量"
-                    dataKey="value"
-                    stroke="#8B5CF6"
-                    fill="#8B5CF6"
-                    fillOpacity={0.3}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-
-        {/* 年代资产分布 */}
-        <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 shadow-lg backdrop-blur-sm">
-          <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2 select-none">
-            <span className="w-1.5 h-3 bg-emerald-500 rounded-full"></span> 年代资产分布
-          </h4>
-          <div className="h-[200px] w-full select-none">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={eras} margin={{ top: 10, right: 20, left: -20, bottom: 5 }}>
-                <XAxis dataKey="name" stroke="#9CA3AF" fontSize={11} tickLine={false} />
-                <YAxis stroke="#9CA3AF" fontSize={11} tickLine={false} />
-                <RechartsTooltip 
-                  contentStyle={{ backgroundColor: '#1F2937', borderColor: '#374151', borderRadius: '8px', color: '#FFF' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="#10B981"
-                  strokeWidth={3}
-                  dot={{ fill: '#10B981', r: 4, strokeWidth: 0 }}
-                  activeDot={{ r: 6 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* 近期动态板块 */}
-        <div className="bg-gray-900/40 border border-gray-800 rounded-2xl p-5 shadow-lg backdrop-blur-sm">
-          <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2 select-none">
-            <span className="w-1.5 h-3 bg-indigo-500 rounded-full"></span> ⚡ 近期动态
-          </h4>
-          {recentActivity.length === 0 ? (
-            <div className="text-center py-6 text-xs text-gray-500 select-none">
-              暂无近期已看影视记录
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {recentActivity.map(item => {
-                const watchDate = item.endDate || item.startDate || item.createdAt || '';
-                const displayDate = watchDate ? watchDate.slice(5, 10) || watchDate : '未知时间';
-                return (
-                  <div key={item.id} className="bg-gray-950/40 border border-gray-800/80 rounded-xl p-3.5 flex flex-col justify-between hover:border-indigo-500/50 transition-colors shadow-inner">
-                    <div className="flex items-start gap-2.5 min-w-0">
-                      <span className="text-lg select-none shrink-0">{getCategoryEmoji(item.category)}</span>
-                      <div className="min-w-0">
-                        <h5 className="text-sm font-semibold text-white truncate" title={item.chineseName}>{item.chineseName}</h5>
-                        <p className="text-[10px] text-gray-500 mt-1 font-mono">{displayDate} 看完</p>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between border-t border-gray-900/60 pt-2.5">
-                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">{item.category}</span>
-                      <span className="text-xs text-amber-500 font-bold">
-                        {item.rating ? `★ ${item.rating}/10` : '未打分'}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-      </div>
-    </div>
-  );
+  return <div className="fixed inset-0 z-50 flex flex-col bg-[#0b1020] p-5 text-slate-200 sm:p-7 overflow-hidden">
+    <header className="relative z-10 flex shrink-0 items-center justify-between border-b border-slate-800 pb-5">
+      <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400">WatchTracker</p><h2 className="mt-1 text-2xl font-black text-white">观看概览</h2></div>
+      <div className="flex items-center gap-3"><div className="hidden rounded-xl bg-slate-900 p-1 sm:flex">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${range === item ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>{RANGE_LABELS[item]}</button>)}</div><button onClick={onClose} className="rounded-xl bg-slate-800 p-2 text-slate-400 hover:bg-slate-700 hover:text-white" aria-label="关闭"><svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18 18 6M6 6l12 12" /></svg></button></div>
+    </header>
+    <div className="relative z-10 mt-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-bold ${range === item ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{RANGE_LABELS[item]}</button>)}</div>
+    <main className="custom-scrollbar relative z-10 mt-5 flex-1 overflow-y-auto pr-2">
+      <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950 to-slate-900 p-5">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="text-xs font-bold text-indigo-300">今晚看什么</p><h3 className="mt-1 text-xl font-black text-white">{recommendation?.chineseName || '暂无符合条件的待看作品'}</h3><p className="mt-2 text-sm text-slate-400">{recommendation ? `${recommendation.category} · 约 ${formatDuration(estimatedMinutes(recommendation))} · ${recommendation.tmdbStatus === 'Ended' ? '已完结' : '待探索'} · 待看价值 ${calculateWatchValue(recommendation, records)}` : '试试放宽时长限制，或添加新的待看记录。'}</p></div><div className="flex flex-wrap items-center gap-2">{([30,60,120,0] as const).map(minutes => <button key={minutes} onClick={() => { setTonightMinutes(minutes); setRecommendationIndex(0); }} className={`rounded-lg px-3 py-2 text-xs font-bold ${tonightMinutes === minutes ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300'}`}>{minutes || '不限'}</button>)}<button onClick={() => setRecommendationIndex(value => value + 1)} disabled={!recommendation} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-40">换一个</button></div></div>
+      </section>
+      <section className="mt-5 grid gap-4 md:grid-cols-3"><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">本期完成</p><p className="mt-2 text-3xl font-black text-white">{summary.completed.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">观看约 {formatDuration(summary.minutes)}</p></article><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">待看清单</p><p className="mt-2 text-3xl font-black text-white">{summary.pending.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">在看 {summary.watching.length} 部</p></article><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">本期完成率</p><p className="mt-2 text-3xl font-black text-emerald-400">{summary.completionRate}%</p><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${summary.completionRate}%` }}/></div></article></section>
+      <section className="mt-5 grid gap-5 lg:grid-cols-[1.35fr_0.65fr]"><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><div className="flex items-center justify-between"><h3 className="font-bold text-white">完成趋势</h3><span className="text-xs text-slate-500">{range === 'week' ? '按日' : range === 'month' ? '按周' : '按月'}</span></div><div className="mt-4 h-52"><ResponsiveContainer width="100%" height="100%"><BarChart data={trend}><XAxis dataKey="name" tickLine={false} axisLine={false} stroke="#64748b" fontSize={11}/><YAxis allowDecimals={false} tickLine={false} axisLine={false} stroke="#64748b" fontSize={11}/><Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '10px' }}/><Bar dataKey="value" fill="#818cf8" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></article><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">正在观看</h3><div className="mt-3 space-y-3">{summary.watching.length ? summary.watching.slice(0,3).map(record => <div key={record.id} className="rounded-xl bg-slate-800/70 p-3"><p className="truncate text-sm font-bold text-white">{record.chineseName}</p><p className="mt-1 text-xs text-slate-400">{record.progress || '尚未记录进度'}{record.totalEpisodes ? ` / ${record.totalEpisodes} 集` : ''}</p></div>) : <p className="py-8 text-center text-sm text-slate-500">暂无正在观看的项目</p>}</div></article></section>
+      <section className="mt-5 grid gap-5 pb-5 lg:grid-cols-2"><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">最近完成</h3><div className="mt-3 divide-y divide-slate-800">{recentCompleted.length ? recentCompleted.map(record => <div key={record.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-semibold text-white">{record.chineseName}</p><p className="mt-1 text-xs text-slate-500">{record.category} · {record.endDate || record.createdAt.slice(0,10)}</p></div><span className="text-sm font-bold text-amber-400">{record.rating ? `★ ${record.rating}` : '未评分'}</span></div>) : <p className="py-8 text-center text-sm text-slate-500">当前范围内暂无完成记录</p>}</div></article><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">常看题材</h3><div className="mt-4 space-y-3">{genres.map(genre => <div key={genre.name}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-300">{genre.name}</span><span className="text-slate-500">{genre.value} 部</span></div><div className="h-2 rounded-full bg-slate-800"><div className="h-full rounded-full bg-violet-400" style={{ width: `${genres[0] ? genre.value / genres[0].value * 100 : 0}%` }}/></div></div>)}</div></article></section>
+    </main>
+  </div>;
 }
