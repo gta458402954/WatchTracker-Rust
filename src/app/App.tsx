@@ -262,9 +262,9 @@ export default function App() {
         records={records}        activeCategory={activeCategory}
         onCategoryChange={setActiveCategory}
         filterStatus={filterStatus}
-        onFilterStatusChange={(status) => { setFilterStatus(status); setActiveRegion('all'); }}
+        onFilterStatusChange={setFilterStatus}
         activeRegion={activeRegion}
-        onRegionChange={(region) => { setActiveRegion(region as RegionFilter); if (region !== 'all') setFilterStatus('已看'); }}
+        onRegionChange={(region) => setActiveRegion(region as RegionFilter)}
         lastSync={lastSync}
         isSyncing={syncing}
       />
