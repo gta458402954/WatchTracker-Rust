@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "1.0.1"
+version = "1.10.0"
 description = "Portable movie and series watch tracker"
 authors = ["Mark"]
 license = ""
