@@ -1,14 +1,13 @@
-import { useState, useMemo, useEffect } from 'react';
+import { lazy, Suspense, useState, useMemo, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord, MediaType, Status } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
-import { useCategories } from '../features/categories/hooks/useCategories';
 import StatsBar from '../features/watchlist/components/StatsBar';
 import RecordForm from '../features/watchlist/components/RecordForm';
 import SettingsModal from '../features/settings/components/SettingsModal';
-import Dashboard from '../features/dashboard/components/Dashboard';
 import { hasCreds } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
+import { hasRegion, mediaTypeOf, RegionTag } from '../shared/lib/classification';
 
 // New Split Components
 import Header from '../features/watchlist/components/Header';
@@ -16,27 +15,23 @@ import ListView from '../features/watchlist/components/ListView';
 import PosterWall from '../features/watchlist/components/PosterWall';
 
 type FilterStatus = Status | 'all';
-type RegionFilter = 'all' | '美国' | '韩国' | '日本' | '英国' | '中国大陆' | '中国香港' | '中国台湾';
+type RegionFilter = 'all' | RegionTag;
 
-const LEGACY_REGION_BY_CATEGORY: Record<string, Exclude<RegionFilter, 'all'>> = {
-  美剧: '美国', 韩剧: '韩国', 日剧: '日本', 英剧: '英国', 国产剧: '中国大陆', 港剧: '中国香港', 台剧: '中国台湾',
-};
+const Dashboard = lazy(() => import('../features/dashboard/components/Dashboard'));
 
-function hasRegion(record: WatchRecord, region: Exclude<RegionFilter, 'all'>) {
-  const tags = record.contentTags?.split(',').map(tag => tag.trim()) ?? [];
-  return tags.includes(region) || LEGACY_REGION_BY_CATEGORY[record.category] === region;
+function localDateString(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
 }
 
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
-  const { 
+  const {
     records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow, restoreRecord,
-    isSyncPaused, toggleSyncPause 
+    isSyncPaused, toggleSyncPause
   } = useWatchList(syncInterval);
-  
-  const { loadCategories, getEmoji } = useCategories();
-  
-  const [activeCategory, setActiveCategory] = useState<MediaType | 'all'>('all');
+
+  const [activeMediaType, setActiveMediaType] = useState<MediaType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [activeRegion, setActiveRegion] = useState<RegionFilter>('all');
   const [searchText, setSearchText] = useState('');
@@ -64,10 +59,7 @@ export default function App() {
         if (savedInterval) {
           setSyncInterval(parseInt(savedInterval, 10));
         }
-        await Promise.all([
-          loadCategories(),
-          loadRecords()
-        ]);
+        await loadRecords();
       } catch (e) {
         console.error('[App] 加载数据失败:', e);
       } finally {
@@ -75,7 +67,7 @@ export default function App() {
       }
     }
     init();
-  }, [loadCategories, loadRecords]);
+  }, [loadRecords]);
 
   // 手动同步到坚果云 WebDAV
   async function handleQuickSync() {
@@ -86,21 +78,26 @@ export default function App() {
     }
     setSyncing(true);
     setSyncMsg('');
-    const result = await syncNow();
-    setSyncing(false);
-    if (result.ok) {
-      setSyncMsg('✅ 已同步');
-      setLastSync(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
-    } else {
-      setSyncMsg(`❌ ${result.error ?? '同步失败'}`);
+    try {
+      const result = await syncNow();
+      if (result.ok) {
+        setSyncMsg('✅ 已同步');
+        setLastSync(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+      } else {
+        setSyncMsg(`❌ ${result.error ?? '同步失败'}`);
+      }
+    } catch (error) {
+      setSyncMsg(`❌ ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncMsg(''), 3000);
     }
-    setTimeout(() => setSyncMsg(''), 3000);
   }
 
   const filtered = useMemo(() => {
     return records
       .filter(r => {
-        if (activeCategory !== 'all' && (r.mediaType || (r.category === '综艺' ? '综艺' : r.category === '动画' ? '动画' : r.category === '纪录片' ? '纪录片' : r.category === '电影' ? '电影' : '剧集')) !== activeCategory) return false;
+        if (activeMediaType !== 'all' && mediaTypeOf(r) !== activeMediaType) return false;
         if (filterStatus !== 'all' && r.status !== filterStatus) return false;
         if (activeRegion !== 'all' && !hasRegion(r, activeRegion)) return false;
         if (lockFilter === 'locked' && !r.isLocked) return false;
@@ -121,7 +118,7 @@ export default function App() {
           return (b.rating ?? -1) - (a.rating ?? -1);
         }
         if (sortBy === 'releaseYear') {
-          return (b.releaseYear || '0') > (a.releaseYear || '0') ? 1 : -1;
+          return (b.releaseYear || '').localeCompare(a.releaseYear || '', undefined, { numeric: true });
         }
         if (sortBy === 'endDate') {
           if (!a.endDate && !b.endDate) return 0;
@@ -134,9 +131,9 @@ export default function App() {
           const valB = calculateWatchValue(b, records);
           return valB - valA;
         }
-        return (b.createdAt || '') > (a.createdAt || '') ? 1 : -1;
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
       });
-  }, [records, activeCategory, filterStatus, activeRegion, searchText, sortBy, lockFilter]);
+  }, [records, activeMediaType, filterStatus, activeRegion, searchText, sortBy, lockFilter]);
 
 
   function handleEdit(record: WatchRecord) {
@@ -145,7 +142,7 @@ export default function App() {
   }
 
   async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>) {
-    const today = new Date().toISOString().split('T')[0];
+    const today = localDateString();
     if (data.status === '在看' && !data.startDate) data.startDate = today;
     if (data.status === '已看' && !data.endDate) data.endDate = today;
     if (data.originCountry && (data.originCountry.includes('CN') || data.originCountry.includes('中国'))) {
@@ -202,21 +199,20 @@ export default function App() {
   async function handleStatusChange(id: string, status: Status) {
     const record = records.find(r => r.id === id);
     const updates: Partial<WatchRecord> = { status };
-    
+
     if (status === '在看') {
       if (record && !record.startDate) {
-        updates.startDate = new Date().toISOString().slice(0, 10);
+        updates.startDate = localDateString();
       }
     }
     if (status === '已看') {
       if (record && !record.endDate) {
-        updates.endDate = new Date().toISOString().slice(0, 10);
+        updates.endDate = localDateString();
       }
-      if (record && (record.category === '电影' || record.category === '纪录片' || record.category === '动画') && record.movieDuration) {
-        updates.movieProgress = record.movieDuration;
-      }
-      if (record && !(record.category === '电影' || record.category === '纪录片' || record.category === '动画')) {
-        updates.progress = record.totalEpisodes ? `第${record.totalEpisodes}集` : '完结';
+      if (record) {
+        const episodic = Boolean(record.totalEpisodes) || ['剧集', '综艺'].includes(mediaTypeOf(record));
+        if (!episodic && record.movieDuration) updates.movieProgress = record.movieDuration;
+        if (episodic) updates.progress = record.totalEpisodes ? '第' + record.totalEpisodes + '集' : '完结';
       }
     }
     await updateRecord(id, updates);
@@ -228,7 +224,7 @@ export default function App() {
     if (record && record.status === '未看') {
       updates.status = '在看';
       if (!record.startDate) {
-        updates.startDate = new Date().toISOString().slice(0, 10);
+        updates.startDate = localDateString();
       }
     }
     await updateRecord(id, updates);
@@ -257,10 +253,11 @@ export default function App() {
         onShowForm={() => setShowForm(true)}
       />
 
-      {/* Stats & Category Tabs */}
+      {/* Stats and media type tabs */}
       <StatsBar
-        records={records}        activeCategory={activeCategory}
-        onCategoryChange={(type) => { setActiveCategory(type); setActiveRegion('all'); }}
+        records={records}
+        activeMediaType={activeMediaType}
+        onMediaTypeChange={(type) => { setActiveMediaType(type); setActiveRegion('all'); }}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         activeRegion={activeRegion}
@@ -307,7 +304,6 @@ export default function App() {
               onLockToggle={handleLockToggle}
               onStatusChange={handleStatusChange}
               onProgressChange={handleProgressChange}
-              getEmoji={getEmoji}
             />
         ) : (
           <PosterWall
@@ -347,10 +343,12 @@ export default function App() {
 
       {/* Dashboard Modal */}
       {showDashboard && (
-        <Dashboard
-          records={records}
-          onClose={() => setShowDashboard(false)}
-        />
+        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-[#0b1020] text-sm font-semibold text-slate-300">正在加载看板...</div>}>
+          <Dashboard
+            records={records}
+            onClose={() => setShowDashboard(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

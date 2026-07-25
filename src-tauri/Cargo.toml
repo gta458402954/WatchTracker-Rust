@@ -1,8 +1,8 @@
 [package]
 name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.1"
+description = "Portable movie and series watch tracker"
+authors = ["Mark"]
 license = ""
 repository = ""
 edition = "2021"
@@ -27,7 +27,5 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json", "native-tls-vendored"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "1", features = ["full"] }
-uuid = { version = "1", features = ["v4", "serde"] }
 urlencoding = "2.1"
 fern = "0.6"

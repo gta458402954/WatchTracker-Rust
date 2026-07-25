@@ -1,16 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WatchRecord } from '../../../shared/types';
 import { calculateWatchValue, getGenreDistribution } from '../../../shared/lib/analytics';
+import { mediaTypeOf } from '../../../shared/lib/classification';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 interface DashboardProps { onClose: () => void; records: WatchRecord[]; }
 type DateRange = 'week' | 'month' | 'year' | 'all';
-const RANGE_LABELS: Record<DateRange, string> = { week: '本周', month: '近 30 天', year: '近一年', all: '全部' };
+const RANGE_LABELS: Record<DateRange, string> = { week: '近 7 天', month: '近 30 天', year: '近一年', all: '全部' };
 
-function completionDate(record: WatchRecord) { return record.endDate ? new Date(record.endDate) : null; }
+function completionDate(record: WatchRecord) {
+  if (!record.endDate) return null;
+  const value = /^\d{4}-\d{2}-\d{2}$/.test(record.endDate) ? record.endDate + 'T00:00:00' : record.endDate;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 function estimatedMinutes(record: WatchRecord) {
-  if (['电影', '纪录片', '动画'].includes(record.category)) return Math.ceil((record.movieDuration || 120 * 60) / 60);
+  const episodic = Boolean(record.totalEpisodes) || ['剧集', '综艺'].includes(mediaTypeOf(record));
+  if (!episodic) return Math.ceil((record.movieDuration || 120 * 60) / 60);
   return record.episodeRuntime || 45;
+}
+function completedMinutes(record: WatchRecord) {
+  const episodic = Boolean(record.totalEpisodes) || ['剧集', '综艺'].includes(mediaTypeOf(record));
+  return episodic ? (record.totalEpisodes || 1) * (record.episodeRuntime || 45) : estimatedMinutes(record);
 }
 function formatDuration(minutes: number) { return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60 ? `${minutes % 60} 分` : ''}` : `${minutes} 分`; }
 
@@ -40,7 +51,7 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
     const added = records.filter(record => new Date(record.createdAt) >= rangeStart);
     const watching = records.filter(record => record.status === '在看');
     const pending = records.filter(record => record.status === '未看');
-    const minutes = completed.reduce((total, record) => total + estimatedMinutes(record), 0);
+    const minutes = completed.reduce((total, record) => total + completedMinutes(record), 0);
     return { completed, added, watching, pending, minutes };
   }, [records, rangeStart]);
 
@@ -56,6 +67,7 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
       if (range === 'week') date.setDate(date.getDate() - (count - 1 - index));
       else if (range === 'month') date.setDate(date.getDate() - (count - 1 - index) * 7);
       else date.setMonth(date.getMonth() - (count - 1 - index));
+      date.setHours(0, 0, 0, 0);
       bucket.start = date;
       bucket.name = range === 'week' ? `${date.getMonth() + 1}/${date.getDate()}` : range === 'month' ? `第 ${index + 1} 周` : `${date.getMonth() + 1} 月`;
     });
@@ -83,11 +95,11 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
     <div className="relative z-10 mt-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-bold ${range === item ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{RANGE_LABELS[item]}</button>)}</div>
     <main className="custom-scrollbar relative z-10 mt-5 flex-1 overflow-y-auto pr-2">
       <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950 to-slate-900 p-5">
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="text-xs font-bold text-indigo-300">今晚看什么</p><h3 className="mt-1 text-xl font-black text-white">{recommendation?.chineseName || '暂无符合条件的待看作品'}</h3><p className="mt-2 text-sm text-slate-400">{recommendation ? `${recommendation.category} · 约 ${formatDuration(estimatedMinutes(recommendation))} · ${recommendation.tmdbStatus === 'Ended' ? '已完结' : '待探索'} · 待看价值 ${calculateWatchValue(recommendation, records)}` : '试试放宽时长限制，或添加新的待看记录。'}</p></div><div className="flex flex-wrap items-center gap-2">{([30,60,120,0] as const).map(minutes => <button key={minutes} onClick={() => { setTonightMinutes(minutes); setRecommendationIndex(0); }} className={`rounded-lg px-3 py-2 text-xs font-bold ${tonightMinutes === minutes ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300'}`}>{minutes || '不限'}</button>)}<button onClick={() => setRecommendationIndex(value => value + 1)} disabled={!recommendation} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-40">换一个</button></div></div>
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="text-xs font-bold text-indigo-300">今晚看什么</p><h3 className="mt-1 text-xl font-black text-white">{recommendation?.chineseName || '暂无符合条件的待看作品'}</h3><p className="mt-2 text-sm text-slate-400">{recommendation ? `${mediaTypeOf(recommendation)} · 约 ${formatDuration(estimatedMinutes(recommendation))} · ${recommendation.tmdbStatus === 'Ended' ? '已完结' : '待探索'} · 待看价值 ${calculateWatchValue(recommendation, records)}` : '试试放宽时长限制，或添加新的待看记录。'}</p></div><div className="flex flex-wrap items-center gap-2">{([30,60,120,0] as const).map(minutes => <button key={minutes} onClick={() => { setTonightMinutes(minutes); setRecommendationIndex(0); }} className={`rounded-lg px-3 py-2 text-xs font-bold ${tonightMinutes === minutes ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300'}`}>{minutes || '不限'}</button>)}<button onClick={() => setRecommendationIndex(value => value + 1)} disabled={!recommendation} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-40">换一个</button></div></div>
       </section>
       <section className="mt-5 grid gap-4 md:grid-cols-3"><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">本期完成</p><p className="mt-2 text-3xl font-black text-white">{summary.completed.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">估算观看时长 {formatDuration(summary.minutes)}</p></article><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">待看清单</p><p className="mt-2 text-3xl font-black text-white">{summary.pending.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">全量待看 · 在看 {summary.watching.length} 部</p></article><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">本期新增</p><p className="mt-2 text-3xl font-black text-emerald-400">{summary.added.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">加入清单的影视条目</p></article></section>
       <section className="mt-5 grid gap-5 lg:grid-cols-[1.35fr_0.65fr]"><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><div className="flex items-center justify-between"><h3 className="font-bold text-white">完成趋势</h3><span className="text-xs text-slate-500">{range === 'week' ? '按日' : range === 'month' ? '按周' : range === 'all' ? '近 12 个月 · 按月' : '按月'}</span></div><div className="mt-4 h-52"><ResponsiveContainer width="100%" height="100%"><BarChart data={trend}><XAxis dataKey="name" tickLine={false} axisLine={false} stroke="#64748b" fontSize={11}/><YAxis allowDecimals={false} tickLine={false} axisLine={false} stroke="#64748b" fontSize={11}/><Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '10px' }}/><Bar dataKey="value" fill="#818cf8" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></article><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">正在观看</h3><div className="mt-3 space-y-3">{summary.watching.length ? summary.watching.slice(0,3).map(record => <div key={record.id} className="rounded-xl bg-slate-800/70 p-3"><p className="truncate text-sm font-bold text-white">{record.chineseName}</p><p className="mt-1 text-xs text-slate-400">{record.progress || '尚未记录进度'}{record.totalEpisodes ? ` / ${record.totalEpisodes} 集` : ''}</p></div>) : <p className="py-8 text-center text-sm text-slate-500">暂无正在观看的项目</p>}</div></article></section>
-      <section className="mt-5 grid gap-5 pb-5 lg:grid-cols-2"><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">最近完成</h3><div className="mt-3 divide-y divide-slate-800">{recentCompleted.length ? recentCompleted.map(record => <div key={record.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-semibold text-white">{record.chineseName}</p><p className="mt-1 text-xs text-slate-500">{record.category} · {record.endDate || "完成日期未知"}</p></div><span className="text-sm font-bold text-amber-400">{record.rating ? `★ ${record.rating}` : '未评分'}</span></div>) : <p className="py-8 text-center text-sm text-slate-500">当前范围内暂无完成记录</p>}</div></article><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">常看题材</h3><div className="mt-4 space-y-3">{genres.map(genre => <div key={genre.name}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-300">{genre.name}</span><span className="text-slate-500">{genre.value} 部</span></div><div className="h-2 rounded-full bg-slate-800"><div className="h-full rounded-full bg-violet-400" style={{ width: `${genres[0] ? genre.value / genres[0].value * 100 : 0}%` }}/></div></div>)}</div></article></section>
+      <section className="mt-5 grid gap-5 pb-5 lg:grid-cols-2"><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">最近完成</h3><div className="mt-3 divide-y divide-slate-800">{recentCompleted.length ? recentCompleted.map(record => <div key={record.id} className="flex items-center justify-between py-3"><div><p className="text-sm font-semibold text-white">{record.chineseName}</p><p className="mt-1 text-xs text-slate-500">{mediaTypeOf(record)} · {record.endDate || "完成日期未知"}</p></div><span className="text-sm font-bold text-amber-400">{record.rating ? `★ ${record.rating}` : '未评分'}</span></div>) : <p className="py-8 text-center text-sm text-slate-500">当前范围内暂无完成记录</p>}</div></article><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">常看题材</h3><div className="mt-4 space-y-3">{genres.map(genre => <div key={genre.name}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-300">{genre.name}</span><span className="text-slate-500">{genre.value} 部</span></div><div className="h-2 rounded-full bg-slate-800"><div className="h-full rounded-full bg-violet-400" style={{ width: `${genres[0] ? genre.value / genres[0].value * 100 : 0}%` }}/></div></div>)}</div></article></section>
     </main>
   </div>;
 }

@@ -32,7 +32,6 @@ export function getEmptyRecord(): Omit<WatchRecord, 'id' | 'createdAt'> {
     rating: null,
     startDate: '',
     endDate: '',
-    category: '电影',
     notes: '',
     imdbId: null,
     genres: null,
@@ -46,15 +45,6 @@ export function getEmptyRecord(): Omit<WatchRecord, 'id' | 'createdAt'> {
   };
 }
 
-export function formatDate(dateStr: string): string {
-  if (!dateStr) return '—';
-  return dateStr;
-}
-
-export function renderStars(rating: number | null): string {
-  if (rating === null) return '未评分';
-  return '★'.repeat(rating) + '☆'.repeat(5 - rating);
-}
 
 // 电影时间格式化：将秒数转为 "1h 23m 45s" 格式
 export function formatMovieTime(seconds: number | null): string {

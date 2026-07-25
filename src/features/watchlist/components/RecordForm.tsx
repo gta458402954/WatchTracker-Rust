@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { WatchRecord, Category, Status, MediaType } from '../../../shared/types';
+import { WatchRecord, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
+import { classifyTmdb, errorMessage, mediaTypeOf, mergeContentTags, TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
@@ -10,20 +11,7 @@ interface RecordFormProps {
   onClose: () => void;
 }
 
-const isTVCategory = (cat: Category) =>
-  ['美剧', '英剧', '日剧', '韩剧', '国产剧', '港剧', '台剧', '剧集', '综艺', '泰剧', '纪录片', '动画'].some(k => cat.includes(k));
-
-const isMovieCategory = (cat: Category) =>
-  !isTVCategory(cat);
-
-const COUNTRY_LABELS: Record<string, string> = { US: '美国', GB: '英国', JP: '日本', KR: '韩国', CN: '中国大陆', HK: '中国香港', TW: '中国台湾' };
-function tmdbClassification(detail: any, isTV: boolean) {
-  const codes = isTV ? (detail.origin_country || []) : (detail.production_countries || []).map((country: any) => country.iso_3166_1);
-  const regions = codes.map((code: string) => COUNTRY_LABELS[code] || code).filter(Boolean);
-  const genres = detail.genres?.map((genre: any) => genre.name).join(', ') || null;
-  const tags = [...new Set([...regions, ...(genres?.includes('Documentary') || genres?.includes('纪录片') ? ['纪录片'] : [])])];
-  return { originCountry: codes.join(', ') || null, genres, mediaType: (isTV ? '剧集' : '电影') as MediaType, contentTags: tags.join(', ') };
-}
+const isAlwaysEpisodic = (mediaType: MediaType | null | undefined) => mediaType === '剧集' || mediaType === '综艺';
 
 function smartProgress(raw: string): string {
   if (!raw) return '';
@@ -72,7 +60,6 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
           rating: record.rating,
           startDate: record.startDate,
           endDate: record.endDate,
-          category: record.category,
           notes: record.notes,
           imdbId: record.imdbId || null,
           genres: record.genres || null,
@@ -81,15 +68,15 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
           tmdbStatus: record.tmdbStatus || null,
           interestLevel: record.interestLevel || null,
           episodeRuntime: record.episodeRuntime || null,
-          mediaType: record.mediaType || null,
+          mediaType: mediaTypeOf(record),
           contentTags: record.contentTags || null,
         }
       : getEmptyRecord()
   );
 
   // 电影时间输入状态（秒）
-  const [movieProgressStr, setMovieProgressStr] = useState('');
-  const [movieDurationStr, setMovieDurationStr] = useState('');
+  const [movieProgressStr, setMovieProgressStr] = useState(() => record?.movieProgress != null ? formatMovieTime(record.movieProgress) : '');
+  const [movieDurationStr, setMovieDurationStr] = useState(() => record?.movieDuration != null ? formatMovieTime(record.movieDuration) : '');
 
   const [startYearOnly, setStartYearOnly] = useState(
     !!record?.startDate && /^\d{4}$/.test(record.startDate)
@@ -103,17 +90,12 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
 
   // TMDB 搜索相关状态
   const [isSearching, setIsSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<TmdbMedia[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [showResults, setShowResults] = useState(false);
-  const [seasons, setSeasons] = useState<any[]>([]);
-  const [selectedSeries, setSelectedSeries] = useState<any | null>(null);
-
-  // 初始化时间输入框显示
-  useEffect(() => {
-    setMovieProgressStr(form.movieProgress !== null ? formatMovieTime(form.movieProgress) : '');
-    setMovieDurationStr(form.movieDuration !== null ? formatMovieTime(form.movieDuration) : '');
-  }, [form.movieProgress, form.movieDuration]);
+  const [seasons, setSeasons] = useState<TmdbSeason[]>([]);
+  const [selectedSeries, setSelectedSeries] = useState<TmdbMedia | null>(null);
+  const isEpisodic = isAlwaysEpisodic(form.mediaType) || Boolean(form.totalEpisodes);
 
   // 获取解密后的 TMDB API Key
   async function getTMDBApiKey() {
@@ -136,15 +118,14 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     let query = form.imdbId || form.chineseName || form.originalName;
     if (!query) return;
 
-    // 智能清洗搜索词：去掉“第x季”、“Season x”等干扰词，因为 TMDB 搜索剧集名时不带季节
     query = query
       .replace(/第\s*\d+\s*季/g, '')
       .replace(/Season\s*\d+/gi, '')
       .replace(/第\s*[一二三四五六七八九十]+\s*季/g, '')
       .trim();
 
-    const API_KEY = await getTMDBApiKey();
-    if (!API_KEY) {
+    const apiKey = await getTMDBApiKey();
+    if (!apiKey) {
       setSearchError('请先在设置中配置 TMDB API KEY');
       setShowResults(true);
       return;
@@ -155,41 +136,34 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     setSearchError(null);
     setSeasons([]);
     setSelectedSeries(null);
-    const isTV = isTVCategory(form.category);
-    const type = isTV ? 'tv' : 'movie';
 
     try {
-      console.log(`[TMDB] Searching ${type} for: ${query}`);
-      const result = await searchTmdbAsync({
-        apiKey: API_KEY,
-        query,
-        mediaType: type,
-        language: 'zh-CN'
-      });
-
+      const result = await searchTmdbAsync({ apiKey, query, language: 'zh-CN' });
       if (!result.success) {
         setSearchError(result.error || '搜索失败');
         return;
       }
-
-      setSearchResults(result.results || []);
-    } catch (err: any) {
-      setSearchError(err?.toString() || '未知搜索错误');
+      setSearchResults(result.results ?? []);
+    } catch (error) {
+      setSearchError(errorMessage(error) || '未知搜索错误');
     } finally {
       setIsSearching(false);
     }
   }
-
-  async function handleSelectResult(item: any) {
+  async function handleSelectResult(item: TmdbMedia) {
     const API_KEY = await getTMDBApiKey();
     if (!API_KEY) return;
 
-    let type = item.media_type || (isTVCategory(form.category) ? 'tv' : 'movie');
+    const type = item.media_type || (isEpisodic ? 'tv' : 'movie');
     const isSeason = type === 'tv_season';
     const isEpisode = type === 'tv_episode';
     const isTV = type === 'tv' || isSeason || isEpisode;
     const fetchId = isSeason || isEpisode ? item.show_id : item.id;
-    const fetchType = isSeason || isEpisode ? 'tv' : type;
+    const fetchType: 'movie' | 'tv' = isTV ? 'tv' : 'movie';
+    if (fetchId == null) {
+      setSearchError('TMDB 结果缺少 ID');
+      return;
+    }
 
     try {
       setSearchError(null);
@@ -207,28 +181,28 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
       const detail = result.data;
 
       if (isSeason || isEpisode) {
-        const targetSeason = detail.seasons?.find((s: any) => s.season_number === item.season_number) || item;
+        const targetSeason = detail.seasons?.find((s: TmdbSeason) => s.season_number === item.season_number) || item;
         const seriesName = detail.name || detail.title;
         const seriesOriginalName = detail.original_name || detail.original_title;
         const year = targetSeason.air_date ? targetSeason.air_date.split('-')[0] : (detail.first_air_date?.split('-')[0] || null);
         const poster = targetSeason.poster_path || detail.poster_path || null;
-        
-        if (poster) downloadPosterAsync(poster);
-        
-        let query = form.imdbId || form.chineseName || form.originalName || '';
-        
-        const classification = tmdbClassification(detail, isTV);
-      const originCountry = classification.originCountry;
+
+        if (poster) void downloadPosterAsync(poster).catch(error => console.error('[TMDB] Poster download failed:', error));
+
+        const query = form.imdbId || form.chineseName || form.originalName || '';
+
+        const classification = classifyTmdb(detail, isTV, form.mediaType);
+        const originCountry = classification.originCountry;
         let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
         if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
           networkName = '';
         } else {
           if (networkName === 'CBS All Access') networkName = 'CBS';
-          if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
+          if (networkName && /^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
         }
         const genres = classification.genres;
-        
-        const updates: any = {
+
+        const updates: Partial<typeof form> = {
           chineseName: `${seriesName} ${targetSeason.name || `第 ${targetSeason.season_number} 季`}`,
           originalName: `${seriesOriginalName} Season ${targetSeason.season_number}`,
           totalEpisodes: targetSeason.episode_count || null,
@@ -240,18 +214,18 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
           imdbRating: detail.vote_average || null,
           tmdbStatus: detail.status || null,
           episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
-        mediaType: classification.mediaType,
-        contentTags: classification.contentTags,
+          mediaType: classification.mediaType,
+          contentTags: mergeContentTags(form.contentTags, classification.contentTags),
         };
-        
+
         if (networkName && (!form.platform || form.platform.trim() === '')) {
           updates.platform = networkName;
         }
-        
+
         if (isEpisode && item.episode_number) {
           updates.progress = `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`;
         }
-        
+
         setForm(prev => ({
           ...prev,
           ...updates
@@ -263,7 +237,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
       if (isTV && detail.seasons && detail.seasons.length > 0) {
         // 如果是电视剧且有多季，展示季节选择
         setSelectedSeries(detail);
-        setSeasons(detail.seasons.filter((s: any) => s.season_number > 0)); // 过滤掉第 0 季（通常是花絮）
+        setSeasons(detail.seasons.filter((s: TmdbSeason) => (s.season_number ?? 0) > 0)); // 过滤掉第 0 季（通常是花絮）
         return;
       }
 
@@ -273,16 +247,16 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
       const poster = detail.poster_path || item.poster_path || null;
 
       // 触发后台下载海报
-      if (poster) downloadPosterAsync(poster);
+      if (poster) void downloadPosterAsync(poster).catch(error => console.error('[TMDB] Poster download failed:', error));
 
-      const classification = tmdbClassification(detail, isTV);
+      const classification = classifyTmdb(detail, isTV, form.mediaType);
       const originCountry = classification.originCountry;
       let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
       if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
         networkName = '';
       } else {
         if (networkName === 'CBS All Access') networkName = 'CBS';
-        if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
+        if (networkName && /^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
       }
       const genres = classification.genres;
 
@@ -297,8 +271,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
         imdbRating: detail.vote_average || null,
         tmdbStatus: detail.status || null,
         episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
-        mediaType: classification.mediaType,
-        contentTags: classification.contentTags,
+          mediaType: classification.mediaType,
+          contentTags: mergeContentTags(form.contentTags, classification.contentTags),
       };
 
       if (networkName && (!form.platform || form.platform.trim() === '')) {
@@ -309,6 +283,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
         updates.totalEpisodes = detail.number_of_episodes || null;
       } else {
         updates.movieDuration = detail.runtime ? detail.runtime * 60 : null;
+        setMovieDurationStr(updates.movieDuration != null ? formatMovieTime(updates.movieDuration) : '');
       }
 
       if (detail.external_ids?.imdb_id) {
@@ -324,7 +299,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     }
   }
 
-  async function handleSelectSeason(season: any) {
+  async function handleSelectSeason(season: TmdbSeason) {
     if (!selectedSeries) return;
 
     const seriesName = selectedSeries.name || selectedSeries.title;
@@ -333,17 +308,18 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     const poster = season.poster_path || selectedSeries.poster_path || null;
 
     // 触发后台下载海报
-    if (poster) downloadPosterAsync(poster);
+    if (poster) void downloadPosterAsync(poster).catch(error => console.error('[TMDB] Poster download failed:', error));
 
-    const originCountry = selectedSeries.origin_country?.join(', ') || null;
+    const classification = classifyTmdb(selectedSeries, true, form.mediaType);
+    const originCountry = classification.originCountry;
     let networkName = selectedSeries.networks?.[0]?.name || selectedSeries.production_companies?.[0]?.name;
     if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
       networkName = '';
     } else {
       if (networkName === 'CBS All Access') networkName = 'CBS';
-      if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
+      if (networkName && /^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
     }
-    const genres = selectedSeries.genres?.map((g: any) => g.name).join(', ') || null;
+    const genres = classification.genres;
 
     setForm(prev => ({
       ...prev,
@@ -358,6 +334,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
       imdbRating: selectedSeries.vote_average || null,
       tmdbStatus: selectedSeries.status || null,
       episodeRuntime: selectedSeries.episode_run_time?.[0] || selectedSeries.runtime || 0,
+      mediaType: classification.mediaType,
+      contentTags: mergeContentTags(form.contentTags, classification.contentTags),
       ...(networkName && (!prev.platform || prev.platform.trim() === '') ? { platform: networkName } : {}),
     }));
     setShowResults(false);
@@ -377,6 +355,21 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
 
   function set<K extends keyof typeof form>(key: K, value: typeof form[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
+  }
+
+  function handleMediaTypeChange(mediaType: MediaType) {
+    const episodic = isAlwaysEpisodic(mediaType) || (mediaType !== '电影' && isEpisodic);
+    setForm(prev => ({
+      ...prev,
+      mediaType,
+      ...(episodic
+        ? { movieProgress: null, movieDuration: null }
+        : { progress: '', totalEpisodes: null }),
+    }));
+    if (episodic) {
+      setMovieProgressStr('');
+      setMovieDurationStr('');
+    }
   }
 
   function handleProgressChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -421,14 +414,14 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
         <form onSubmit={handleSubmit} className="px-6 py-5 flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">播放形态</label>
-              <select value={form.mediaType || '电影'} onChange={event => { const mediaType = event.target.value as MediaType; set('mediaType', mediaType); set('category', mediaType); }} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400">
+              <label className="mb-1 block text-sm font-medium text-gray-700">内容类型</label>
+              <select value={form.mediaType || '电影'} onChange={event => handleMediaTypeChange(event.target.value as MediaType)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400">
                 {(['电影', '剧集', '纪录片', '综艺', '动画'] as MediaType[]).map(type => <option key={type} value={type}>{type}</option>)}
               </select>
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">内容标签</label>
-              <input value={form.contentTags || ''} onChange={event => set('contentTags', event.target.value)} placeholder="如：韩国, 纪录片" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+              <input value={form.contentTags || ''} onChange={event => set('contentTags', event.target.value)} placeholder="如：韩国" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
             </div>
           </div>
 
@@ -461,8 +454,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
                   <div className="flex items-center justify-between p-2 border-b border-gray-50">
                     <div className="flex items-center gap-2">
                       {seasons.length > 0 && (
-                        <button 
-                          type="button" 
+                        <button
+                          type="button"
                           onClick={() => { setSeasons([]); setSelectedSeries(null); }}
                           className="p-1 hover:bg-gray-100 rounded-full text-indigo-600"
                         >
@@ -532,7 +525,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
                           <div className="text-xs text-gray-400 truncate">{item.original_title || item.original_name}</div>
                           <div className="text-[10px] text-gray-400 mt-1">
                             {item.release_date || item.first_air_date || '未知日期'}
-                            {item.vote_average > 0 && ` · ⭐ ${item.vote_average.toFixed(1)}`}
+                            {(item.vote_average ?? 0) > 0 && ` · ⭐ ${item.vote_average?.toFixed(1)}`}
                           </div>
                         </div>
                       </button>
@@ -572,15 +565,15 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
                 onChange={e => {
                   const newStatus = e.target.value as Status;
                   set('status', newStatus);
-                  
+
                   // 如果是电影且改为“已看”，自动填满进度
-                  if (isMovieCategory(form.category) && newStatus === '已看' && form.movieDuration) {
+                  if (!isEpisodic && newStatus === '已看' && form.movieDuration) {
                     set('movieProgress', form.movieDuration);
                     setMovieProgressStr(formatMovieTime(form.movieDuration));
                   }
 
                   // 如果是电视剧且改为“已看”，自动填充最后一集
-                  if (!isMovieCategory(form.category) && newStatus === '已看') {
+                  if (isEpisodic && newStatus === '已看') {
                     if (form.totalEpisodes) {
                       set('progress', `第${form.totalEpisodes}集`);
                     } else {
@@ -593,7 +586,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            
+
             {/* IMDb ID */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">IMDb ID</label>
@@ -605,8 +598,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
                 className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
               />
             </div>
-            
-            {!isMovieCategory(form.category) && (
+
+            {isEpisodic && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   进度
@@ -618,7 +611,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
                   value={form.progress}
                   onChange={handleProgressChange}
                   onBlur={handleProgressBlur}
-                  placeholder={isTVCategory(form.category) ? '如 S01、12、完' : '如 完结、在看'}
+                  placeholder="如 S01、12、完"
                   className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition"
                 />
               </div>
@@ -626,7 +619,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
           </div>
 
           {/* Total Episodes - 仅电视剧/综艺显示 */}
-          {isTVCategory(form.category) && (
+          {isEpisodic && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 总集数
@@ -652,7 +645,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
           )}
 
           {/* Movie Time Input - 仅电影显示 */}
-          {isMovieCategory(form.category) && (
+          {!isEpisodic && (
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-2 gap-3">
                 {/* 当前看到 */}
@@ -710,7 +703,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
           )}
 
           {/* Platform */}
-          {!isMovieCategory(form.category) && (
+          {isEpisodic && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">平台</label>
               <input

@@ -1,7 +1,6 @@
 # 依赖项
 node_modules/
 .npm/
-package-lock.json
 
 # 编译产物
 dist/

@@ -17,27 +17,17 @@ pub struct WatchRecord {
     pub rating: Option<i32>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    pub category: String,
     pub notes: String,
     pub created_at: String,
     pub updated_at: Option<String>,
     pub imdb_id: Option<String>,
     pub is_locked: Option<bool>,
-    pub sort_order: Option<i32>,
     pub genres: Option<String>,
     pub origin_country: Option<String>,
     pub imdb_rating: Option<f64>,
     pub tmdb_status: Option<String>,
     pub interest_level: Option<i32>,
     pub episode_runtime: Option<i32>,
-    pub media_type: Option<String>,
+    pub media_type: String,
     pub content_tags: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Category {
-    pub name: String,
-    pub emoji: String,
-    pub sort_order: i32,
 }

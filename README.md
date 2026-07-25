@@ -4,10 +4,10 @@ WatchTracker 是一款基于 **Rust (Tauri)** 和 **React** 构建的轻量级�
 
 ## ✨ 核心特性
 
-- **真·便携化设计**：所有数据（记录、设置、密钥）均加密存储在程序同级的 `data/` 目录下，随盘即走，即插即用。
+- **便携化设计**：记录与设置保存在程序同级的 `data/` 目录；凭据采用便携兼容编码，请妥善保护该目录。
 - **智能元数据填充**：集成 TMDB API，一键自动获取影视剧封面、年份、总集数等信息。
-- **WebDAV 云同步**：支持坚果云等 WebDAV 服务，确保多设备间的数据安全与一致。
-- **高级数据库维护**：内置数据库压缩（VACUUM）与搜索索引优化，万级数据搜索瞬时响应。
+- **WebDAV 云同步**：通过 HTTPS 与坚果云等 WebDAV 服务同步，支持时间戳合并、删除墓碑和冲突恢复。
+- **数据库维护**：内置数据库压缩（VACUUM）工具。
 - **网络适配**：支持手动配置网络代理，解决部分环境下的网络连接问题。
 
 ## 🛠️ 技术栈
@@ -21,7 +21,7 @@ WatchTracker 是一款基于 **Rust (Tauri)** 和 **React** 构建的轻量级�
 ### 开发环境准备
 1. 安装 [Node.js](https://nodejs.org/) (建议 v20+)
 2. 安装 [Rust](https://www.rust-lang.org/) 环境
-3. 安装 Tauri 依赖（参考 [Tauri 官网指南](https://tauri.app/v1/guides/getting-started/prerequisites)）
+3. 安装 Tauri 依赖（参考 [Tauri 官网指南](https://tauri.app/start/prerequisites/)）
 
 ### 运行与编译
 ```bash
@@ -42,7 +42,6 @@ npm run tauri build
 src/
 ├── app/                 # 应用装配与页面级样式
 ├── features/            # 按业务域组织的界面与状态逻辑
-│   ├── categories/
 │   ├── dashboard/
 │   ├── settings/
 │   └── watchlist/

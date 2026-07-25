@@ -1,23 +1,67 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { WatchRecord } from '../../../shared/types';
+import { MediaType, Status, WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
-import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../../../shared/lib/database';
+import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync, updateRecord as updateRecordDb } from '../../../shared/lib/database';
+import { classifyTmdb, errorMessage, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
 
 interface SettingsModalProps {
   onClose: () => void;
   records: WatchRecord[];
-  onImport: (records: WatchRecord[]) => void;
+  onImport: (records: WatchRecord[]) => void | Promise<void>;
   onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
   onRestoreConflict?: (record: WatchRecord) => Promise<void>;
-  onRefresh?: () => any;
+  onRefresh?: () => unknown | Promise<unknown>;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
 }
 
-export default function SettingsModal({ 
+const VALID_STATUSES: readonly Status[] = ['在看', '未看', '已看'];
+
+function normalizeImportedRecord(value: unknown, index: number): WatchRecord {
+  if (!value || typeof value !== 'object') throw new Error('第 ' + (index + 1) + ' 条记录格式无效');
+  const source = value as Record<string, unknown>;
+  const text = (key: string, fallback = '') => typeof source[key] === 'string' ? source[key] as string : fallback;
+  const nullableText = (key: string) => typeof source[key] === 'string' && source[key] !== '' ? source[key] as string : null;
+  const nullableNumber = (key: string) => typeof source[key] === 'number' && Number.isFinite(source[key]) ? source[key] as number : null;
+  const requestedType = nullableText('mediaType');
+  const mediaType = requestedType && MEDIA_TYPES.includes(requestedType as MediaType)
+    ? requestedType as MediaType
+    : '电影';
+  const requestedStatus = text('status', '已看');
+  const status = VALID_STATUSES.includes(requestedStatus as Status) ? requestedStatus as Status : '已看';
+  return {
+    id: text('id', 'imported-' + Date.now() + '-' + index),
+    originalName: text('originalName'),
+    chineseName: text('chineseName'),
+    progress: text('progress'),
+    totalEpisodes: nullableNumber('totalEpisodes'),
+    movieProgress: nullableNumber('movieProgress'),
+    movieDuration: nullableNumber('movieDuration'),
+    releaseYear: source.releaseYear == null ? null : String(source.releaseYear),
+    posterPath: nullableText('posterPath'),
+    status,
+    platform: text('platform'),
+    rating: nullableNumber('rating'),
+    startDate: text('startDate'),
+    endDate: text('endDate'),
+    notes: text('notes'),
+    createdAt: text('createdAt', new Date().toISOString()),
+    updatedAt: nullableText('updatedAt'),
+    imdbId: nullableText('imdbId'),
+    isLocked: source.isLocked === true,
+    genres: nullableText('genres'),
+    originCountry: nullableText('originCountry'),
+    imdbRating: nullableNumber('imdbRating'),
+    tmdbStatus: nullableText('tmdbStatus'),
+    interestLevel: nullableNumber('interestLevel'),
+    episodeRuntime: nullableNumber('episodeRuntime'),
+    mediaType,
+    contentTags: nullableText('contentTags'),
+  };
+}
+export default function SettingsModal({
   onClose, records, onImport, onSync, onRestoreConflict, onRefresh,
   syncInterval, onSyncIntervalChange
 }: SettingsModalProps) {
@@ -33,7 +77,7 @@ export default function SettingsModal({
 
   // 自动同步频率状态
   const [localInterval, setLocalInterval] = useState(syncInterval);
-  
+
   // 代理设置状态
   const [proxy, setProxy] = useState('');
 
@@ -73,14 +117,20 @@ export default function SettingsModal({
         }
       }
 
-      setSyncConflicts(await clearResolvedSyncConflicts(records));
-
       // 3. 加载代理设置
       const savedProxy = await getSettingAsync('network_proxy');
       if (savedProxy) setProxy(savedProxy);
     }
     loadInitial();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    clearResolvedSyncConflicts(records)
+      .then(conflicts => { if (!cancelled) setSyncConflicts(conflicts); })
+      .catch(error => console.error('[Settings] Failed to load sync conflicts:', error));
+    return () => { cancelled = true; };
+  }, [records]);
 
   // 保存 TMDB 密钥
   async function handleSaveTmdbKey() {
@@ -121,21 +171,29 @@ export default function SettingsModal({
   }
 
   // 保存 WebDAV 账号密码
-  function handleSave() {
+  async function handleSave() {
     if (!username.trim() || !password.trim()) return;
-    saveCreds({ username: username.trim(), password: password.trim() });
-    setSaved(true);
-    setSyncStatus('✅ 凭据已保存');
+    try {
+      await saveCreds({ username: username.trim(), password: password.trim() });
+      setSaved(true);
+      setSyncStatus('✅ 凭据已保存');
+    } catch (error) {
+      setSyncStatus('❌ 保存失败: ' + errorMessage(error));
+    }
     setTimeout(() => setSyncStatus(''), 3000);
   }
 
   // 清除云端连接
-  function handleClear() {
-    clearCreds();
-    setUsername('');
-    setPassword('');
-    setSaved(false);
-    setSyncStatus('🧹 凭据已清除');
+  async function handleClear() {
+    try {
+      await clearCreds();
+      setUsername('');
+      setPassword('');
+      setSaved(false);
+      setSyncStatus('🧹 凭据已清除');
+    } catch (error) {
+      setSyncStatus('❌ 清除失败: ' + errorMessage(error));
+    }
     setTimeout(() => setSyncStatus(''), 3000);
   }
 
@@ -148,8 +206,8 @@ export default function SettingsModal({
         setSyncConflicts(await clearResolvedSyncConflicts(records));
         setSyncStatus(result.conflictCount ? `✅ 同步成功，已自动合并 ${result.conflictCount} 处冲突` : '✅ 同步成功');
       } else setSyncStatus(`❌ 同步失败: ${result.error}`);
-    } catch (e: any) {
-      setSyncStatus(`❌ 出错: ${e.message}`);
+    } catch (error) {
+      setSyncStatus('❌ 出错: ' + errorMessage(error));
     }
     setTimeout(() => setSyncStatus(''), 3000);
   }
@@ -171,20 +229,22 @@ export default function SettingsModal({
     if (!confirm('确定清空全部冲突记录吗？此操作不会删除任何影视条目。')) return;
     await clearSyncConflicts();
     setSyncConflicts([]);
-  }  // 从云端导入
+  }
+
+  // 从云端导入
   async function handleImport() {
-    if (confirm('导入将覆盖当前所有本地数据，确定吗？')) {
-      setImportStatus('下载并解密中...');
+    if (confirm('导入将替换未锁定的本地数据；已锁定记录会保留。确定吗？')) {
+      setImportStatus('正在从云端下载数据...');
       try {
         const response = await loadFromWebDAV();
         if (response.ok && Array.isArray(response.data)) {
-          onImport(response.data as WatchRecord[]);
+          await onImport(response.data as WatchRecord[]);
           setImportStatus('✅ 导入成功');
         } else {
           setImportStatus(`❌ 导入失败: ${response.error || '请检查账号密码'}`);
         }
-      } catch (e: any) {
-        setImportStatus(`❌ 出错: ${e.message}`);
+      } catch (error) {
+        setImportStatus('❌ 出错: ' + errorMessage(error));
       }
       setTimeout(() => setImportStatus(''), 3000);
     }
@@ -207,47 +267,29 @@ export default function SettingsModal({
     a.href = url;
     a.download = `影视追踪_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   // 本地文件导入
-  async function handleImportLocal() {
+  function handleImportLocal() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    input.onchange = async (e: any) => {
-      const file = e.target.files[0];
+    input.onchange = event => {
+      const file = (event.target as HTMLInputElement).files?.[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = async (e: any) => {
+      reader.onload = async () => {
         try {
-          const data = JSON.parse(e.target.result);
-          if (!Array.isArray(data)) throw new Error('无效的 JSON 格式');
-          
-          const completeData: WatchRecord[] = data.map((item: any, index: number) => ({
-            id: item.id || `imported-${Date.now()}-${index}`,
-            originalName: item.originalName || '',
-            chineseName: item.chineseName || '',
-            progress: item.progress || '',
-            totalEpisodes: typeof item.totalEpisodes === 'number' ? item.totalEpisodes : null,
-            movieProgress: typeof item.movieProgress === 'number' ? item.movieProgress : null,
-            movieDuration: typeof item.movieDuration === 'number' ? item.movieDuration : null,
-            releaseYear: item.releaseYear ? String(item.releaseYear) : null,
-            posterPath: item.posterPath ? String(item.posterPath) : null,
-            status: (item.status === '在看' || item.status === '未看' || item.status === '已看') ? item.status : '已看',
-            platform: item.platform || '',
-            rating: typeof item.rating === 'number' ? item.rating : null,
-            startDate: item.startDate || '',
-            endDate: item.endDate || '',
-            category: item.category || '电影',
-            notes: item.notes || '',
-            createdAt: item.createdAt || new Date().toISOString(),
-            imdbId: item.imdbId || null,
-          }));
-
-          onImport(completeData);
-          alert(`成功导入 ${completeData.length} 条记录`);
-        } catch (err: any) {
-          alert('导入失败: ' + err.message);
+          if (typeof reader.result !== 'string') throw new Error('无法读取文件内容');
+          const parsed: unknown = JSON.parse(reader.result);
+          if (!Array.isArray(parsed)) throw new Error('无效的 JSON 格式');
+          const completeData = parsed.map(normalizeImportedRecord);
+          await onImport(completeData);
+          alert('成功导入 ' + completeData.length + ' 条记录');
+        } catch (error) {
+          alert('导入失败: ' + errorMessage(error));
         }
       };
       reader.readAsText(file);
@@ -270,101 +312,86 @@ export default function SettingsModal({
     try {
       await vacuumDbAsync();
       setVacuumStatus('✅ 数据库压缩完成');
-    } catch (e: any) {
-      setVacuumStatus(`❌ 压缩失败: ${e.message || e}`);
+    } catch (error) {
+      setVacuumStatus('❌ 压缩失败: ' + errorMessage(error));
     }
     setTimeout(() => setVacuumStatus(''), 3000);
   }
 
   // 自动补全缺失字段
   async function handleBatchSync() {
-    const targets = records.filter(r => r.imdbId && !r.isLocked && (!r.genres || r.episodeRuntime === null));
+    const targets = records.filter(record =>
+      record.imdbId && !record.isLocked &&
+      (!record.genres || record.episodeRuntime == null || !record.originCountry || record.contentTags == null),
+    );
+    if (!tmdbKey.trim()) {
+      setBatchStatus('❌ 请先配置 TMDB API Key');
+      return;
+    }
     if (targets.length === 0) {
       setBatchStatus('🎉 所有带 IMDb 编号的记录均已包含完整元数据！');
       setTimeout(() => setBatchStatus(''), 3000);
       return;
     }
-    
-    if (!confirm(`发现 ${targets.length} 条缺失部分元数据的老记录。是否开始批量同步？\n\n注意：期间请保持网络畅通。`)) return;
+    if (!confirm('发现 ' + targets.length + ' 条缺失部分元数据的记录。是否开始批量同步？\n\n注意：期间请保持网络畅通。')) return;
 
     setBatchSyncing(true);
     setBatchTotal(targets.length);
     setBatchProgress(0);
     setBatchStatus('正在连接 TMDB...');
-
     let success = 0;
     let fail = 0;
-    const tmdbCache = new Map<string, any>();
+    const tmdbCache = new Map<string, Partial<WatchRecord>>();
 
-    for (let i = 0; i < targets.length; i++) {
-      const r = targets[i];
-      setBatchProgress(i + 1);
-      setBatchStatus(`正在同步: ${r.chineseName}`);
-      
+    for (let index = 0; index < targets.length; index++) {
+      const record = targets[index];
+      setBatchProgress(index + 1);
+      setBatchStatus('正在同步: ' + record.chineseName);
       try {
-        const searchMediaType = (r.category === '电影' || r.category === '纪录片' || r.category === '动画') ? 'movie' : 'tv';
-        
-        let updates: any = null;
-        if (r.imdbId && tmdbCache.has(r.imdbId)) {
-          updates = tmdbCache.get(r.imdbId);
-        } else {
-          const result = await invoke<any>('search_tmdb', {
-            apiKey: tmdbKey,
-            query: r.imdbId,
-            mediaType: searchMediaType,
-            proxy,
-            language: 'zh-CN'
-          });
-
-          const resultsArray = result.tv_results || result.movie_results || result.results || [];
-          const item = resultsArray[0];
-
-          if (item) {
-            const detail = await invoke<any>('get_tmdb_detail', {
-              apiKey: tmdbKey,
-              id: item.id,
-              mediaType: searchMediaType,
-              proxy,
-              language: 'zh-CN'
-            });
-
-            const genresStr = detail.genres?.map((g: any) => g.name).join(', ');
-            const genres = genresStr ? genresStr : '未知';
-            const originCountry = detail.origin_country?.join(', ') || null;
-            updates = {
-              genres,
-              originCountry,
-              imdbRating: detail.vote_average || null,
-              tmdbStatus: detail.status || null,
-              episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
-            };
-            
-            if (r.imdbId) {
-              tmdbCache.set(r.imdbId, updates);
+        let updates = record.imdbId ? tmdbCache.get(record.imdbId) : undefined;
+        if (!updates && record.imdbId) {
+          const search = await searchTmdbAsync({ apiKey: tmdbKey.trim(), query: record.imdbId, language: 'zh-CN' });
+          const expectedType = record.totalEpisodes || ['剧集', '综艺'].includes(mediaTypeOf(record)) ? 'tv' : 'movie';
+          const item = search.results?.find(result => result.media_type === expectedType)
+            ?? search.results?.find(result => result.media_type === 'movie' || result.media_type === 'tv');
+          if (item?.id != null) {
+            const tmdbType: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
+            const detailResult = await getTmdbDetailAsync({ apiKey: tmdbKey.trim(), id: item.id, mediaType: tmdbType, language: 'zh-CN' });
+            if (detailResult.success && detailResult.data) {
+              const detail: TmdbMedia = detailResult.data;
+              const classification = classifyTmdb(detail, tmdbType === 'tv', mediaTypeOf(record));
+              updates = {
+                genres: classification.genres,
+                originCountry: classification.originCountry,
+                imdbRating: detail.vote_average ?? null,
+                tmdbStatus: detail.status ?? null,
+                episodeRuntime: detail.episode_run_time?.[0] ?? detail.runtime ?? null,
+                mediaType: classification.mediaType,
+                contentTags: classification.contentTags,
+              };
+              tmdbCache.set(record.imdbId, updates);
             }
           }
         }
-
         if (updates) {
-          await invoke('update_record', { id: r.id, updates });
+          await updateRecordDb(record.id, {
+            ...updates,
+            contentTags: mergeContentTags(record.contentTags, updates.contentTags || ''),
+          });
           success++;
         } else {
           fail++;
         }
-      } catch (e) {
-        console.error('Failed to sync record', r.chineseName, e);
+      } catch (error) {
+        console.error('[Settings] Failed to sync record', record.chineseName, error);
         fail++;
       }
-      
-      // 适度延时避免请求过频
       await new Promise(resolve => setTimeout(resolve, 300));
     }
 
     setBatchSyncing(false);
-    setBatchStatus(`🎉 同步完成！成功: ${success}, 失败: ${fail}`);
-    if (onRefresh) {
-      await onRefresh();
-    }
+    setBatchStatus('🎉 同步完成！成功: ' + success + ', 失败: ' + fail);
+    await onRefresh?.();
     setTimeout(() => setBatchStatus(''), 5000);
   }
 
@@ -478,7 +505,7 @@ export default function SettingsModal({
                       className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                     />
                     <p className="text-[10px] text-gray-400">
-                      💡 密钥将被安全加密存储在本地。可以在 TMDB 官网的个人设置中申请获取该 API 密钥。
+                      💡 密钥将以便携兼容格式保存在本地 data 目录，请妥善保护该目录。可以在 TMDB 官网的个人设置中申请获取该 API 密钥。
                     </p>
                     <button
                       onClick={handleSaveTmdbKey}
@@ -494,7 +521,7 @@ export default function SettingsModal({
                       <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      <span className="text-sm text-gray-700 font-medium">已成功挂载加密的 TMDB API 密钥</span>
+                      <span className="text-sm text-gray-700 font-medium">已配置 TMDB API 密钥</span>
                     </div>
                     <button
                       onClick={handleClearTmdbKey}
@@ -542,7 +569,7 @@ export default function SettingsModal({
             <div className="space-y-6 animate-fade-in animate-duration-200">
               <div>
                 <h3 className="text-2xl font-black text-gray-900">☁️ 云端同步</h3>
-                <p className="text-xs text-gray-400 mt-1">支持与坚果云等 WebDAV 服务端进行加密数据同步</p>
+                <p className="text-xs text-gray-400 mt-1">通过 HTTPS 与坚果云等 WebDAV 服务同步影视记录</p>
               </div>
 
               {/* WebDAV Settings */}
@@ -552,12 +579,12 @@ export default function SettingsModal({
                     <span className="text-2xl">☁️</span>
                     <div>
                       <h4 className="font-bold text-gray-800">坚果云 WebDAV 同步</h4>
-                      <p className="text-[11px] text-gray-400">用于备份或多端同步 watchtracker.db 数据</p>
+                      <p className="text-[11px] text-gray-400">用于备份或同步影视记录数据</p>
                     </div>
                   </div>
                   {saved && (
                     <span className="text-xs px-2.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-semibold">
-                      已连接
+                      已配置
                     </span>
                   )}
                 </div>
@@ -588,7 +615,7 @@ export default function SettingsModal({
                       className="py-2.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
                       disabled={!username.trim() || !password.trim()}
                     >
-                      验证并保存凭据
+                      保存凭据
                     </button>
                   </div>
                 ) : (
@@ -598,7 +625,7 @@ export default function SettingsModal({
                         <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        <span className="text-sm text-gray-700 font-medium">已绑定坚果云 WebDAV 服务，数据在变动时会自动同步</span>
+                        <span className="text-sm text-gray-700 font-medium">已配置坚果云 WebDAV，数据变动后会按设定间隔同步</span>
                       </div>
                       <button
                         onClick={handleClear}
@@ -703,8 +730,8 @@ export default function SettingsModal({
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {(['电影', '剧集', '纪录片', '综艺', '动画'] as const).map(type => {
-                    const count = records.filter(record => record.mediaType === type || (!record.mediaType && record.category === type)).length;
+                  {MEDIA_TYPES.map(type => {
+                    const count = records.filter(record => mediaTypeOf(record) === type).length;
                     return <div key={type} className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
                       <p className="text-sm font-bold text-indigo-700">{type}</p>
                       <p className="mt-1 text-xs text-gray-500">{count} 部记录</p>
@@ -723,7 +750,7 @@ export default function SettingsModal({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {(['美国', '韩国', '日本', '英国', '中国大陆', '中国香港', '中国台湾'] as const).map(tag => {
-                    const count = records.filter(record => (record.contentTags || '').split(',').map(value => value.trim()).includes(tag)).length;
+                    const count = records.filter(record => regionsOf(record).includes(tag)).length;
                     return <span key={tag} className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-600">{tag} <b className="ml-1 text-indigo-600">{count}</b></span>;
                   })}
                 </div>
@@ -731,7 +758,7 @@ export default function SettingsModal({
 
               <div className="rounded-3xl border border-amber-100 bg-amber-50/60 p-5">
                 <h4 className="font-bold text-amber-900">如何维护内容标签</h4>
-                <p className="mt-1 text-xs leading-6 text-amber-800">编辑影视记录时，在“内容标签”中用英文逗号分隔填写，例如“韩国, 纪录片”。地区标签会参与主列表的双筛选；“纪录片”等主题标签用于展示和检索。旧分类库继续保留在数据层，仅用于兼容历史记录，不再作为日常编辑入口。</p>
+                <p className="mt-1 text-xs leading-6 text-amber-800">“纪录片”现在是独立内容类型，请在编辑页的“内容类型”中选择。内容标签用于地区和其他主题，可用英文逗号分隔，例如“韩国, 律政”；TMDB 自动填充会更新标准地区标签，并保留你手工添加的其他标签。</p>
               </div>
             </div>
           )}

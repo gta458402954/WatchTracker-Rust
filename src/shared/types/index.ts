@@ -1,6 +1,3 @@
-// Category 改为动态类型，由 useCategories 管理
-export type Category = string;
-
 export type Status = '在看' | '未看' | '已看';
 export type MediaType = '电影' | '剧集' | '纪录片' | '综艺' | '动画';
 
@@ -19,22 +16,18 @@ export interface WatchRecord {
   rating: number | null;
   startDate: string;
   endDate: string;
-  category: Category;
   notes: string;
   createdAt: string;
   updatedAt?: string | null;
   imdbId: string | null;
   isLocked?: boolean;
-  sortOrder?: number;
+
   genres?: string | null;
   originCountry?: string | null;
   imdbRating?: number | null;
   tmdbStatus?: string | null;
   interestLevel?: number | null;
   episodeRuntime?: number | null;
-  mediaType?: MediaType | null;
+  mediaType: MediaType;
   contentTags?: string | null;
 }
-
-export type SortField = 'chineseName' | 'status' | 'rating' | 'startDate' | 'endDate' | 'createdAt' | 'watchValue';
-export type SortOrder = 'asc' | 'desc';

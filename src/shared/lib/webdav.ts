@@ -58,7 +58,7 @@ export async function getCreds(): Promise<WebDAVCreds | null> {
   } catch { return null; }
 }
 export async function clearCreds() { await setSettingAsync('webdav_creds', ''); }
-export async function hasCreds(): Promise<boolean> { return !!(await getSettingAsync('webdav_creds')); }
+export async function hasCreds(): Promise<boolean> { return !!(await getCreds()); }
 
 function parsePayload(data: unknown): SyncPayload {
   if (Array.isArray(data)) return { schemaVersion: 2, updatedAt: '', records: data as WatchRecord[], tombstones: [] };
@@ -70,7 +70,12 @@ function parsePayload(data: unknown): SyncPayload {
 }
 function timeOf(record: WatchRecord) { const time = Date.parse(record.updatedAt || record.createdAt || ''); return Number.isNaN(time) ? 0 : time; }
 function timeOfDeletion(tombstone: Tombstone) { const time = Date.parse(tombstone.deletedAt); return Number.isNaN(time) ? 0 : time; }
-async function getTombstones(): Promise<Tombstone[]> { try { return JSON.parse((await getSettingAsync(TOMBSTONES_KEY)) || '[]'); } catch { return []; } }
+async function getTombstones(): Promise<Tombstone[]> {
+  try {
+    const value: unknown = JSON.parse((await getSettingAsync(TOMBSTONES_KEY)) || '[]');
+    return Array.isArray(value) ? value as Tombstone[] : [];
+  } catch { return []; }
+}
 async function setTombstones(tombstones: Tombstone[]) { await setSettingAsync(TOMBSTONES_KEY, JSON.stringify(tombstones)); }
 
 /** 删除墓碑会在下一次同步时上传，防止另一设备将已删记录重新带回。 */
@@ -146,7 +151,12 @@ export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: WatchRecor
   try { return { ok: true, data: parsePayload(await webdavRequest('GET', creds, await getSettingAsync('network_proxy'))).records }; }
   catch (error) { return { ok: false, error: String(error).includes('404') ? '云端暂无数据' : String(error) }; }
 }
-export async function getSyncConflicts(): Promise<SyncConflict[]> { try { return JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]'); } catch { return []; } }
+export async function getSyncConflicts(): Promise<SyncConflict[]> {
+  try {
+    const value: unknown = JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]');
+    return Array.isArray(value) ? value as SyncConflict[] : [];
+  } catch { return []; }
+}
 export async function clearSyncConflicts() { await setSettingAsync(CONFLICTS_KEY, '[]'); }
 /** 清除已与当前记录完全相同的旧冲突备份，保留真实差异以便恢复。 */
 export async function clearResolvedSyncConflicts(records: WatchRecord[]): Promise<SyncConflict[]> {

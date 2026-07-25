@@ -1,19 +1,26 @@
 use reqwest::Client;
+use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
-use serde_json::Value;
 
-pub async fn search_tmdb(api_key: String, query: String, _media_type: String, language: String, proxy: Option<String>) -> Result<Value, String> {
-    let is_imdb_id = query.starts_with("tt") && query.len() > 2 && query[2..].chars().all(|c| c.is_ascii_digit());
+pub async fn search_tmdb(
+    api_key: String,
+    query: String,
+    language: String,
+    proxy: Option<String>,
+) -> Result<Value, String> {
+    let is_imdb_id = query.starts_with("tt")
+        && query.len() > 2
+        && query[2..].chars().all(|c| c.is_ascii_digit());
     if is_imdb_id {
         log::info!("[TMDB] IMDb ID Searching for: {}", query);
     } else {
         log::info!("[TMDB] Multi Searching for: {}", query);
     }
-    
+
     let mut builder = Client::builder();
     if let Some(p) = proxy {
         if !p.trim().is_empty() {
@@ -26,7 +33,10 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
 
     let url = if is_imdb_id {
         if is_jwt {
-            format!("https://api.themoviedb.org/3/find/{}?external_source=imdb_id&language={}", query, language)
+            format!(
+                "https://api.themoviedb.org/3/find/{}?external_source=imdb_id&language={}",
+                query, language
+            )
         } else {
             format!("https://api.themoviedb.org/3/find/{}?api_key={}&external_source=imdb_id&language={}", query, api_key, language)
         }
@@ -61,10 +71,11 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
         log::error!("[TMDB] {}", err);
         err
     })?;
-    
+
     // 检查 TMDB API 级别的错误
     if !status.is_success() {
-        let err_msg = json.get("status_message")
+        let err_msg = json
+            .get("status_message")
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown API error");
         let err = format!("TMDB API Error ({}): {}", status, err_msg);
@@ -95,7 +106,10 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
                 combined_results.push(item);
             }
         }
-        if let Some(seasons) = final_json.get("tv_season_results").and_then(|r| r.as_array()) {
+        if let Some(seasons) = final_json
+            .get("tv_season_results")
+            .and_then(|r| r.as_array())
+        {
             for s in seasons {
                 let mut item = s.clone();
                 if item.get("media_type").is_none() {
@@ -104,7 +118,10 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
                 combined_results.push(item);
             }
         }
-        if let Some(episodes) = final_json.get("tv_episode_results").and_then(|r| r.as_array()) {
+        if let Some(episodes) = final_json
+            .get("tv_episode_results")
+            .and_then(|r| r.as_array())
+        {
             for e in episodes {
                 let mut item = e.clone();
                 if item.get("media_type").is_none() {
@@ -121,33 +138,41 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
     // 如果中文没搜到，尝试英文
     if let Some(results) = final_json.get("results").and_then(|r| r.as_array()) {
         if results.is_empty() && language != "en-US" {
-             log::info!("[TMDB] No zh-CN results, trying en-US...");
-             let en_url = if is_imdb_id {
-                 if is_jwt {
-                     format!("https://api.themoviedb.org/3/find/{}?external_source=imdb_id&language=en-US", query)
-                 } else {
-                     format!("https://api.themoviedb.org/3/find/{}?api_key={}&external_source=imdb_id&language=en-US", query, api_key)
-                 }
-             } else {
-                 if is_jwt {
-                     format!(
+            log::info!("[TMDB] No zh-CN results, trying en-US...");
+            let en_url = if is_imdb_id {
+                if is_jwt {
+                    format!("https://api.themoviedb.org/3/find/{}?external_source=imdb_id&language=en-US", query)
+                } else {
+                    format!("https://api.themoviedb.org/3/find/{}?api_key={}&external_source=imdb_id&language=en-US", query, api_key)
+                }
+            } else {
+                if is_jwt {
+                    format!(
                          "https://api.themoviedb.org/3/search/multi?query={}&language=en-US&include_adult=false",
                          urlencoding::encode(&query)
                      )
-                 } else {
-                     format!(
+                } else {
+                    format!(
                          "https://api.themoviedb.org/3/search/multi?api_key={}&query={}&language=en-US&include_adult=false",
                          api_key, urlencoding::encode(&query)
                      )
-                 }
-             };
-             let mut en_req = client.get(&en_url).header("accept", "application/json");
-             if is_jwt {
-                 en_req = en_req.header("Authorization", format!("Bearer {}", api_key));
-             }
+                }
+            };
+            let mut en_req = client.get(&en_url).header("accept", "application/json");
+            if is_jwt {
+                en_req = en_req.header("Authorization", format!("Bearer {}", api_key));
+            }
             let en_res = en_req.send().await.map_err(|e| e.to_string())?;
+            let en_status = en_res.status();
             let mut en_json: Value = en_res.json().await.map_err(|e| e.to_string())?;
-            
+            if !en_status.is_success() {
+                let message = en_json
+                    .get("status_message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Unknown API error");
+                return Err(format!("TMDB API Error ({}): {}", en_status, message));
+            }
+
             if is_imdb_id {
                 let mut combined_results = Vec::new();
                 if let Some(movies) = en_json.get("movie_results").and_then(|r| r.as_array()) {
@@ -177,7 +202,8 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
                         combined_results.push(item);
                     }
                 }
-                if let Some(episodes) = en_json.get("tv_episode_results").and_then(|r| r.as_array()) {
+                if let Some(episodes) = en_json.get("tv_episode_results").and_then(|r| r.as_array())
+                {
                     for e in episodes {
                         let mut item = e.clone();
                         if item.get("media_type").is_none() {
@@ -190,7 +216,7 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
                     "results": combined_results
                 });
             }
-            
+
             return Ok(en_json);
         }
         log::info!("[TMDB] Found {} results", results.len());
@@ -199,9 +225,21 @@ pub async fn search_tmdb(api_key: String, query: String, _media_type: String, la
     Ok(final_json)
 }
 
-pub async fn get_tmdb_detail(api_key: String, id: i32, media_type: String, language: String, proxy: Option<String>) -> Result<Value, String> {
+pub async fn get_tmdb_detail(
+    api_key: String,
+    id: i32,
+    media_type: String,
+    language: String,
+    proxy: Option<String>,
+) -> Result<Value, String> {
+    if !matches!(media_type.as_str(), "movie" | "tv") {
+        return Err("Unsupported TMDB media type".to_string());
+    }
+    if id <= 0 {
+        return Err("Invalid TMDB ID".to_string());
+    }
     log::info!("[TMDB] Fetching detail for {} ID: {}", media_type, id);
-    
+
     let mut builder = Client::builder();
     if let Some(p) = proxy {
         if !p.trim().is_empty() {
@@ -233,14 +271,29 @@ pub async fn get_tmdb_detail(api_key: String, id: i32, media_type: String, langu
         log::error!("[TMDB] Detail network error: {}", e);
         e.to_string()
     })?;
-    res.json().await.map_err(|e| {
+    let status = res.status();
+    let json: Value = res.json().await.map_err(|e| {
         log::error!("[TMDB] Detail JSON error: {}", e);
         e.to_string()
-    })
+    })?;
+    if !status.is_success() {
+        let message = json
+            .get("status_message")
+            .and_then(Value::as_str)
+            .unwrap_or("Unknown API error");
+        return Err(format!("TMDB API Error ({}): {}", status, message));
+    }
+    Ok(json)
 }
 
-pub async fn download_poster(app_handle: &AppHandle, poster_path: String, proxy: Option<String>) -> Result<bool, String> {
-    if poster_path.is_empty() { return Ok(false); }
+pub async fn download_poster(
+    app_handle: &AppHandle,
+    poster_path: String,
+    proxy: Option<String>,
+) -> Result<bool, String> {
+    if poster_path.is_empty() {
+        return Ok(false);
+    }
 
     // 优先检查可执行文件同级目录下的 data 文件夹
     let app_dir = if let Ok(exe_path) = std::env::current_exe() {
@@ -249,10 +302,16 @@ pub async fn download_poster(app_handle: &AppHandle, poster_path: String, proxy:
         if portable_dir.exists() {
             portable_dir
         } else {
-            app_handle.path().app_data_dir().map_err(|e| e.to_string())?
+            app_handle
+                .path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
         }
     } else {
-        app_handle.path().app_data_dir().map_err(|e| e.to_string())?
+        app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
     };
 
     let poster_dir = app_dir.join("posters");
@@ -260,15 +319,19 @@ pub async fn download_poster(app_handle: &AppHandle, poster_path: String, proxy:
         fs::create_dir_all(&poster_dir).map_err(|e| e.to_string())?;
     }
 
-    let file_name = PathBuf::from(&poster_path).file_name()
+    let file_name = PathBuf::from(&poster_path)
+        .file_name()
         .and_then(|n| n.to_str())
-        .ok_or("Invalid path")?.to_string();
-    
+        .ok_or("Invalid path")?
+        .to_string();
+
     let local_path = poster_dir.join(&file_name);
-    if local_path.exists() { return Ok(true); }
+    if local_path.exists() {
+        return Ok(true);
+    }
 
     let url = format!("https://image.tmdb.org/t/p/w342{}", poster_path);
-    
+
     let mut builder = Client::builder();
     if let Some(p) = proxy {
         if !p.trim().is_empty() {
@@ -278,7 +341,7 @@ pub async fn download_poster(app_handle: &AppHandle, poster_path: String, proxy:
     let client = builder.build().map_err(|e| e.to_string())?;
 
     let res = client.get(url).send().await.map_err(|e| e.to_string())?;
-    
+
     if !res.status().is_success() {
         return Err(format!("Download failed: {}", res.status()));
     }
@@ -296,10 +359,10 @@ pub async fn webdav_request(
     username: &str,
     password: &str,
     body: Option<String>,
-    proxy: Option<String>
+    proxy: Option<String>,
 ) -> Result<Value, String> {
     log::info!("[WebDAV] {} Request to: {}", method, url);
-    
+
     let mut builder = Client::builder();
     if let Some(p) = proxy {
         if !p.trim().is_empty() {
@@ -318,7 +381,9 @@ pub async fn webdav_request(
     req_builder = req_builder.basic_auth(username, Some(password));
 
     if let Some(b) = body {
-        req_builder = req_builder.header("Content-Type", "application/json").body(b);
+        req_builder = req_builder
+            .header("Content-Type", "application/json")
+            .body(b);
     }
 
     let res = req_builder.send().await.map_err(|e| {
@@ -327,7 +392,7 @@ pub async fn webdav_request(
     })?;
 
     let status = res.status();
-    
+
     if method == "GET" && status.is_success() {
         let json: Value = res.json().await.map_err(|e| {
             log::error!("[WebDAV] JSON parse error: {}", e);
@@ -349,4 +414,3 @@ pub async fn webdav_request(
         Err(err)
     }
 }
-

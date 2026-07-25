@@ -1,6 +1,7 @@
 import React from 'react';
 import { WatchRecord, Status } from '../../../shared/types';
 import { STATUS_CONFIG, formatMovieProgress } from '../../../shared/lib/constants';
+import { mediaTypeOf } from '../../../shared/lib/classification';
 import { open } from '@tauri-apps/plugin-shell';
 
 const translateGenre = (genre: string): string => {
@@ -12,7 +13,7 @@ const translateGenre = (genre: string): string => {
     "Reality": "真人秀",
     "Soap": "肥皂剧",
     "Talk": "脱口秀",
-    
+
     // 电影及通用类型 (Movie & Common Genres)
     "Science Fiction": "科幻",
     "Fantasy": "奇幻",
@@ -44,12 +45,13 @@ interface RecordCardProps {
   onStatusChange: (id: string, status: Status) => void;
   onProgressChange?: (id: string, progress: string) => void;  // 新增：进度更新回调
   onLockToggle?: (id: string) => void;
-  getEmoji?: (category: string) => string;  // 获取分类 emoji
 }
 
-export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle, getEmoji }: RecordCardProps) {
+export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle }: RecordCardProps) {
   const statusConf = STATUS_CONFIG[record.status];
-  const detailTags = (record.mediaType || record.category) === '电影' ? record.genres : (record.contentTags || record.genres);
+  const mediaType = mediaTypeOf(record);
+  const detailTags = record.genres;
+  const isFilmLike = Boolean(record.movieDuration) && !record.totalEpisodes;
 
 
   // 计算显示的进度文本
@@ -108,10 +110,10 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               </div>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">
-              {record.mediaType || (getEmoji ? getEmoji(record.category) : record.category)}
+              {mediaType}
               {record.releaseYear && ` · ${record.releaseYear}`}
             </span>
             {detailTags && (() => {
@@ -119,7 +121,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               const hasOthers = genresList.some(g => g !== '剧情');
               const displayList = hasOthers ? genresList.filter(g => g !== '剧情') : genresList;
               const displayStr = displayList.slice(0, 2).join(',');
-              
+
               return displayStr ? (
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={detailTags}>
                   {displayStr}
@@ -152,8 +154,8 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
           <button
             onClick={() => onLockToggle?.(record.id)}
             className={`p-1.5 rounded-lg transition-colors ${
-              record.isLocked 
-                ? 'text-amber-500 hover:bg-amber-50 hover:text-amber-600' 
+              record.isLocked
+                ? 'text-amber-500 hover:bg-amber-50 hover:text-amber-600'
                 : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500'
             }`}
             title={record.isLocked ? "点击解锁条目" : "点击锁定条目"}
@@ -207,7 +209,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
         </select>
 
         {/* 电影时长显示 (红圈位置) */}
-        {(record.mediaType || record.category) === '电影' && record.movieDuration && (
+        {isFilmLike && record.movieDuration && (
           <span className="text-xs text-gray-400">
             {Math.round(record.movieDuration / 60)} min
           </span>
@@ -225,7 +227,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               <option key={ep} value={ep.toString()}>第{ep}集</option>
             ))}
           </select>
-        ) : (record.mediaType || record.category) === '电影' && record.movieProgress !== null ? (
+        ) : isFilmLike && record.movieProgress !== null ? (
           <button
             onClick={() => !record.isLocked && onEdit(record)}
             disabled={record.isLocked}
@@ -239,7 +241,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
             {progressDisplay}
           </span>
         )}
-        {record.platform && (record.mediaType || record.category) !== '电影' && (
+        {record.platform && !isFilmLike && (
           <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-full">
             {record.platform}
           </span>

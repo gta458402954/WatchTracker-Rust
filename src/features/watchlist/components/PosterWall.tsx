@@ -9,7 +9,7 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
       {filtered.map(record => (
-        <div 
+        <div
           key={record.id}
           onClick={() => !record.isLocked && onEdit(record)}
           title={record.isLocked ? "条目已锁定" : ""}
@@ -18,8 +18,8 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
           }`}
         >
           {record.posterPath ? (
-            <img 
-              src={`poster://${record.posterPath.replace(/^\//, '')}`} 
+            <img
+              src={`poster://localhost/${record.posterPath.replace(/^\//, '')}`}
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
                 if (!target.src.includes('tmdb.org')) {
@@ -35,7 +35,7 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
               <span className="text-xs font-bold text-gray-500 line-clamp-3">{record.chineseName}</span>
             </div>
           )}
-          
+
           {/* Overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
             <div className="text-white">
@@ -61,8 +61,8 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
                </div>
              )}
              <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold backdrop-blur-md border border-white/20 shadow-sm ${
-               record.status === '在看' ? 'bg-blue-500/80 text-white' : 
-               record.status === '已看' ? 'bg-green-500/80 text-white' : 
+               record.status === '在看' ? 'bg-blue-500/80 text-white' :
+               record.status === '已看' ? 'bg-green-500/80 text-white' :
                'bg-gray-500/80 text-white'
              }`}>
                {record.status}
