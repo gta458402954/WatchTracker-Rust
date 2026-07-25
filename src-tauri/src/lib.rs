@@ -94,9 +94,20 @@ pub fn run() {
             let full_path = app_dir.join("posters").join(file_name);
 
             if full_path.exists() {
-                let content = std::fs::read(full_path).unwrap_or_default();
+                let content = std::fs::read(&full_path).unwrap_or_default();
+                let mime_type = infer::get(&content)
+                    .map(|t| t.mime_type())
+                    .unwrap_or_else(|| {
+                        match full_path.extension().and_then(|e| e.to_str()) {
+                            Some("png") | Some("PNG") => "image/png",
+                            Some("webp") | Some("WEBP") => "image/webp",
+                            Some("gif") | Some("GIF") => "image/gif",
+                            _ => "image/jpeg",
+                        }
+                    });
+
                 tauri::http::Response::builder()
-                    .header("Content-Type", "image/jpeg")
+                    .header("Content-Type", mime_type)
                     .body(content)
                     .unwrap()
             } else {
