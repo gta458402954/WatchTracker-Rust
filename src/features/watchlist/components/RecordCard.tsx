@@ -48,6 +48,9 @@ interface RecordCardProps {
 }
 
 export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle, getEmoji }: RecordCardProps) {
+  const contentTags = record.contentTags?.split(',').map(tag => tag.trim()).filter(Boolean) ?? [];
+  const primaryMeta = contentTags[0] || record.mediaType || (getEmoji ? getEmoji(record.category) : record.category);
+  const secondaryTags = contentTags.length > 0 ? contentTags.slice(1).join(',') : record.genres;
   const statusConf = STATUS_CONFIG[record.status];
 
 
@@ -110,17 +113,17 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
           
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">
-              {record.mediaType || (getEmoji ? getEmoji(record.category) : record.category)}
+              {primaryMeta}
               {record.releaseYear && ` · ${record.releaseYear}`}
             </span>
-            {(record.contentTags || record.genres) && (() => {
-              const genresList = (record.contentTags || record.genres || '').split(',').map(g => translateGenre(g.trim())).filter(g => g && g !== '未知' && g !== '未知类型');
+            {secondaryTags && (() => {
+              const genresList = secondaryTags.split(',').map(g => translateGenre(g.trim())).filter(g => g && g !== '未知' && g !== '未知类型');
               const hasOthers = genresList.some(g => g !== '剧情');
               const displayList = hasOthers ? genresList.filter(g => g !== '剧情') : genresList;
               const displayStr = displayList.slice(0, 2).join(',');
               
               return displayStr ? (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={record.contentTags || record.genres || undefined}>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={secondaryTags}>
                   {displayStr}
                 </span>
               ) : null;
