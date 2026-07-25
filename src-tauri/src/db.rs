@@ -47,6 +47,11 @@ pub fn init(app_handle: &AppHandle) -> Result<DbState, String> {
     })
 }
 
+struct Migration {
+    version: i32,
+    up: fn(&Connection) -> Result<()>,
+}
+
 fn setup_db(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);",
@@ -61,208 +66,223 @@ fn setup_db(conn: &Connection) -> Result<()> {
         })
         .unwrap_or(0);
 
-    if current_version < 1 {
-        conn.execute_batch("
-            CREATE TABLE IF NOT EXISTS records (
-              id TEXT PRIMARY KEY, originalName TEXT, chineseName TEXT, progress TEXT, totalEpisodes INTEGER, status TEXT, platform TEXT, rating INTEGER, startDate TEXT, endDate TEXT, category TEXT, notes TEXT, createdAt TEXT
-            );
-        ")?;
-    }
+    let migrations = [
+        Migration {
+            version: 1,
+            up: |conn| {
+                conn.execute_batch("
+                    CREATE TABLE IF NOT EXISTS records (
+                      id TEXT PRIMARY KEY, originalName TEXT, chineseName TEXT, progress TEXT, totalEpisodes INTEGER, status TEXT, platform TEXT, rating INTEGER, startDate TEXT, endDate TEXT, category TEXT, notes TEXT, createdAt TEXT
+                    );
+                ")
+            },
+        },
+        Migration {
+            version: 2,
+            up: |conn| {
+                let cols = [
+                    ("movieProgress", "INTEGER"),
+                    ("movieDuration", "INTEGER"),
+                    ("releaseYear", "TEXT"),
+                    ("posterPath", "TEXT"),
+                    ("updatedAt", "TEXT"),
+                ];
+                for (name, col_type) in cols {
+                    let exists: bool = conn
+                        .query_row(
+                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(false);
+                    if !exists {
+                        conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+                    }
+                }
+                Ok(())
+            },
+        },
+        Migration {
+            version: 4,
+            up: |conn| {
+                let exists: bool = conn
+                    .query_row(
+                        "SELECT count(*) FROM pragma_table_info('records') WHERE name='imdbId'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                if !exists {
+                    conn.execute("ALTER TABLE records ADD COLUMN imdbId TEXT", [])?;
+                }
+                Ok(())
+            },
+        },
+        Migration {
+            version: 5,
+            up: |conn| {
+                let exists: bool = conn
+                    .query_row(
+                        "SELECT count(*) FROM pragma_table_info('records') WHERE name='isLocked'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                if !exists {
+                    conn.execute("ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0", [])?;
+                }
+                Ok(())
+            },
+        },
+        Migration {
+            version: 7,
+            up: |conn| {
+                let cols = [
+                    ("genres", "TEXT"),
+                    ("originCountry", "TEXT"),
+                    ("imdbRating", "REAL"),
+                    ("tmdbStatus", "TEXT"),
+                    ("interestLevel", "INTEGER"),
+                ];
+                for (name, col_type) in cols {
+                    let exists: bool = conn
+                        .query_row(
+                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(false);
+                    if !exists {
+                        conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+                    }
+                }
+                Ok(())
+            },
+        },
+        Migration {
+            version: 8,
+            up: |conn| {
+                let exists: bool = conn
+                    .query_row(
+                        "SELECT count(*) FROM pragma_table_info('records') WHERE name='episodeRuntime'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                if !exists {
+                    conn.execute("ALTER TABLE records ADD COLUMN episodeRuntime INTEGER", [])?;
+                }
+                Ok(())
+            },
+        },
+        Migration {
+            version: 9,
+            up: |conn| {
+                conn.execute("UPDATE records SET rating = rating * 2 WHERE rating IS NOT NULL AND rating >= 1 AND rating <= 5;", [])?;
+                Ok(())
+            },
+        },
+        Migration {
+            version: 10,
+            up: |conn| {
+                conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", []).ok();
+                conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", []).ok();
+                conn.execute("UPDATE records SET mediaType = CASE WHEN category IN ('电影', '纪录片') THEN '电影' WHEN category = '综艺' THEN '综艺' WHEN category = '动画' THEN '动画' ELSE '剧集' END WHERE mediaType IS NULL OR mediaType = ''", [])?;
+                conn.execute("UPDATE records SET contentTags = CASE WHEN contentTags IS NULL OR contentTags = '' THEN CASE WHEN category = '纪录片' THEN '纪录片' ELSE '' END ELSE contentTags END", [])?;
+                Ok(())
+            },
+        },
+        Migration {
+            version: 11,
+            up: |conn| {
+                conn.execute("UPDATE records SET contentTags = CASE category WHEN '美剧' THEN '美国' WHEN '英剧' THEN '英国' WHEN '日剧' THEN '日本' WHEN '韩剧' THEN '韩国' WHEN '国产剧' THEN '中国大陆' WHEN '港剧' THEN '中国香港' WHEN '台剧' THEN '中国台湾' WHEN '纪录片' THEN '纪录片' ELSE contentTags END WHERE contentTags IS NULL OR contentTags = ''", [])?;
+                Ok(())
+            },
+        },
+        Migration {
+            version: 12,
+            up: |conn| {
+                conn.execute("UPDATE records SET mediaType = '纪录片' WHERE category = '纪录片'", [])?;
+                Ok(())
+            },
+        },
+        Migration {
+            version: 13,
+            up: |conn| {
+                conn.execute_batch("
+                    UPDATE records SET contentTags = TRIM(REPLACE(',' || contentTags || ',', ',纪录片,', ','), ', ') WHERE contentTags LIKE '%纪录片%';
+                    DROP TABLE IF EXISTS categories;
+                    DROP TABLE IF EXISTS watch_logs;
+                    DROP INDEX IF EXISTS idx_records_chineseName;
+                    DROP INDEX IF EXISTS idx_records_originalName;
+                ")
+            },
+        },
+        Migration {
+            version: 14,
+            up: |conn| {
+                conn.execute_batch("
+                    BEGIN IMMEDIATE;
+                    CREATE TABLE records_v14 (
+                        id TEXT PRIMARY KEY,
+                        originalName TEXT NOT NULL DEFAULT '',
+                        chineseName TEXT NOT NULL DEFAULT '',
+                        progress TEXT NOT NULL DEFAULT '',
+                        totalEpisodes INTEGER,
+                        status TEXT NOT NULL DEFAULT '未看',
+                        platform TEXT NOT NULL DEFAULT '',
+                        rating INTEGER,
+                        startDate TEXT,
+                        endDate TEXT,
+                        notes TEXT NOT NULL DEFAULT '',
+                        createdAt TEXT NOT NULL DEFAULT '',
+                        movieProgress INTEGER,
+                        movieDuration INTEGER,
+                        releaseYear TEXT,
+                        posterPath TEXT,
+                        updatedAt TEXT,
+                        imdbId TEXT,
+                        isLocked INTEGER DEFAULT 0,
+                        genres TEXT,
+                        originCountry TEXT,
+                        imdbRating REAL,
+                        tmdbStatus TEXT,
+                        interestLevel INTEGER,
+                        episodeRuntime INTEGER,
+                        mediaType TEXT NOT NULL DEFAULT '电影',
+                        contentTags TEXT
+                    );
+                    INSERT INTO records_v14 (
+                        id, originalName, chineseName, progress, totalEpisodes, status, platform, rating,
+                        startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear,
+                        posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating,
+                        tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags
+                    )
+                    SELECT
+                        id, COALESCE(originalName, ''), COALESCE(chineseName, ''), COALESCE(progress, ''),
+                        totalEpisodes, COALESCE(status, '未看'), COALESCE(platform, ''), rating,
+                        startDate, endDate, COALESCE(notes, ''), COALESCE(createdAt, ''), movieProgress,
+                        movieDuration, releaseYear, posterPath, updatedAt, imdbId, COALESCE(isLocked, 0),
+                        genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime,
+                        COALESCE(NULLIF(mediaType, ''), '电影'), contentTags
+                    FROM records;
+                    DROP TABLE records;
+                    ALTER TABLE records_v14 RENAME TO records;
+                    COMMIT;
+                ")
+            },
+        },
+    ];
 
-    if current_version < 2 {
-        let cols = vec![
-            ("movieProgress", "INTEGER"),
-            ("movieDuration", "INTEGER"),
-            ("releaseYear", "TEXT"),
-            ("posterPath", "TEXT"),
-            ("updatedAt", "TEXT"),
-        ];
-
-        for (name, col_type) in cols {
-            let exists: bool = conn
-                .query_row(
-                    &format!(
-                        "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
-                        name
-                    ),
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap_or(false);
-
-            if !exists {
-                conn.execute(
-                    &format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type),
-                    [],
-                )?;
-            }
-        }
-    }
-
-    if current_version < 4 {
-        let exists: bool = conn
-            .query_row(
-                "SELECT count(*) FROM pragma_table_info('records') WHERE name='imdbId'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if !exists {
-            conn.execute("ALTER TABLE records ADD COLUMN imdbId TEXT", [])?;
-        }
-    }
-
-    if current_version < 5 {
-        let exists: bool = conn
-            .query_row(
-                "SELECT count(*) FROM pragma_table_info('records') WHERE name='isLocked'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if !exists {
+    for m in migrations {
+        if current_version < m.version {
+            (m.up)(conn)?;
             conn.execute(
-                "ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0",
-                [],
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
+                params![m.version.to_string()],
             )?;
         }
     }
-
-    if current_version < 7 {
-        let cols = vec![
-            ("genres", "TEXT"),
-            ("originCountry", "TEXT"),
-            ("imdbRating", "REAL"),
-            ("tmdbStatus", "TEXT"),
-            ("interestLevel", "INTEGER"),
-        ];
-
-        for (name, col_type) in cols {
-            let exists: bool = conn
-                .query_row(
-                    &format!(
-                        "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
-                        name
-                    ),
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap_or(false);
-
-            if !exists {
-                conn.execute(
-                    &format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type),
-                    [],
-                )?;
-            }
-        }
-    }
-
-    if current_version < 8 {
-        let exists: bool = conn
-            .query_row(
-                "SELECT count(*) FROM pragma_table_info('records') WHERE name='episodeRuntime'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if !exists {
-            conn.execute("ALTER TABLE records ADD COLUMN episodeRuntime INTEGER", [])?;
-        }
-    }
-
-    if current_version < 9 {
-        conn.execute("UPDATE records SET rating = rating * 2 WHERE rating IS NOT NULL AND rating >= 1 AND rating <= 5;", [])?;
-    }
-
-    if current_version < 10 {
-        conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", [])
-            .ok();
-        conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", [])
-            .ok();
-        conn.execute("UPDATE records SET mediaType = CASE WHEN category IN ('电影', '纪录片') THEN '电影' WHEN category = '综艺' THEN '综艺' WHEN category = '动画' THEN '动画' ELSE '剧集' END WHERE mediaType IS NULL OR mediaType = ''", [])?;
-        conn.execute("UPDATE records SET contentTags = CASE WHEN contentTags IS NULL OR contentTags = '' THEN CASE WHEN category = '纪录片' THEN '纪录片' ELSE '' END ELSE contentTags END", [])?;
-    }
-
-    if current_version < 11 {
-        conn.execute("UPDATE records SET contentTags = CASE category WHEN '美剧' THEN '美国' WHEN '英剧' THEN '英国' WHEN '日剧' THEN '日本' WHEN '韩剧' THEN '韩国' WHEN '国产剧' THEN '中国大陆' WHEN '港剧' THEN '中国香港' WHEN '台剧' THEN '中国台湾' WHEN '纪录片' THEN '纪录片' ELSE contentTags END WHERE contentTags IS NULL OR contentTags = ''", [])?;
-    }
-    if current_version < 12 {
-        conn.execute(
-            "UPDATE records SET mediaType = '纪录片' WHERE category = '纪录片'",
-            [],
-        )?;
-    }
-    if current_version < 13 {
-        conn.execute_batch("
-            UPDATE records SET contentTags = TRIM(REPLACE(',' || contentTags || ',', ',纪录片,', ','), ', ') WHERE contentTags LIKE '%纪录片%';
-            DROP TABLE IF EXISTS categories;
-            DROP TABLE IF EXISTS watch_logs;
-            DROP INDEX IF EXISTS idx_records_chineseName;
-            DROP INDEX IF EXISTS idx_records_originalName;
-        ")?;
-    }
-    if current_version < 14 {
-        conn.execute_batch(
-            "
-            BEGIN IMMEDIATE;
-            CREATE TABLE records_v14 (
-                id TEXT PRIMARY KEY,
-                originalName TEXT NOT NULL DEFAULT '',
-                chineseName TEXT NOT NULL DEFAULT '',
-                progress TEXT NOT NULL DEFAULT '',
-                totalEpisodes INTEGER,
-                status TEXT NOT NULL DEFAULT '未看',
-                platform TEXT NOT NULL DEFAULT '',
-                rating INTEGER,
-                startDate TEXT,
-                endDate TEXT,
-                notes TEXT NOT NULL DEFAULT '',
-                createdAt TEXT NOT NULL DEFAULT '',
-                movieProgress INTEGER,
-                movieDuration INTEGER,
-                releaseYear TEXT,
-                posterPath TEXT,
-                updatedAt TEXT,
-                imdbId TEXT,
-                isLocked INTEGER DEFAULT 0,
-                genres TEXT,
-                originCountry TEXT,
-                imdbRating REAL,
-                tmdbStatus TEXT,
-                interestLevel INTEGER,
-                episodeRuntime INTEGER,
-                mediaType TEXT NOT NULL DEFAULT '电影',
-                contentTags TEXT
-            );
-            INSERT INTO records_v14 (
-                id, originalName, chineseName, progress, totalEpisodes, status, platform, rating,
-                startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear,
-                posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating,
-                tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags
-            )
-            SELECT
-                id, COALESCE(originalName, ''), COALESCE(chineseName, ''), COALESCE(progress, ''),
-                totalEpisodes, COALESCE(status, '未看'), COALESCE(platform, ''), rating,
-                startDate, endDate, COALESCE(notes, ''), COALESCE(createdAt, ''), movieProgress,
-                movieDuration, releaseYear, posterPath, updatedAt, imdbId, COALESCE(isLocked, 0),
-                genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime,
-                COALESCE(NULLIF(mediaType, ''), '电影'), contentTags
-            FROM records;
-            DROP TABLE records;
-            ALTER TABLE records_v14 RENAME TO records;
-            COMMIT;
-        ",
-        )?;
-    }
-
-    conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
-        params!["14"],
-    )?;
 
     Ok(())
 }
