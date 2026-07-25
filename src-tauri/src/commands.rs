@@ -5,23 +5,23 @@ use serde_json::Value;
 use tauri::State;
 
 #[tauri::command]
-pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::get_all_records(&conn).map_err(|e| e.to_string())
+pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::get_all_records(&conn)?)
 }
 
 #[tauri::command]
-pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::insert_record(&conn, r).map_err(|e| e.to_string())
+pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::insert_record(&conn, r)?)
 }
 
 #[tauri::command]
-pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Result<(), String> {
+pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Result<(), crate::error::AppError> {
     log::info!("[Commands] update_record called for id: {}", id);
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
 
-    let obj = updates.as_object().ok_or("Updates must be an object")?;
+    let obj = updates.as_object().ok_or_else(|| crate::error::AppError::General("Updates must be an object".to_string()))?;
     if obj.is_empty() {
         return Ok(());
     }
@@ -72,53 +72,49 @@ pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Resul
 
     params.push(rusqlite::types::Value::Text(id));
 
-    conn.execute(&sql, rusqlite::params_from_iter(params))
-        .map_err(|e| {
-            log::error!("[Commands] Failed to execute update query: {}", e);
-            e.to_string()
-        })?;
+    conn.execute(&sql, rusqlite::params_from_iter(params))?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn delete_record(state: State<DbState>, id: String) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::delete_record(&conn, id).map_err(|e| e.to_string())
+pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::delete_record(&conn, id)?)
 }
 
 #[tauri::command]
-pub fn replace_all_records(state: State<DbState>, records: Vec<WatchRecord>) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::replace_all_records(&conn, records).map_err(|e| e.to_string())
+pub fn replace_all_records(state: State<DbState>, records: Vec<WatchRecord>) -> Result<(), crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::replace_all_records(&conn, records)?)
 }
 
 #[tauri::command]
-pub fn vacuum_db(state: State<DbState>) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::vacuum_db(&conn).map_err(|e| e.to_string())
+pub fn vacuum_db(state: State<DbState>) -> Result<(), crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::vacuum_db(&conn)?)
 }
 
 #[tauri::command]
-pub fn get_setting(state: State<DbState>, key: String) -> Result<Option<String>, String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::get_setting(&conn, key).map_err(|e| e.to_string())
+pub fn get_setting(state: State<DbState>, key: String) -> Result<Option<String>, crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::get_setting(&conn, key)?)
 }
 
 #[tauri::command]
-pub fn set_setting(state: State<DbState>, key: String, value: String) -> Result<(), String> {
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::set_setting(&conn, key, value).map_err(|e| e.to_string())
+pub fn set_setting(state: State<DbState>, key: String, value: String) -> Result<(), crate::error::AppError> {
+    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    Ok(db::set_setting(&conn, key, value)?)
 }
 
 #[tauri::command]
-pub fn encrypt(text: String, tag: Option<String>) -> Result<String, String> {
-    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds"))
+pub fn encrypt(text: String, tag: Option<String>) -> Result<String, crate::error::AppError> {
+    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds")).map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
-pub fn decrypt(id: String) -> Result<String, String> {
-    auth::decrypt(&id)
+pub fn decrypt(id: String) -> Result<String, crate::error::AppError> {
+    auth::decrypt(&id).map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
@@ -127,7 +123,7 @@ pub async fn search_tmdb(
     query: String,
     language: Option<String>,
     proxy: Option<String>,
-) -> Result<Value, String> {
+) -> Result<Value, crate::error::AppError> {
     net::search_tmdb(
         api_key,
         query,
@@ -135,6 +131,7 @@ pub async fn search_tmdb(
         proxy,
     )
     .await
+    .map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
@@ -144,7 +141,7 @@ pub async fn get_tmdb_detail(
     media_type: String,
     language: Option<String>,
     proxy: Option<String>,
-) -> Result<Value, String> {
+) -> Result<Value, crate::error::AppError> {
     net::get_tmdb_detail(
         api_key,
         id,
@@ -153,6 +150,7 @@ pub async fn get_tmdb_detail(
         proxy,
     )
     .await
+    .map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
@@ -160,8 +158,8 @@ pub async fn download_poster(
     app: tauri::AppHandle,
     path: String,
     proxy: Option<String>,
-) -> Result<bool, String> {
-    net::download_poster(&app, path, proxy).await
+) -> Result<bool, crate::error::AppError> {
+    net::download_poster(&app, path, proxy).await.map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
@@ -172,14 +170,12 @@ pub async fn webdav_request(
     password: String,
     body: Option<String>,
     proxy: Option<String>,
-) -> Result<Value, String> {
+) -> Result<Value, crate::error::AppError> {
     if !matches!(method.as_str(), "GET" | "PUT" | "MKCOL") {
-        return Err("Unsupported WebDAV method".to_string());
+        return Err(crate::error::AppError::General("Unsupported WebDAV method".to_string()));
     }
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err("Invalid WebDAV URL".to_string());
+        return Err(crate::error::AppError::General("Invalid WebDAV URL".to_string()));
     }
-    net::webdav_request(&method, &url, &username, &password, body, proxy).await
+    net::webdav_request(&method, &url, &username, &password, body, proxy).await.map_err(crate::error::AppError::General)
 }
-
-

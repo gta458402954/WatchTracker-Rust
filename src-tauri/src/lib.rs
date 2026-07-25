@@ -1,6 +1,7 @@
 mod auth;
 mod commands;
 mod db;
+mod error;
 mod models;
 mod net;
 
