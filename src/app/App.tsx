@@ -16,6 +16,16 @@ import ListView from '../features/watchlist/components/ListView';
 import PosterWall from '../features/watchlist/components/PosterWall';
 
 type FilterStatus = Status | 'all';
+type RegionFilter = 'all' | '美国' | '韩国' | '日本' | '英国' | '中国大陆' | '中国香港' | '中国台湾';
+
+const LEGACY_REGION_BY_CATEGORY: Record<string, Exclude<RegionFilter, 'all'>> = {
+  美剧: '美国', 韩剧: '韩国', 日剧: '日本', 英剧: '英国', 国产剧: '中国大陆', 港剧: '中国香港', 台剧: '中国台湾',
+};
+
+function hasRegion(record: WatchRecord, region: Exclude<RegionFilter, 'all'>) {
+  const tags = record.contentTags?.split(',').map(tag => tag.trim()) ?? [];
+  return tags.includes(region) || LEGACY_REGION_BY_CATEGORY[record.category] === region;
+}
 
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
@@ -28,6 +38,7 @@ export default function App() {
   
   const [activeCategory, setActiveCategory] = useState<MediaType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
+  const [activeRegion, setActiveRegion] = useState<RegionFilter>('all');
   const [searchText, setSearchText] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<WatchRecord | null>(null);
@@ -91,6 +102,7 @@ export default function App() {
       .filter(r => {
         if (activeCategory !== 'all' && (r.mediaType || (r.category === '综艺' ? '综艺' : r.category === '动画' ? '动画' : r.category === '电影' || r.category === '纪录片' ? '电影' : '剧集')) !== activeCategory) return false;
         if (filterStatus !== 'all' && r.status !== filterStatus) return false;
+        if (activeRegion !== 'all' && !hasRegion(r, activeRegion)) return false;
         if (lockFilter === 'locked' && !r.isLocked) return false;
         if (lockFilter === 'unlocked' && r.isLocked) return false;
         if (searchText) {
@@ -124,7 +136,7 @@ export default function App() {
         }
         return (b.createdAt || '') > (a.createdAt || '') ? 1 : -1;
       });
-  }, [records, activeCategory, filterStatus, searchText, sortBy, lockFilter]);
+  }, [records, activeCategory, filterStatus, activeRegion, searchText, sortBy, lockFilter]);
 
 
   function handleEdit(record: WatchRecord) {
@@ -250,7 +262,9 @@ export default function App() {
         records={records}        activeCategory={activeCategory}
         onCategoryChange={setActiveCategory}
         filterStatus={filterStatus}
-        onFilterStatusChange={setFilterStatus}
+        onFilterStatusChange={(status) => { setFilterStatus(status); setActiveRegion('all'); }}
+        activeRegion={activeRegion}
+        onRegionChange={(region) => { setActiveRegion(region as RegionFilter); if (region !== 'all') setFilterStatus('已看'); }}
         lastSync={lastSync}
         isSyncing={syncing}
       />

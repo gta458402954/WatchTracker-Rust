@@ -7,6 +7,8 @@ interface StatsBarProps {
   onCategoryChange: (category: MediaType | 'all') => void;
   filterStatus: Status | 'all';
   onFilterStatusChange: (status: Status | 'all') => void;
+  activeRegion: string | 'all';
+  onRegionChange: (region: string | 'all') => void;
   lastSync?: string | null;
   isSyncing?: boolean;
 }
@@ -29,7 +31,7 @@ function regionsOf(record: WatchRecord) {
   return regions.length > 0 ? regions : (LEGACY_REGION_BY_CATEGORY[record.category] ? [LEGACY_REGION_BY_CATEGORY[record.category]] : []);
 }
 
-export default function StatsBar({ records, activeCategory, onCategoryChange, filterStatus, onFilterStatusChange, lastSync, isSyncing }: StatsBarProps) {
+export default function StatsBar({ records, activeCategory, onCategoryChange, filterStatus, onFilterStatusChange, activeRegion, onRegionChange, lastSync, isSyncing }: StatsBarProps) {
   const visible = records.filter(record => activeCategory === 'all' || mediaTypeOf(record) === activeCategory);
   const watchedRegionCounts = REGION_ORDER.map(region => ({
     region,
@@ -50,9 +52,9 @@ export default function StatsBar({ records, activeCategory, onCategoryChange, fi
         const count = visible.filter(record => status === 'all' || record.status === status).length;
         return <button key={status} onClick={() => onFilterStatusChange(status)} className={`flex items-center gap-1.5 ${filterStatus === status ? '' : 'opacity-60'}`}><span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${config.bg} ${config.color}`}>{config.label}</span><span className="text-sm font-bold text-gray-700">{count}</span></button>;
       })}
-      {watchedRegionCounts.length > 0 && <div className="flex items-center gap-2 border-l border-gray-200 pl-4 text-sm text-gray-500">
+      {watchedRegionCounts.length > 0 && <div className="flex items-center gap-2 border-l border-gray-200 pl-4">
         <span className="font-medium text-gray-400">地区</span>
-        {watchedRegionCounts.map(({ region, count }) => <span key={region} className="whitespace-nowrap">{region} <b className="text-gray-700">{count}</b></span>)}
+        {watchedRegionCounts.map(({ region, count }) => <button key={region} type="button" aria-pressed={activeRegion === region} onClick={() => onRegionChange(activeRegion === region ? 'all' : region)} className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors ${activeRegion === region ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-500 hover:border-indigo-200 hover:text-indigo-600'}`}>{region} <b>{count}</b></button>)}
       </div>}
       {(lastSync || isSyncing) && <span className="ml-auto text-xs text-gray-400">{isSyncing ? '正在同步…' : `上次同步：${lastSync}`}</span>}
     </div>
