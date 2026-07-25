@@ -2,7 +2,7 @@
 export type Category = string;
 
 export type Status = '在看' | '未看' | '已看';
-export type MediaType = '电影' | '剧集' | '综艺' | '动画';
+export type MediaType = '电影' | '剧集' | '纪录片' | '综艺' | '动画';
 
 export interface WatchRecord {
   id: string;

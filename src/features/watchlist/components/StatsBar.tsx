@@ -13,7 +13,7 @@ interface StatsBarProps {
   isSyncing?: boolean;
 }
 
-const mediaTypeOf = (record: WatchRecord): MediaType => record.mediaType || (record.category === '综艺' ? '综艺' : record.category === '动画' ? '动画' : record.category === '电影' || record.category === '纪录片' ? '电影' : '剧集');
+const mediaTypeOf = (record: WatchRecord): MediaType => record.mediaType || (record.category === '综艺' ? '综艺' : record.category === '动画' ? '动画' : record.category === '纪录片' ? '纪录片' : record.category === '电影' ? '电影' : '剧集');
 const REGION_ORDER = ['美国', '韩国', '日本', '英国', '中国大陆', '中国香港', '中国台湾'] as const;
 const LEGACY_REGION_BY_CATEGORY: Record<string, string> = {
   美剧: '美国',
@@ -40,7 +40,7 @@ export default function StatsBar({ records, activeCategory, onCategoryChange, fi
 
   return <div className="border-b border-gray-100 bg-white">
     <div className="scrollbar-none flex gap-1 overflow-x-auto px-4 pt-4">
-      {(['all', '电影', '剧集', '综艺', '动画'] as const).map(type => {
+      {(['all', '电影', '剧集', '纪录片', '综艺', '动画'] as const).map(type => {
         const count = type === 'all' ? records.length : records.filter(record => mediaTypeOf(record) === type).length;
         const label = type === 'all' ? '全部' : type;
         return <button key={type} onClick={() => onCategoryChange(type)} className={`shrink-0 rounded-t-xl border-b-2 px-3 py-2 text-sm font-medium ${activeCategory === type ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-transparent text-gray-400 hover:bg-gray-50 hover:text-gray-600'}`}>{label} {count}</button>;

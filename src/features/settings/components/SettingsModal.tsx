@@ -703,7 +703,7 @@ export default function SettingsModal({
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {(['电影', '剧集', '综艺', '动画'] as const).map(type => {
+                  {(['电影', '剧集', '纪录片', '综艺', '动画'] as const).map(type => {
                     const count = records.filter(record => record.mediaType === type || (!record.mediaType && record.category === type)).length;
                     return <div key={type} className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
                       <p className="text-sm font-bold text-indigo-700">{type}</p>

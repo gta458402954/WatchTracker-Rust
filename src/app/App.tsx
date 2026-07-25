@@ -100,7 +100,7 @@ export default function App() {
   const filtered = useMemo(() => {
     return records
       .filter(r => {
-        if (activeCategory !== 'all' && (r.mediaType || (r.category === '综艺' ? '综艺' : r.category === '动画' ? '动画' : r.category === '电影' || r.category === '纪录片' ? '电影' : '剧集')) !== activeCategory) return false;
+        if (activeCategory !== 'all' && (r.mediaType || (r.category === '综艺' ? '综艺' : r.category === '动画' ? '动画' : r.category === '纪录片' ? '纪录片' : r.category === '电影' ? '电影' : '剧集')) !== activeCategory) return false;
         if (filterStatus !== 'all' && r.status !== filterStatus) return false;
         if (activeRegion !== 'all' && !hasRegion(r, activeRegion)) return false;
         if (lockFilter === 'locked' && !r.isLocked) return false;
@@ -260,7 +260,7 @@ export default function App() {
       {/* Stats & Category Tabs */}
       <StatsBar
         records={records}        activeCategory={activeCategory}
-        onCategoryChange={setActiveCategory}
+        onCategoryChange={(type) => { setActiveCategory(type); setActiveRegion('all'); }}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         activeRegion={activeRegion}

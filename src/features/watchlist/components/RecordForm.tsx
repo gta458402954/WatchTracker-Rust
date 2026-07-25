@@ -423,7 +423,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">播放形态</label>
               <select value={form.mediaType || '电影'} onChange={event => { const mediaType = event.target.value as MediaType; set('mediaType', mediaType); set('category', mediaType); }} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400">
-                {(['电影', '剧集', '综艺', '动画'] as MediaType[]).map(type => <option key={type} value={type}>{type}</option>)}
+                {(['电影', '剧集', '纪录片', '综艺', '动画'] as MediaType[]).map(type => <option key={type} value={type}>{type}</option>)}
               </select>
             </div>
             <div>
