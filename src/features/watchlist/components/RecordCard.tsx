@@ -49,6 +49,7 @@ interface RecordCardProps {
 
 export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle, getEmoji }: RecordCardProps) {
   const statusConf = STATUS_CONFIG[record.status];
+  const detailTags = (record.mediaType || record.category) === '电影' ? record.genres : (record.contentTags || record.genres);
 
 
   // 计算显示的进度文本
@@ -113,14 +114,14 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               {record.mediaType || (getEmoji ? getEmoji(record.category) : record.category)}
               {record.releaseYear && ` · ${record.releaseYear}`}
             </span>
-            {(record.contentTags || record.genres) && (() => {
-              const genresList = (record.contentTags || record.genres || '').split(',').map(g => translateGenre(g.trim())).filter(g => g && g !== '未知' && g !== '未知类型');
+            {detailTags && (() => {
+              const genresList = detailTags.split(',').map(g => translateGenre(g.trim())).filter(g => g && g !== '未知' && g !== '未知类型');
               const hasOthers = genresList.some(g => g !== '剧情');
               const displayList = hasOthers ? genresList.filter(g => g !== '剧情') : genresList;
               const displayStr = displayList.slice(0, 2).join(',');
               
               return displayStr ? (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={record.contentTags || record.genres || undefined}>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 truncate max-w-[120px]" title={detailTags}>
                   {displayStr}
                 </span>
               ) : null;
