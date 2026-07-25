@@ -214,9 +214,13 @@ fn setup_db(conn: &Connection) -> Result<()> {
         conn.execute("UPDATE records SET contentTags = CASE WHEN contentTags IS NULL OR contentTags = '' THEN CASE WHEN category = '纪录片' THEN '纪录片' ELSE '' END ELSE contentTags END", [])?;
     }
 
+    if current_version < 11 {
+        conn.execute("UPDATE records SET contentTags = CASE category WHEN '美剧' THEN '美国' WHEN '英剧' THEN '英国' WHEN '日剧' THEN '日本' WHEN '韩剧' THEN '韩国' WHEN '国产剧' THEN '中国大陆' WHEN '港剧' THEN '中国香港' WHEN '台剧' THEN '中国台湾' WHEN '纪录片' THEN '纪录片' ELSE contentTags END WHERE contentTags IS NULL OR contentTags = ''", [])?;
+    }
+
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
-        params!["10"],
+        params!["11"],
     )?;
 
     Ok(())
