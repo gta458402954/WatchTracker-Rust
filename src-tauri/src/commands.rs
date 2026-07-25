@@ -66,6 +66,8 @@ pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Resul
             tmdb_status: row.get("tmdbStatus").unwrap_or(None),
             interest_level: row.get("interestLevel").unwrap_or(None),
             episode_runtime: row.get("episodeRuntime").unwrap_or(None),
+            media_type: row.get("mediaType").unwrap_or(None),
+            content_tags: row.get("contentTags").unwrap_or(None),
         })
     }).map_err(|e| {
         log::error!("[Commands] Failed to fetch record for update: {}", e);
@@ -102,6 +104,8 @@ pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Resul
         if let Some(v) = o.get("tmdbStatus") { r.tmdb_status = v.as_str().map(|s| s.to_string()); }
         if let Some(v) = o.get("interestLevel") { r.interest_level = v.as_i64().map(|n| n as i32); }
         if let Some(v) = o.get("episodeRuntime") { r.episode_runtime = v.as_i64().map(|n| n as i32); }
+        if let Some(v) = o.get("mediaType") { r.media_type = v.as_str().map(|s| s.to_string()); }
+        if let Some(v) = o.get("contentTags") { r.content_tags = v.as_str().map(|s| s.to_string()); }
     }
     
     db::insert_record(&conn, r).map_err(|e| e.to_string())

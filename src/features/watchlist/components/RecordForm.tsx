@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { WatchRecord, Category, Status } from '../../../shared/types';
+import { WatchRecord, Category, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import type { CategoryItem } from '../../categories/hooks/useCategories';
 import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
@@ -17,6 +17,15 @@ const isTVCategory = (cat: Category) =>
 
 const isMovieCategory = (cat: Category) =>
   !isTVCategory(cat);
+
+const COUNTRY_LABELS: Record<string, string> = { US: '美国', GB: '英国', JP: '日本', KR: '韩国', CN: '中国大陆', HK: '中国香港', TW: '中国台湾' };
+function tmdbClassification(detail: any, isTV: boolean) {
+  const codes = isTV ? (detail.origin_country || []) : (detail.production_countries || []).map((country: any) => country.iso_3166_1);
+  const regions = codes.map((code: string) => COUNTRY_LABELS[code] || code).filter(Boolean);
+  const genres = detail.genres?.map((genre: any) => genre.name).join(', ') || null;
+  const tags = [...new Set([...regions, ...(genres?.includes('Documentary') || genres?.includes('纪录片') ? ['纪录片'] : [])])];
+  return { originCountry: codes.join(', ') || null, genres, mediaType: (isTV ? '剧集' : '电影') as MediaType, contentTags: tags.join(', ') };
+}
 
 function smartProgress(raw: string): string {
   if (!raw) return '';
@@ -74,6 +83,8 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
           tmdbStatus: record.tmdbStatus || null,
           interestLevel: record.interestLevel || null,
           episodeRuntime: record.episodeRuntime || null,
+          mediaType: record.mediaType || null,
+          contentTags: record.contentTags || null,
         }
       : getEmptyRecord()
   );
@@ -208,7 +219,8 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
         
         let query = form.imdbId || form.chineseName || form.originalName || '';
         
-        const originCountry = detail.origin_country?.join(', ') || null;
+        const classification = tmdbClassification(detail, isTV);
+      const originCountry = classification.originCountry;
         let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
         if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
           networkName = '';
@@ -216,7 +228,7 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
           if (networkName === 'CBS All Access') networkName = 'CBS';
           if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
         }
-        const genres = detail.genres?.map((g: any) => g.name).join(', ') || null;
+        const genres = classification.genres;
         
         const updates: any = {
           chineseName: `${seriesName} ${targetSeason.name || `第 ${targetSeason.season_number} 季`}`,
@@ -230,6 +242,8 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
           imdbRating: detail.vote_average || null,
           tmdbStatus: detail.status || null,
           episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
+        mediaType: classification.mediaType,
+        contentTags: classification.contentTags,
         };
         
         if (networkName && (!form.platform || form.platform.trim() === '')) {
@@ -263,7 +277,8 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
       // 触发后台下载海报
       if (poster) downloadPosterAsync(poster);
 
-      const originCountry = detail.origin_country?.join(', ') || null;
+      const classification = tmdbClassification(detail, isTV);
+      const originCountry = classification.originCountry;
       let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
       if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
         networkName = '';
@@ -271,7 +286,7 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
         if (networkName === 'CBS All Access') networkName = 'CBS';
         if (/^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
       }
-      const genres = detail.genres?.map((g: any) => g.name).join(', ') || null;
+      const genres = classification.genres;
 
       // 电影或单季剧集直接填充
       const updates: Partial<typeof form> = {
@@ -284,6 +299,8 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
         imdbRating: detail.vote_average || null,
         tmdbStatus: detail.status || null,
         episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
+        mediaType: classification.mediaType,
+        contentTags: classification.contentTags,
       };
 
       if (networkName && (!form.platform || form.platform.trim() === '')) {
@@ -429,6 +446,19 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
                   {cat.name}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">播放形态</label>
+              <select value={form.mediaType || '电影'} onChange={event => set('mediaType', event.target.value as MediaType)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400">
+                {(['电影', '剧集', '综艺', '动画'] as MediaType[]).map(type => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">内容标签</label>
+              <input value={form.contentTags || ''} onChange={event => set('contentTags', event.target.value)} placeholder="如：韩国, 纪录片" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
             </div>
           </div>
 

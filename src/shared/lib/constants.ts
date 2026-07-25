@@ -41,6 +41,8 @@ export function getEmptyRecord(): Omit<WatchRecord, 'id' | 'createdAt'> {
     tmdbStatus: null,
     interestLevel: null,
     episodeRuntime: null,
+    mediaType: '电影',
+    contentTags: '',
   };
 }
 

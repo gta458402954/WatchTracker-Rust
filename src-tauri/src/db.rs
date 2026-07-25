@@ -207,9 +207,16 @@ fn setup_db(conn: &Connection) -> Result<()> {
         conn.execute("UPDATE records SET rating = rating * 2 WHERE rating IS NOT NULL AND rating >= 1 AND rating <= 5;", [])?;
     }
 
+    if current_version < 10 {
+        conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", []).ok();
+        conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", []).ok();
+        conn.execute("UPDATE records SET mediaType = CASE WHEN category IN ('电影', '纪录片') THEN '电影' WHEN category = '综艺' THEN '综艺' WHEN category = '动画' THEN '动画' ELSE '剧集' END WHERE mediaType IS NULL OR mediaType = ''", [])?;
+        conn.execute("UPDATE records SET contentTags = CASE WHEN contentTags IS NULL OR contentTags = '' THEN CASE WHEN category = '纪录片' THEN '纪录片' ELSE '' END ELSE contentTags END", [])?;
+    }
+
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
-        params!["9"],
+        params!["10"],
     )?;
 
     Ok(())
@@ -272,6 +279,8 @@ pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
             tmdb_status: row.get("tmdbStatus").unwrap_or(None),
             interest_level: row.get("interestLevel").unwrap_or(None),
             episode_runtime: row.get("episodeRuntime").unwrap_or(None),
+            media_type: row.get("mediaType").unwrap_or(None),
+            content_tags: row.get("contentTags").unwrap_or(None),
         })
     })?;
 
@@ -289,13 +298,13 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
     log::info!("[DB] Inserting/Updating record: {} ({})", r.chinese_name, r.id);
     let is_locked_int = r.is_locked.map(|b| if b { 1 } else { 0 });
     conn.execute(
-        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, category, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt, imdbId, isLocked, sortOrder, genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, category, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt, imdbId, isLocked, sortOrder, genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         params![
             r.id, r.original_name, r.chinese_name, r.progress, r.total_episodes,
             r.status, r.platform, r.rating, r.start_date, r.end_date,
             r.category, r.notes, r.created_at, r.movie_progress, r.movie_duration,
             r.release_year, r.poster_path, r.updated_at, r.imdb_id, is_locked_int, r.sort_order,
-            r.genres, r.origin_country, r.imdb_rating, r.tmdb_status, r.interest_level, r.episode_runtime
+            r.genres, r.origin_country, r.imdb_rating, r.tmdb_status, r.interest_level, r.episode_runtime, r.media_type, r.content_tags
         ],
     )?;
     Ok(())

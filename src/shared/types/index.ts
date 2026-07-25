@@ -2,6 +2,7 @@
 export type Category = string;
 
 export type Status = '在看' | '未看' | '已看';
+export type MediaType = '电影' | '剧集' | '综艺' | '动画';
 
 export interface WatchRecord {
   id: string;
@@ -31,6 +32,8 @@ export interface WatchRecord {
   tmdbStatus?: string | null;
   interestLevel?: number | null;
   episodeRuntime?: number | null;
+  mediaType?: MediaType | null;
+  contentTags?: string | null;
 }
 
 export type SortField = 'chineseName' | 'status' | 'rating' | 'startDate' | 'endDate' | 'createdAt' | 'watchValue';

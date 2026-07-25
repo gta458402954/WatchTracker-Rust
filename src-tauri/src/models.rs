@@ -30,6 +30,8 @@ pub struct WatchRecord {
     pub tmdb_status: Option<String>,
     pub interest_level: Option<i32>,
     pub episode_runtime: Option<i32>,
+    pub media_type: Option<String>,
+    pub content_tags: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
