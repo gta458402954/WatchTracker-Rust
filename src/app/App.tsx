@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { WatchRecord, Category, Status } from '../shared/types';
+import { WatchRecord, MediaType, Status } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
 import { useCategories } from '../features/categories/hooks/useCategories';
 import StatsBar from '../features/watchlist/components/StatsBar';
@@ -26,7 +26,7 @@ export default function App() {
   
   const { categories, loadCategories, addCategory, updateCategory, deleteCategory, getEmoji } = useCategories();
   
-  const [activeCategory, setActiveCategory] = useState<Category | 'all'>('all');
+  const [activeCategory, setActiveCategory] = useState<MediaType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [searchText, setSearchText] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -89,7 +89,7 @@ export default function App() {
   const filtered = useMemo(() => {
     return records
       .filter(r => {
-        if (activeCategory !== 'all' && r.category !== activeCategory) return false;
+        if (activeCategory !== 'all' && (r.mediaType || (r.category === '综艺' ? '综艺' : r.category === '动画' ? '动画' : r.category === '电影' || r.category === '纪录片' ? '电影' : '剧集')) !== activeCategory) return false;
         if (filterStatus !== 'all' && r.status !== filterStatus) return false;
         if (lockFilter === 'locked' && !r.isLocked) return false;
         if (lockFilter === 'unlocked' && r.isLocked) return false;
@@ -247,9 +247,7 @@ export default function App() {
 
       {/* Stats & Category Tabs */}
       <StatsBar
-        records={records}
-        categories={categories}
-        activeCategory={activeCategory}
+        records={records}        activeCategory={activeCategory}
         onCategoryChange={setActiveCategory}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
