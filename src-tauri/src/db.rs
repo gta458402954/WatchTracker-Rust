@@ -272,6 +272,18 @@ fn setup_db(conn: &Connection) -> Result<()> {
                 ")
             },
         },
+        Migration {
+            version: 15,
+            up: |conn| {
+                conn.execute_batch(
+                    "UPDATE records SET status = CASE
+                        WHEN lower(trim(status)) IN ('watched', 'completed', 'finish', 'finished', 'done', '已看') THEN '已看'
+                        WHEN lower(trim(status)) IN ('watching', 'doing', 'start', 'started', '在看') THEN '在看'
+                        ELSE '未看'
+                    END;"
+                )
+            },
+        },
     ];
 
     for m in migrations {
@@ -299,26 +311,7 @@ pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
             chinese_name: row.get("chineseName")?,
             progress: row.get("progress")?,
             total_episodes: row.get("totalEpisodes")?,
-            status: {
-                let s: String = row.get("status")?;
-                let lower_s = s.to_lowercase();
-                match lower_s.trim() {
-                    "watched" | "completed" | "finish" | "finished" | "done" | "已看" => {
-                        "已看".to_string()
-                    }
-                    "watching" | "doing" | "start" | "started" | "在看" => "在看".to_string(),
-                    "todo" | "wish" | "plan" | "planned" | "waiting" | "未看" => {
-                        "未看".to_string()
-                    }
-                    _ => {
-                        // 如果还是没匹配上，保持原始字符，但在终端输出一条警告
-                        if !s.is_empty() {
-                            eprintln!("[DB] Unknown status found: '{}'", s);
-                        }
-                        s
-                    }
-                }
-            },
+            status: row.get("status")?,
             platform: row.get("platform")?,
             rating: row.get("rating").unwrap_or(None),
             start_date: row.get("startDate")?,
@@ -457,7 +450,7 @@ mod tests {
             movie_duration: Some(7_200),
             release_year: Some("2026".to_string()),
             poster_path: None,
-            status: "未看".to_string(),
+            status: crate::models::RecordStatus::Unwatched,
             platform: String::new(),
             rating: None,
             start_date: None,
@@ -483,14 +476,9 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open database");
         setup_db(&conn).expect("migrate database");
 
-        let version: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'db_version'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read version");
-        assert_eq!(version, "14");
+        let version: String =
+            get_setting(&conn, "db_version".to_string()).unwrap().unwrap();
+        assert_eq!(version, "15");
 
         let legacy_tables: i32 = conn
             .query_row(
