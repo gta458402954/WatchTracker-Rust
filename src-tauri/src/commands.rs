@@ -6,20 +6,20 @@ use tauri::State;
 
 #[tauri::command]
 pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::get_all_records(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::insert_record(&conn, r).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Result<(), String> {
     log::info!("[Commands] update_record called for id: {}", id);
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
 
     let obj = updates.as_object().ok_or("Updates must be an object")?;
     if obj.is_empty() {
@@ -83,31 +83,31 @@ pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Resul
 
 #[tauri::command]
 pub fn delete_record(state: State<DbState>, id: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::delete_record(&conn, id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn replace_all_records(state: State<DbState>, records: Vec<WatchRecord>) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::replace_all_records(&conn, records).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn vacuum_db(state: State<DbState>) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::vacuum_db(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_setting(state: State<DbState>, key: String) -> Result<Option<String>, String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::get_setting(&conn, key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_setting(state: State<DbState>, key: String, value: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::set_setting(&conn, key, value).map_err(|e| e.to_string())
 }
 
