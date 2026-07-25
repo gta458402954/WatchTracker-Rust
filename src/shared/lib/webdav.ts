@@ -3,14 +3,14 @@ import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt } from './da
 import { WatchRecord } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
-const WEBDAV_URL = 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/records.json';
+const DEFAULT_WEBDAV_BASE_URL = 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/';
 const TOMBSTONES_KEY = 'sync_tombstones';
 const CONFLICTS_KEY = 'sync_conflicts';
 const LAST_SUCCESSFUL_SYNC_KEY = 'sync_last_success_at';
 const CONFLICT_HISTORY_VERSION_KEY = 'sync_conflict_history_version';
 const CONFLICT_HISTORY_VERSION = '2';
 
-export interface WebDAVCreds { username: string; password: string; }
+export interface WebDAVCreds { username: string; password: string; url?: string; }
 interface Tombstone { id: string; deletedAt: string; }
 interface SyncPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: Tombstone[]; }
 export interface SyncResult { ok: boolean; error?: string; records?: WatchRecord[]; conflictCount?: number; }
@@ -46,15 +46,17 @@ function mergeConflictHistory(incoming: SyncConflict[], existing: SyncConflict[]
 export async function saveCreds(creds: WebDAVCreds) {
   const encrypted = await safeEncrypt(`${creds.username}:${creds.password}`, 'webdav_creds');
   await setSettingAsync('webdav_creds', encrypted);
+  if (creds.url) await setSettingAsync('webdav_url', creds.url);
 }
 export async function getCreds(): Promise<WebDAVCreds | null> {
   const stored = await getSettingAsync('webdav_creds');
   if (!stored) return null;
+  const url = await getSettingAsync('webdav_url') || DEFAULT_WEBDAV_BASE_URL;
   try {
     const decrypted = await safeDecrypt(stored);
     if (!decrypted || decrypted.startsWith('__ERR_DECRYPT')) return null;
     const separator = decrypted.indexOf(':');
-    return separator < 0 ? null : { username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1) };
+    return separator < 0 ? null : { username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1), url };
   } catch { return null; }
 }
 export async function clearCreds() { await setSettingAsync('webdav_creds', ''); }
@@ -120,7 +122,9 @@ function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombston
 }
 
 async function webdavRequest(method: 'MKCOL' | 'PUT' | 'GET', creds: WebDAVCreds, proxy: string | null, body?: string) {
-  return invoke('webdav_request', { method, url: method === 'MKCOL' ? 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/' : WEBDAV_URL, username: creds.username, password: creds.password, proxy, body });
+  const baseUrl = creds.url?.endsWith('/') ? creds.url : `${creds.url}/`;
+  const url = method === 'MKCOL' ? baseUrl : `${baseUrl}records.json`;
+  return invoke('webdav_request', { method, url, username: creds.username, password: creds.password, proxy, body });
 }
 
 /** 合并本机与云端数据，再写回云端。冲突仅记录真正的双端并发修改。 */

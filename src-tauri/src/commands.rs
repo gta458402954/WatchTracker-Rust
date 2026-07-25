@@ -260,14 +260,11 @@ pub async fn webdav_request(
     body: Option<String>,
     proxy: Option<String>,
 ) -> Result<Value, String> {
-    const FOLDER_URL: &str = "https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/";
-    const RECORDS_URL: &str =
-        "https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/records.json";
     if !matches!(method.as_str(), "GET" | "PUT" | "MKCOL") {
         return Err("Unsupported WebDAV method".to_string());
     }
-    if url != FOLDER_URL && url != RECORDS_URL {
-        return Err("WebDAV URL is not allowed".to_string());
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("Invalid WebDAV URL".to_string());
     }
     net::webdav_request(&method, &url, &username, &password, body, proxy).await
 }

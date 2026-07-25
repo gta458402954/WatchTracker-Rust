@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { MediaType, Status, WatchRecord } from '../../../shared/types';
 import {
-  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
+  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync, updateRecord as updateRecordDb } from '../../../shared/lib/database';
 import { classifyTmdb, errorMessage, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
@@ -70,6 +70,7 @@ export default function SettingsModal({
   // WebDAV 状态
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [webdavUrl, setWebdavUrl] = useState('https://dav.jianguoyun.com/dav/影视追踪/');
   const [saved, setSaved] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [importStatus, setImportStatus] = useState<string>('');
@@ -97,8 +98,11 @@ export default function SettingsModal({
   useEffect(() => {
     async function loadInitial() {
       // 1. 检查 WebDAV 状态
-      const webdavSaved = await hasCreds();
-      setSaved(webdavSaved);
+      const creds = await getCreds();
+      setSaved(!!creds);
+      if (creds?.url) {
+        setWebdavUrl(creds.url);
+      }
 
       // 2. 加载 TMDB Key
       const encryptedTmdb = await getSettingAsync('tmdb_api_key');
@@ -172,9 +176,9 @@ export default function SettingsModal({
 
   // 保存 WebDAV 账号密码
   async function handleSave() {
-    if (!username.trim() || !password.trim()) return;
+    if (!username.trim() || !password.trim() || !webdavUrl.trim()) return;
     try {
-      await saveCreds({ username: username.trim(), password: password.trim() });
+      await saveCreds({ username: username.trim(), password: password.trim(), url: webdavUrl.trim() });
       setSaved(true);
       setSyncStatus('✅ 凭据已保存');
     } catch (error) {
@@ -578,7 +582,7 @@ export default function SettingsModal({
                   <div className="flex items-center gap-2.5">
                     <span className="text-2xl">☁️</span>
                     <div>
-                      <h4 className="font-bold text-gray-800">坚果云 WebDAV 同步</h4>
+                      <h4 className="font-bold text-gray-800">WebDAV 同步</h4>
                       <p className="text-[11px] text-gray-400">用于备份或同步影视记录数据</p>
                     </div>
                   </div>
@@ -591,29 +595,36 @@ export default function SettingsModal({
 
                 {!saved ? (
                   <div className="space-y-3">
+                    <input
+                      type="text"
+                      placeholder="WebDAV 服务器地址"
+                      value={webdavUrl}
+                      onChange={(e) => setWebdavUrl(e.target.value)}
+                      className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                    />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <input
                         type="text"
-                        placeholder="坚果云用户名（邮箱）"
+                        placeholder="用户名"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                       />
                       <input
                         type="password"
-                        placeholder="坚果云 WebDAV 应用密码"
+                        placeholder="WebDAV 密码 / 应用密码"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                       />
                     </div>
                     <p className="text-[10px] text-gray-400">
-                      💡 请在坚果云个人账号后台的「安全选项」中开通 WebDAV，并生成专用的「应用密码」填入。
+                      💡 默认使用坚果云。若使用自定义 WebDAV 服务，请确保填入完整的文件夹 URL（例如：https://dav.example.com/dav/影视追踪/）。
                     </p>
                     <button
                       onClick={handleSave}
                       className="py-2.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
-                      disabled={!username.trim() || !password.trim()}
+                      disabled={!username.trim() || !password.trim() || !webdavUrl.trim()}
                     >
                       保存凭据
                     </button>
@@ -625,7 +636,7 @@ export default function SettingsModal({
                         <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        <span className="text-sm text-gray-700 font-medium">已配置坚果云 WebDAV，数据变动后会按设定间隔同步</span>
+                        <span className="text-sm text-gray-700 font-medium">已配置 WebDAV ({webdavUrl})，数据变动后会自动同步</span>
                       </div>
                       <button
                         onClick={handleClear}
