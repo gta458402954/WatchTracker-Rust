@@ -6,6 +6,9 @@ import { invoke } from '@tauri-apps/api/core';
 const WEBDAV_URL = 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/records.json';
 const TOMBSTONES_KEY = 'sync_tombstones';
 const CONFLICTS_KEY = 'sync_conflicts';
+const LAST_SUCCESSFUL_SYNC_KEY = 'sync_last_success_at';
+const CONFLICT_HISTORY_VERSION_KEY = 'sync_conflict_history_version';
+const CONFLICT_HISTORY_VERSION = '2';
 
 export interface WebDAVCreds { username: string; password: string; }
 interface Tombstone { id: string; deletedAt: string; }
@@ -26,6 +29,18 @@ function stableValue(value: unknown): unknown {
 }
 function recordsEqual(left: WatchRecord, right: WatchRecord) {
   return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+function conflictKey(conflict: SyncConflict) {
+  return `${conflict.id}:${conflict.kept}:${JSON.stringify(stableValue(conflict.discarded))}`;
+}
+function mergeConflictHistory(incoming: SyncConflict[], existing: SyncConflict[]) {
+  const known = new Set<string>();
+  return [...incoming, ...existing].filter(conflict => {
+    const key = conflictKey(conflict);
+    if (known.has(key)) return false;
+    known.add(key);
+    return true;
+  }).slice(0, 50);
 }
 
 export async function saveCreds(creds: WebDAVCreds) {
@@ -66,10 +81,16 @@ export async function markRecordDeleted(id: string) {
 }
 async function clearDeletion(id: string) { const tombstones = (await getTombstones()).filter(item => item.id !== id); await setTombstones(tombstones); }
 
-function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombstones: Tombstone[]) {
+/**
+ * 仅当本机与云端都在上次成功同步后修改同一条记录时，才生成冲突备份。
+ * 单端正常更新会遇到云端旧版本，但那是待上传的更新，不是冲突。
+ */
+function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombstones: Tombstone[], lastSuccessfulSyncAt: string | null) {
   const records = new Map<string, WatchRecord>();
   const tombstones = new Map<string, Tombstone>();
   const conflicts: SyncConflict[] = [];
+  const lastSync = Date.parse(lastSuccessfulSyncAt || '');
+  const hasSyncBaseline = !Number.isNaN(lastSync);
   for (const tombstone of [...remote.tombstones, ...localTombstones]) {
     const previous = tombstones.get(tombstone.id);
     if (!previous || timeOfDeletion(tombstone) > timeOfDeletion(previous)) tombstones.set(tombstone.id, tombstone);
@@ -79,7 +100,10 @@ function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombston
     const previous = records.get(record.id);
     if (!previous) { records.set(record.id, record); continue; }
     const localWins = record.isLocked || timeOf(record) >= timeOf(previous);
-    if (!recordsEqual(record, previous)) conflicts.push({ id: record.id, kept: localWins ? 'local' : 'remote', at: new Date().toISOString(), discarded: localWins ? previous : record });
+    const changedOnBothSides = hasSyncBaseline && timeOf(record) > lastSync && timeOf(previous) > lastSync;
+    if (!recordsEqual(record, previous) && changedOnBothSides) {
+      conflicts.push({ id: record.id, kept: localWins ? 'local' : 'remote', at: new Date().toISOString(), discarded: localWins ? previous : record });
+    }
     if (localWins) records.set(record.id, record);
   }
   for (const [id, tombstone] of tombstones) {
@@ -94,7 +118,7 @@ async function webdavRequest(method: 'MKCOL' | 'PUT' | 'GET', creds: WebDAVCreds
   return invoke('webdav_request', { method, url: method === 'MKCOL' ? 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/' : WEBDAV_URL, username: creds.username, password: creds.password, proxy, body });
 }
 
-/** 合并本机与云端数据，再写回云端。冲突按 updatedAt 决定，锁定记录始终优先本机。 */
+/** 合并本机与云端数据，再写回云端。冲突仅记录真正的双端并发修改。 */
 export async function syncToWebDAV(localRecords: WatchRecord[]): Promise<SyncResult> {
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
@@ -103,13 +127,14 @@ export async function syncToWebDAV(localRecords: WatchRecord[]): Promise<SyncRes
     try { await webdavRequest('MKCOL', creds, proxy); } catch { /* 已存在时忽略 */ }
     let remote = parsePayload([]);
     try { remote = parsePayload(await webdavRequest('GET', creds, proxy)); } catch (error) { if (!String(error).includes('404')) throw error; }
-    const merged = mergeSyncState(localRecords, remote, await getTombstones());
+    const merged = mergeSyncState(localRecords, remote, await getTombstones(), await getSettingAsync(LAST_SUCCESSFUL_SYNC_KEY));
     const payload: SyncPayload = { schemaVersion: 2, updatedAt: new Date().toISOString(), records: merged.records, tombstones: merged.tombstones };
     await webdavRequest('PUT', creds, proxy, JSON.stringify(payload));
     await setTombstones(merged.tombstones);
+    await setSettingAsync(LAST_SUCCESSFUL_SYNC_KEY, payload.updatedAt);
     if (merged.conflicts.length) {
-      const old = JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]');
-      await setSettingAsync(CONFLICTS_KEY, JSON.stringify([...merged.conflicts, ...old].slice(0, 50)));
+      const old = JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]') as SyncConflict[];
+      await setSettingAsync(CONFLICTS_KEY, JSON.stringify(mergeConflictHistory(merged.conflicts, old)));
     }
     return { ok: true, records: merged.records, conflictCount: merged.conflicts.length };
   } catch (error) { return { ok: false, error: String(error) }; }
@@ -125,6 +150,12 @@ export async function getSyncConflicts(): Promise<SyncConflict[]> { try { return
 export async function clearSyncConflicts() { await setSettingAsync(CONFLICTS_KEY, '[]'); }
 /** 清除已与当前记录完全相同的旧冲突备份，保留真实差异以便恢复。 */
 export async function clearResolvedSyncConflicts(records: WatchRecord[]): Promise<SyncConflict[]> {
+  // 旧版本会把单端待上传更新错误写为冲突；此客户端只有一个数据源，可安全清理该历史。
+  if ((await getSettingAsync(CONFLICT_HISTORY_VERSION_KEY)) !== CONFLICT_HISTORY_VERSION) {
+    await setSettingAsync(CONFLICTS_KEY, '[]');
+    await setSettingAsync(CONFLICT_HISTORY_VERSION_KEY, CONFLICT_HISTORY_VERSION);
+    return [];
+  }
   const currentById = new Map(records.map(record => [record.id, record]));
   const conflicts = await getSyncConflicts();
   const remaining = conflicts.filter(conflict => {

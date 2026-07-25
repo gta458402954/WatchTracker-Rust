@@ -183,8 +183,10 @@ export default function SettingsModal({
     setSyncStatus('正在同步...');
     try {
       const result = onSync ? await onSync() : await syncToWebDAV(records);
-      if (result.ok) setSyncStatus(result.conflictCount ? `✅ 同步成功，已自动合并  处冲突` : '✅ 同步成功');
-      else setSyncStatus(`❌ 同步失败: ${result.error}`);
+      if (result.ok) {
+        setSyncConflicts(await clearResolvedSyncConflicts(records));
+        setSyncStatus(result.conflictCount ? `✅ 同步成功，已自动合并 ${result.conflictCount} 处冲突` : '✅ 同步成功');
+      } else setSyncStatus(`❌ 同步失败: ${result.error}`);
     } catch (e: any) {
       setSyncStatus(`❌ 出错: ${e.message}`);
     }
