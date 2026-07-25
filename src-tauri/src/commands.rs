@@ -21,151 +21,64 @@ pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Resul
     log::info!("[Commands] update_record called for id: {}", id);
     let conn = state.conn.lock().unwrap();
 
-    // 先获取当前记录
-    let mut stmt = conn
-        .prepare("SELECT * FROM records WHERE id = ?")
-        .map_err(|e| {
-            log::error!("[Commands] Failed to prepare SELECT for update: {}", e);
-            e.to_string()
-        })?;
-
-    let mut r = stmt
-        .query_row(params![id], |row| {
-            // 使用更安全的读取方式，处理可能的类型不匹配或 NULL 值
-            Ok(WatchRecord {
-                id: row.get("id")?,
-                original_name: row.get("originalName").unwrap_or_default(),
-                chinese_name: row.get("chineseName").unwrap_or_default(),
-                progress: row.get("progress").unwrap_or_default(),
-                total_episodes: row.get("totalEpisodes").ok(),
-                status: row.get("status").unwrap_or_default(),
-                platform: row.get("platform").unwrap_or_default(),
-                rating: row.get::<_, Option<i32>>("rating").unwrap_or(None),
-                start_date: row.get("startDate").ok(),
-                end_date: row.get("endDate").ok(),
-                notes: row.get("notes").unwrap_or_default(),
-                created_at: row.get("createdAt").unwrap_or_default(),
-                movie_progress: row.get("movieProgress").ok(),
-                movie_duration: row.get("movieDuration").ok(),
-                release_year: {
-                    // 兼容 INTEGER 和 TEXT 类型的 releaseYear
-                    if let Ok(val) = row.get::<_, String>("releaseYear") {
-                        Some(val)
-                    } else if let Ok(val) = row.get::<_, i32>("releaseYear") {
-                        Some(val.to_string())
-                    } else {
-                        None
-                    }
-                },
-                poster_path: row.get("posterPath").ok(),
-                updated_at: row.get("updatedAt").ok(),
-                imdb_id: row.get("imdbId").ok(),
-                is_locked: row
-                    .get::<_, Option<i32>>("isLocked")
-                    .unwrap_or(None)
-                    .map(|v| v != 0),
-                genres: row.get("genres").unwrap_or(None),
-                origin_country: row.get("originCountry").unwrap_or(None),
-                imdb_rating: row.get("imdbRating").unwrap_or(None),
-                tmdb_status: row.get("tmdbStatus").unwrap_or(None),
-                interest_level: row.get("interestLevel").unwrap_or(None),
-                episode_runtime: row.get("episodeRuntime").unwrap_or(None),
-                media_type: row.get("mediaType").unwrap_or_else(|_| "电影".to_string()),
-                content_tags: row.get("contentTags").unwrap_or(None),
-            })
-        })
-        .map_err(|e| {
-            log::error!("[Commands] Failed to fetch record for update: {}", e);
-            e.to_string()
-        })?;
-
-    log::info!("[Commands] Fetched existing record: {}", r.chinese_name);
-
-    // 应用更新
-    if let Some(o) = updates.as_object() {
-        log::info!("[Commands] Applying updates: {:?}", updates);
-        if let Some(v) = o.get("chineseName") {
-            r.chinese_name = v.as_str().unwrap_or("").to_string();
-        }
-        if let Some(v) = o.get("originalName") {
-            r.original_name = v.as_str().unwrap_or("").to_string();
-        }
-        if let Some(v) = o.get("status") {
-            r.status = v.as_str().unwrap_or("").to_string();
-        }
-        if let Some(v) = o.get("progress") {
-            r.progress = v.as_str().unwrap_or("").to_string();
-        }
-        if let Some(v) = o.get("totalEpisodes") {
-            r.total_episodes = v.as_i64().map(|n| n as i32);
-        }
-        if let Some(v) = o.get("movieProgress") {
-            r.movie_progress = v.as_i64().map(|n| n as i32);
-        }
-        if let Some(v) = o.get("movieDuration") {
-            r.movie_duration = v.as_i64().map(|n| n as i32);
-        }
-        if let Some(v) = o.get("releaseYear") {
-            r.release_year = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("posterPath") {
-            r.poster_path = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("platform") {
-            r.platform = v.as_str().unwrap_or("").to_string();
-        }
-        if let Some(v) = o.get("rating") {
-            r.rating = if v.is_null() {
-                None
-            } else {
-                v.as_i64().map(|n| n as i32)
-            };
-        }
-        if let Some(v) = o.get("startDate") {
-            r.start_date = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("endDate") {
-            r.end_date = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("notes") {
-            r.notes = v.as_str().unwrap_or("").to_string();
-        }
-        if let Some(v) = o.get("updatedAt") {
-            r.updated_at = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("imdbId") {
-            r.imdb_id = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("isLocked") {
-            r.is_locked = v.as_bool();
-        }
-        if let Some(v) = o.get("genres") {
-            r.genres = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("originCountry") {
-            r.origin_country = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("imdbRating") {
-            r.imdb_rating = v.as_f64();
-        }
-        if let Some(v) = o.get("tmdbStatus") {
-            r.tmdb_status = v.as_str().map(|s| s.to_string());
-        }
-        if let Some(v) = o.get("interestLevel") {
-            r.interest_level = v.as_i64().map(|n| n as i32);
-        }
-        if let Some(v) = o.get("episodeRuntime") {
-            r.episode_runtime = v.as_i64().map(|n| n as i32);
-        }
-        if let Some(v) = o.get("mediaType").and_then(Value::as_str) {
-            r.media_type = v.to_string();
-        }
-        if let Some(v) = o.get("contentTags") {
-            r.content_tags = v.as_str().map(|s| s.to_string());
-        }
+    let obj = updates.as_object().ok_or("Updates must be an object")?;
+    if obj.is_empty() {
+        return Ok(());
     }
 
-    db::insert_record(&conn, r).map_err(|e| e.to_string())
+    let allowed_columns = [
+        "originalName", "chineseName", "progress", "totalEpisodes", "status", "platform",
+        "rating", "startDate", "endDate", "notes", "createdAt", "movieProgress",
+        "movieDuration", "releaseYear", "posterPath", "updatedAt", "imdbId", "isLocked",
+        "genres", "originCountry", "imdbRating", "tmdbStatus", "interestLevel",
+        "episodeRuntime", "mediaType", "contentTags"
+    ];
+
+    let mut set_clauses = Vec::new();
+    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+
+    for (k, v) in obj {
+        if !allowed_columns.contains(&k.as_str()) {
+            continue;
+        }
+        set_clauses.push(format!("{} = ?", k));
+        
+        let param = match v {
+            Value::Null => rusqlite::types::Value::Null,
+            Value::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    rusqlite::types::Value::Integer(i)
+                } else if let Some(f) = n.as_f64() {
+                    rusqlite::types::Value::Real(f)
+                } else {
+                    rusqlite::types::Value::Null
+                }
+            },
+            Value::String(s) => rusqlite::types::Value::Text(s.clone()),
+            _ => rusqlite::types::Value::Text(v.to_string()),
+        };
+        params.push(param);
+    }
+
+    if set_clauses.is_empty() {
+        return Ok(());
+    }
+
+    let sql = format!(
+        "UPDATE records SET {} WHERE id = ?",
+        set_clauses.join(", ")
+    );
+
+    params.push(rusqlite::types::Value::Text(id));
+
+    conn.execute(&sql, rusqlite::params_from_iter(params))
+        .map_err(|e| {
+            log::error!("[Commands] Failed to execute update query: {}", e);
+            e.to_string()
+        })?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -269,5 +182,4 @@ pub async fn webdav_request(
     net::webdav_request(&method, &url, &username, &password, body, proxy).await
 }
 
-// 辅助宏引用
-use rusqlite::params;
+
