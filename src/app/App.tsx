@@ -34,7 +34,7 @@ export default function App() {
     isSyncPaused, toggleSyncPause 
   } = useWatchList(syncInterval);
   
-  const { categories, loadCategories, addCategory, updateCategory, deleteCategory, getEmoji } = useCategories();
+  const { loadCategories, getEmoji } = useCategories();
   
   const [activeCategory, setActiveCategory] = useState<MediaType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -321,7 +321,6 @@ export default function App() {
       {showForm && (
         <RecordForm
           record={editingRecord}
-          categories={categories}
           onSave={handleSave}
           onDelete={handleDelete}
           onClose={handleCloseForm}
@@ -332,10 +331,6 @@ export default function App() {
       {showSettings && (
         <SettingsModal
           records={records}
-          categories={categories}
-          onAddCategory={addCategory}
-          onUpdateCategory={updateCategory}
-          onDeleteCategory={deleteCategory}
           onClose={async () => {
             setShowSettings(false);
             const credsOk = await hasCreds();

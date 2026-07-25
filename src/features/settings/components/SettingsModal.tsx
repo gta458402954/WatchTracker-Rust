@@ -4,43 +4,11 @@ import { WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, hasCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
-import type { CategoryItem } from '../../categories/hooks/useCategories';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync } from '../../../shared/lib/database';
-
-const POPULAR_EMOJIS = ['🎬', '📺', '🎭', '🍿', '🌍', '👾', '🦄', '🇺🇸', '🇬🇧', '🇯🇵', '🇰🇷', '🇨🇳', '🇭🇰', '🇹🇼', '🏷️'];
-
-const isEmoji = (str: string) => {
-  if (!str) return false;
-  const wordRegex = /[\u4e00-\u9fa5a-zA-Z0-9]/;
-  return !wordRegex.test(str);
-};
-
-const getBgColor = (name: string) => {
-  const colors = [
-    'bg-red-50 text-red-600 border-red-100',
-    'bg-amber-50 text-amber-600 border-amber-100',
-    'bg-emerald-50 text-emerald-600 border-emerald-100',
-    'bg-blue-50 text-blue-600 border-blue-100',
-    'bg-indigo-50 text-indigo-600 border-indigo-100',
-    'bg-purple-50 text-purple-600 border-purple-100',
-    'bg-rose-50 text-rose-600 border-rose-100',
-    'bg-sky-50 text-sky-600 border-sky-100',
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % colors.length;
-  return colors[index];
-};
 
 interface SettingsModalProps {
   onClose: () => void;
   records: WatchRecord[];
-  categories: CategoryItem[];
-  onAddCategory: (name: string, emoji: string) => boolean;
-  onUpdateCategory: (oldName: string, newName: string, newEmoji: string) => boolean | Promise<boolean>;
-  onDeleteCategory: (name: string) => void;
   onImport: (records: WatchRecord[]) => void;
   onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
   onRestoreConflict?: (record: WatchRecord) => Promise<void>;
@@ -50,7 +18,7 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ 
-  onClose, records, categories, onAddCategory, onUpdateCategory, onDeleteCategory, onImport, onSync, onRestoreConflict, onRefresh,
+  onClose, records, onImport, onSync, onRestoreConflict, onRefresh,
   syncInterval, onSyncIntervalChange
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
@@ -73,13 +41,6 @@ export default function SettingsModal({
   const [tmdbKey, setTmdbKey] = useState('');
   const [tmdbSaved, setTmdbSaved] = useState(false);
 
-  // 分类管理状态
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatEmoji, setNewCatEmoji] = useState('');
-  const [editingCat, setEditingCat] = useState<string | null>(null);
-  const [editCatName, setEditCatName] = useState('');
-  const [editCatEmoji, setEditCatEmoji] = useState('');
-  const [catMsg, setCatMsg] = useState('');
   const [vacuumStatus, setVacuumStatus] = useState<string>('');
 
   // 批量同步状态
@@ -130,11 +91,11 @@ export default function SettingsModal({
       const encrypted = await safeEncrypt(tmdbKey.trim(), 'tmdb_api_key');
       await setSettingAsync('tmdb_api_key', encrypted);
       setTmdbSaved(true);
-      setCatMsg('✅ TMDB 密钥已保存');
-      setTimeout(() => setCatMsg(''), 2000);
+      setSyncStatus('✅ TMDB 密钥已保存');
+      setTimeout(() => setSyncStatus(''), 2000);
     } catch (e) {
       console.error('[Settings] Failed to save TMDB Key:', e);
-      setCatMsg('❌ 保存失败');
+      setSyncStatus('❌ 保存失败');
     }
   }
 
@@ -145,8 +106,8 @@ export default function SettingsModal({
       await setSettingAsync('tmdb_api_key', '');
       setTmdbKey('');
       setTmdbSaved(false);
-      setCatMsg('🧹 TMDB 密钥已清除');
-      setTimeout(() => setCatMsg(''), 2000);
+      setSyncStatus('🧹 TMDB 密钥已清除');
+      setTimeout(() => setSyncStatus(''), 2000);
     } catch (e) {
       alert('清除失败: ' + e);
     }
@@ -155,8 +116,8 @@ export default function SettingsModal({
   // 保存代理设置
   async function handleSaveProxy() {
     await setSettingAsync('network_proxy', proxy.trim());
-    setCatMsg('✅ 代理设置已更新');
-    setTimeout(() => setCatMsg(''), 2000);
+    setSyncStatus('✅ 代理设置已更新');
+    setTimeout(() => setSyncStatus(''), 2000);
   }
 
   // 保存 WebDAV 账号密码
@@ -302,59 +263,6 @@ export default function SettingsModal({
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
-
-  // 分类管理操作
-  function handleAddCategory() {
-    if (!newCatName.trim()) {
-      setCatMsg('请输入分类名称');
-      return;
-    }
-    if (onAddCategory(newCatName, newCatEmoji)) {
-      setNewCatName('');
-      setNewCatEmoji('');
-      setCatMsg('✅ 添加成功');
-    } else {
-      setCatMsg('❌ 分类已存在');
-    }
-    setTimeout(() => setCatMsg(''), 2000);
-  }
-
-  // 开始编辑分类
-  function handleStartEdit(cat: CategoryItem) {
-    setEditingCat(cat.name);
-    setEditCatName(cat.name);
-    setEditCatEmoji(cat.emoji);
-  }
-
-  // 保存编辑
-  function handleSaveEdit() {
-    if (!editCatName.trim()) {
-      setCatMsg('请输入分类名称');
-      return;
-    }
-    if (onUpdateCategory(editingCat!, editCatName, editCatEmoji)) {
-      setEditingCat(null);
-      setCatMsg('✅ 保存成功');
-    } else {
-      setCatMsg('❌ 分类名称已存在');
-    }
-    setTimeout(() => setCatMsg(''), 2000);
-  }
-
-  // 删除分类
-  function handleDeleteCategory(name: string) {
-    const usedCount = records.filter(r => r.category === name).length;
-    if (usedCount > 0) {
-      setCatMsg(`⚠️ 该分类已有 ${usedCount} 条记录使用，无法删除`);
-      setTimeout(() => setCatMsg(''), 3000);
-      return;
-    }
-    if (confirm(`确定删除分类「${name}」吗？`)) {
-      onDeleteCategory(name);
-      setCatMsg('✅ 已删除');
-      setTimeout(() => setCatMsg(''), 2000);
-    }
-  }
 
   // 数据库整理优化
   async function handleVacuum() {
@@ -503,7 +411,7 @@ export default function SettingsModal({
                   : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
               }`}
             >
-              <span className="text-lg">🏷️</span> 分类维护
+              <span className="text-lg">🏷️</span> 类型与标签
             </button>
             <button
               onClick={() => setActiveTab('tools')}
@@ -778,168 +686,55 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* Tab 3: 分类维护 */}
+          {/* Tab 3: 类型与标签 */}
           {activeTab === 'categories' && (
             <div className="space-y-6 animate-fade-in animate-duration-200">
               <div>
-                <h3 className="text-2xl font-black text-gray-900">🏷️ 分类维护</h3>
-                <p className="text-xs text-gray-400 mt-1">管理你的影视类型维度标签以及关联的 Emoji 图标</p>
+                <h3 className="text-2xl font-black text-gray-900">🏷️ 类型与标签</h3>
+                <p className="text-xs text-gray-400 mt-1">内容类型用于主列表筛选；地区与主题通过内容标签识别。TMDB 自动填充地区标签，也可在编辑记录时手动补充。</p>
               </div>
 
-              {/* Add Category */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
                 <div className="flex items-center gap-2.5 border-b border-gray-50 pb-4">
-                  <span className="text-2xl">➕</span>
+                  <span className="text-2xl">🎞️</span>
                   <div>
-                    <h4 className="font-bold text-gray-800">添加新分类</h4>
-                    <p className="text-[11px] text-gray-400">输入自定义的影视类别，可选配一个专属表情图标</p>
+                    <h4 className="font-bold text-gray-800">固定内容类型</h4>
+                    <p className="text-[11px] text-gray-400">类型是统一结构，不能自行新增或重命名，避免电影、纪录片与剧集混用。</p>
                   </div>
                 </div>
-                <div className="space-y-3">
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      value={newCatName}
-                      onChange={(e) => setNewCatName(e.target.value)}
-                      placeholder="分类名称 (如：科幻剧)"
-                      className="flex-1 px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                    />
-                    <input
-                      type="text"
-                      value={newCatEmoji}
-                      onChange={(e) => setNewCatEmoji(e.target.value)}
-                      placeholder="图标 (如 🎬)"
-                      className="w-24 px-2 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-center transition-all"
-                    />
-                    <button
-                      onClick={handleAddCategory}
-                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
-                    >
-                      添加分类
-                    </button>
-                  </div>
-
-                  {/* Preset Emojis Selector */}
-                  <div className="flex flex-wrap gap-1.5 pt-1.5 items-center">
-                    <span className="text-[11px] font-bold text-gray-400 mr-1 select-none">快捷图标:</span>
-                    {POPULAR_EMOJIS.map(em => (
-                      <button
-                        key={em}
-                        type="button"
-                        onClick={() => setNewCatEmoji(em)}
-                        className={`w-7 h-7 flex items-center justify-center rounded-lg border text-sm hover:bg-indigo-50 hover:border-indigo-200 transition-all select-none ${
-                          newCatEmoji === em ? 'bg-indigo-50 border-indigo-300 scale-105 shadow-sm' : 'bg-gray-50 border-gray-150'
-                        }`}
-                      >
-                        {em}
-                      </button>
-                    ))}
-                    {newCatEmoji && (
-                      <button
-                        type="button"
-                        onClick={() => setNewCatEmoji('')}
-                        className="text-[10px] text-gray-400 hover:text-red-500 font-bold ml-1 transition-colors"
-                      >
-                        清除选择
-                      </button>
-                    )}
-                  </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {(['电影', '剧集', '综艺', '动画'] as const).map(type => {
+                    const count = records.filter(record => record.mediaType === type || (!record.mediaType && record.category === type)).length;
+                    return <div key={type} className="rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
+                      <p className="text-sm font-bold text-indigo-700">{type}</p>
+                      <p className="mt-1 text-xs text-gray-500">{count} 部记录</p>
+                    </div>;
+                  })}
                 </div>
               </div>
 
-              {/* Categories list */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
-                <h4 className="font-bold text-gray-800 border-b border-gray-50 pb-3">已有分类列表</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-                  {categories.map(cat => (
-                    <div key={cat.name} className="flex items-center gap-3.5 bg-gray-50 border border-gray-100 rounded-2xl p-4 hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all duration-200">
-                      {editingCat === cat.name ? (
-                        <div className="flex flex-col gap-2.5 w-full">
-                          <div className="flex gap-2 items-center">
-                            <input
-                              type="text"
-                              value={editCatName}
-                              onChange={(e) => setEditCatName(e.target.value)}
-                              className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
-                            />
-                            <input
-                              type="text"
-                              value={editCatEmoji}
-                              onChange={(e) => setEditCatEmoji(e.target.value)}
-                              placeholder="Emoji"
-                              className="w-16 px-2 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-center transition-all outline-none"
-                            />
-                            <button onClick={handleSaveEdit} className="px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-xl shadow-sm transition-colors">保存</button>
-                            <button onClick={() => setEditingCat(null)} className="px-3.5 py-2 bg-gray-250 hover:bg-gray-300 text-gray-700 text-xs font-bold rounded-xl transition-colors">取消</button>
-                          </div>
-                          
-                          {/* Edit Preset Emojis Selector */}
-                          <div className="flex flex-wrap gap-1 items-center">
-                            {POPULAR_EMOJIS.map(em => (
-                              <button
-                                key={em}
-                                type="button"
-                                onClick={() => setEditCatEmoji(em)}
-                                className={`w-6 h-6 flex items-center justify-center rounded border text-xs hover:bg-indigo-50 hover:border-indigo-200 transition-all select-none ${
-                                  editCatEmoji === em ? 'bg-indigo-50 border-indigo-300 scale-105' : 'bg-white border-gray-150'
-                                }`}
-                              >
-                                {em}
-                              </button>
-                            ))}
-                            {editCatEmoji && (
-                              <button
-                                type="button"
-                                onClick={() => setEditCatEmoji('')}
-                                className="text-[10px] text-gray-400 hover:text-red-500 font-bold ml-1 transition-colors"
-                              >
-                                清除
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          {isEmoji(cat.emoji) ? (
-                            <span className="w-10 h-10 flex items-center justify-center rounded-2xl bg-white shadow-sm border border-gray-100 text-xl select-none shrink-0 transition-transform hover:scale-105">
-                              {cat.emoji}
-                            </span>
-                          ) : (
-                            <span className={`w-10 h-10 flex items-center justify-center rounded-2xl border text-sm font-bold select-none shrink-0 transition-transform hover:scale-105 ${getBgColor(cat.name)}`}>
-                              {cat.name.charAt(0)}
-                            </span>
-                          )}
-                          <span className="flex-1 text-sm font-semibold text-gray-700 select-none">{cat.name}</span>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => handleStartEdit(cat)}
-                              className="p-1.5 rounded-lg hover:bg-white text-gray-400 hover:text-indigo-600 border border-transparent hover:border-gray-100 transition-all shadow-none hover:shadow-sm"
-                              title="编辑"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                            </button>
-                            <button
-                              onClick={() => handleDeleteCategory(cat.name)}
-                              className="p-1.5 rounded-lg hover:bg-white text-gray-400 hover:text-red-500 border border-transparent hover:border-gray-100 transition-all shadow-none hover:shadow-sm"
-                              title="删除"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
+                <div className="flex items-center gap-2.5 border-b border-gray-50 pb-4">
+                  <span className="text-2xl">🌐</span>
+                  <div>
+                    <h4 className="font-bold text-gray-800">标准地区标签</h4>
+                    <p className="text-[11px] text-gray-400">用于顶部地区筛选。旧“美剧、韩剧”等数据已自动映射为对应地区标签。</p>
+                  </div>
                 </div>
-                {catMsg && <p className="text-xs text-center text-gray-500 font-medium mt-1">{catMsg}</p>}
+                <div className="flex flex-wrap gap-2">
+                  {(['美国', '韩国', '日本', '英国', '中国大陆', '中国香港', '中国台湾'] as const).map(tag => {
+                    const count = records.filter(record => (record.contentTags || '').split(',').map(value => value.trim()).includes(tag)).length;
+                    return <span key={tag} className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-600">{tag} <b className="ml-1 text-indigo-600">{count}</b></span>;
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-amber-100 bg-amber-50/60 p-5">
+                <h4 className="font-bold text-amber-900">如何维护内容标签</h4>
+                <p className="mt-1 text-xs leading-6 text-amber-800">编辑影视记录时，在“内容标签”中用英文逗号分隔填写，例如“韩国, 纪录片”。地区标签会参与主列表的双筛选；“纪录片”等主题标签用于展示和检索。旧分类库继续保留在数据层，仅用于兼容历史记录，不再作为日常编辑入口。</p>
               </div>
             </div>
           )}
-
           {/* Tab 4: 系统工具 */}
           {activeTab === 'tools' && (
             <div className="space-y-6 animate-fade-in animate-duration-200">

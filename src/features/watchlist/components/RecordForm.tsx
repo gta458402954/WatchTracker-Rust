@@ -1,19 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { WatchRecord, Category, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
-import type { CategoryItem } from '../../categories/hooks/useCategories';
 import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
-  categories: CategoryItem[];
   onSave: (data: Omit<WatchRecord, 'id' | 'createdAt'>) => Promise<boolean | void> | boolean | void;
   onDelete?: (id: string) => void;
   onClose: () => void;
 }
 
 const isTVCategory = (cat: Category) =>
-  ['美剧', '英剧', '日剧', '韩剧', '国产剧', '港剧', '台剧', '综艺', '泰剧', '纪录片', '动画'].some(k => cat.includes(k));
+  ['美剧', '英剧', '日剧', '韩剧', '国产剧', '港剧', '台剧', '剧集', '综艺', '泰剧', '纪录片', '动画'].some(k => cat.includes(k));
 
 const isMovieCategory = (cat: Category) =>
   !isTVCategory(cat);
@@ -57,7 +55,7 @@ function smartProgress(raw: string): string {
   return t;
 }
 
-export default function RecordForm({ record, categories, onSave, onDelete, onClose }: RecordFormProps) {
+export default function RecordForm({ record, onSave, onDelete, onClose }: RecordFormProps) {
   const [form, setForm] = useState<Omit<WatchRecord, 'id' | 'createdAt'>>(
     record
       ? {
@@ -421,38 +419,10 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
         </div>
 
         <form onSubmit={handleSubmit} className="px-6 py-5 flex flex-col gap-4">
-          {/* Category */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">分类</label>
-            <div className="flex gap-2 flex-wrap">
-              {categories.map(cat => (
-                <button
-                  key={cat.name}
-                  type="button"
-                  onClick={() => {
-                    set('category', cat.name);
-                    set('progress', '');
-                    set('movieProgress', null);
-                    set('movieDuration', null);
-                    setMovieProgressStr('');
-                    setMovieDurationStr('');
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-sm font-medium transition-colors border ${
-                    form.category === cat.name
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  {cat.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">播放形态</label>
-              <select value={form.mediaType || '电影'} onChange={event => set('mediaType', event.target.value as MediaType)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400">
+              <select value={form.mediaType || '电影'} onChange={event => { const mediaType = event.target.value as MediaType; set('mediaType', mediaType); set('category', mediaType); }} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400">
                 {(['电影', '剧集', '综艺', '动画'] as MediaType[]).map(type => <option key={type} value={type}>{type}</option>)}
               </select>
             </div>
@@ -740,7 +710,7 @@ export default function RecordForm({ record, categories, onSave, onDelete, onClo
           )}
 
           {/* Platform */}
-          {form.category !== '电影' && (
+          {!isMovieCategory(form.category) && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">平台</label>
               <input
