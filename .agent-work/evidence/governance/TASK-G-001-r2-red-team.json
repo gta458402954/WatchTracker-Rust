@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-07-27T16:34:38.8133299Z",
+  "fixture": "C:\\Users\\markp\\AppData\\Local\\Temp\\watchtracker-governance-redteam-e81ad6947237470ca8696a30dfacc513",
+  "passed": 13,
+  "failed": 0,
+  "results": [
+    {
+      "name": "runner-result-model",
+      "passed": true,
+      "details": "{\"success\":\"SUCCEEDED\",\"blocked\":\"BLOCKED_BY_PREVIOUS_STEP\",\"observed\":\"OBSERVED_THEN_TERMINATED\",\"timeout\":\"TIMED_OUT\",\"failure\":\"FAILED\"}"
+    },
+    {
+      "name": "valid-scope",
+      "passed": true,
+      "details": "{\n  \"result\": \"PASS\",\n  \"contract_sha256\": \"FA3E5A9A6467C33E34DFD9FF6E80341DED6EB40B4BC8AF42FDA5C68F979F2563\",\n  \"staged_files\": [\n    \"allowed.txt\"\n  ],\n  \"insertions\": 1,\n  \"deletions\": 1,\n  \"binary_changes\": 0\n}"
+    },
+    {
+      "name": "contract-tamper",
+      "passed": true,
+      "details": "SCOPE_CHECK[10]: Contract hash differs from task start."
+    },
+    {
+      "name": "contract-line-ending-stability",
+      "passed": true,
+      "details": "{\n  \"result\": \"PASS\",\n  \"contract_sha256\": \"FA3E5A9A6467C33E34DFD9FF6E80341DED6EB40B4BC8AF42FDA5C68F979F2563\",\n  \"staged_files\": [\n    \"allowed.txt\"\n  ],\n  \"insertions\": 1,\n  \"deletions\": 1,\n  \"binary_changes\": 0\n}"
+    },
+    {
+      "name": "forbidden-file",
+      "passed": true,
+      "details": "SCOPE_CHECK[11]: Forbidden workspace file: forbidden.txt"
+    },
+    {
+      "name": "protected-region",
+      "passed": true,
+      "details": "warning: in the working copy of 'protected.md', LF will be replaced by CRLF the next time Git touches it\nSCOPE_CHECK[12]: Reviewer-owned file changed: protected.md"
+    },
+    {
+      "name": "ignored-hidden-file",
+      "passed": true,
+      "details": "SCOPE_CHECK[19]: Ignored file/path is not authorized: monitored/hidden.tmp"
+    },
+    {
+      "name": "encoding-change",
+      "passed": true,
+      "details": "SCOPE_CHECK[18]: BOM changed: allowed.txt"
+    },
+    {
+      "name": "raw-evidence-tamper",
+      "passed": true,
+      "details": "SCOPE_CHECK[14]: Evidence hash mismatch: .agent-work/evidence/raw/TASK-X-001/4ebd9b63-7928-4264-9806-87d365b57b64/failure.stderr.txt"
+    },
+    {
+      "name": "safe-commit-attestation",
+      "passed": true,
+      "details": "warning: in the working copy of 'allowed.txt', LF will be replaced by CRLF the next time Git touches it\n{\n  \"result\": \"PASS\",\n  \"contract_sha256\": \"FA3E5A9A6467C33E34DFD9FF6E80341DED6EB40B4BC8AF42FDA5C68F979F2563\",\n  \"staged_files\": [\n    \"allowed.txt\"\n  ],\n  \"insertions\": 1,\n  \"deletions\": 1,\n  \"binary_changes\": 0\n}\n{\n  \"result\": \"PASS\",\n  \"contract_sha256\": \"FA3E5A9A6467C33E34DFD9FF6E80341DED6EB40B4BC8AF42FDA5C68F979F2563\",\n  \"staged_files\": [\n    \"allowed.txt\"\n  ],\n  \"insertions\": 1,\n  \"deletions\": 1,\n  \"binary_changes\": 0\n}\n[test 25d9d56] safe fixture commit\n 1 file changed, 1 insertion(+), 1 deletion(-)\nC:\\Users\\markp\\AppData\\Local\\Temp\\watchtracker-governance-redteam-e81ad6947237470ca8696a30dfacc513\\.git\\codex-attestations\\25d9d568835bcf84b2d74bbb52499a76a209258c.json\n{\n  \"result\": \"PASS\",\n  \"commit\": \"25d9d568835bcf84b2d74bbb52499a76a209258c\",\n  \"contract_sha256\": \"FA3E5A9A6467C33E34DFD9FF6E80341DED6EB40B4BC8AF42FDA5C68F979F2563\",\n  \"receipt\": \"C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-redteam-e81ad6947237470ca8696a30dfacc513\\\\.git\\\\codex-attestations\\\\25d9d568835bcf84b2d74bbb52499a76a209258c.json\"\n}"
+    },
+    {
+      "name": "common-git-dir-receipt",
+      "passed": true,
+      "details": "C:\\Users\\markp\\AppData\\Local\\Temp\\watchtracker-governance-redteam-e81ad6947237470ca8696a30dfacc513\\.git\\codex-attestations\\25d9d568835bcf84b2d74bbb52499a76a209258c.json"
+    },
+    {
+      "name": "direct-commit-hook-rejection",
+      "passed": true,
+      "details": "SAFE_COMMIT_REQUIRED: direct git commit is forbidden for executor tasks."
+    },
+    {
+      "name": "no-verify-lacks-attestation",
+      "passed": true,
+      "details": "Exception: C:\\Users\\markp\\AppData\\Local\\Temp\\watchtracker-governance-redteam-e81ad6947237470ca8696a30dfacc513\\.agent-work\\tools\\VERIFY_ATTESTATION.ps1:11\nLine |\n  11 |  … Fa-f0-9]{64})\\s*$\") { throw 'Commit lacks Contract-SHA256 trailer.' }\n     |                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n     | Commit lacks Contract-SHA256 trailer."
+    }
+  ]
+}

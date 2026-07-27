@@ -172,7 +172,7 @@ foreach ($step in @($contract.steps)) {
     if ($result -in @('FAILED','TIMED_OUT') -and [string]$step.on_nonzero -eq 'STOP') { [void]$failedSteps.Add([string]$step.id) }
 }
 
-$postContractHash = Get-Sha256 $contractInfo.Path
+$postContractHash = Get-NormalizedTextSha256 $contractInfo.Path
 if ($postContractHash -cne $contractInfo.Sha256) { throw 'Task contract changed during execution.' }
 $postflight = Get-GitSnapshot 'postflight'
 Write-JsonUtf8 $postflight (Join-Path $taskRoot 'postflight.json')

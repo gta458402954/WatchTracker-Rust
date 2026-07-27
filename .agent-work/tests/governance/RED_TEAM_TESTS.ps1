@@ -66,7 +66,8 @@ try {
     }
     $contractPath = Join-Path $fixture '.agent-work\tasks\TASK-X-001.json'
     [IO.File]::WriteAllText($contractPath, (($contract | ConvertTo-Json -Depth 100) + "`n"), [Text.UTF8Encoding]::new($false))
-    $contractHash = (Get-FileHash -LiteralPath $contractPath -Algorithm SHA256).Hash
+    . (Join-Path $fixture '.agent-work\tools\Common.ps1')
+    $contractHash = Get-NormalizedTextSha256 $contractPath
 
     $runner = Join-Path $fixture '.agent-work\tools\ANTIGRAVITY_TASK_RUNNER.ps1'
     $run = Invoke-Child $runner @('-ContractPath',$contractPath)
@@ -87,6 +88,12 @@ try {
     $savedContract = [IO.File]::ReadAllBytes($contractPath); [IO.File]::AppendAllText($contractPath, " `n")
     $tamper = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
     Add-Result 'contract-tamper' ($tamper.ExitCode -eq 10) $tamper.Output
+    [IO.File]::WriteAllBytes($contractPath,$savedContract)
+
+    $lfContract = Get-Content -LiteralPath $contractPath -Raw -Encoding utf8
+    [IO.File]::WriteAllText($contractPath, ($lfContract -replace "(?<!`r)`n", "`r`n"), [Text.UTF8Encoding]::new($false))
+    $lineEndingStable = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
+    Add-Result 'contract-line-ending-stability' ($lineEndingStable.ExitCode -eq 0) $lineEndingStable.Output
     [IO.File]::WriteAllBytes($contractPath,$savedContract)
 
     [IO.File]::WriteAllText((Join-Path $fixture 'forbidden.txt'), "forbidden`n", [Text.UTF8Encoding]::new($false))

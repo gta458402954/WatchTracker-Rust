@@ -21,6 +21,15 @@ function Get-Sha256 {
     return (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToUpperInvariant()
 }
 
+function Get-NormalizedTextSha256 {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $text = Get-Content -LiteralPath $LiteralPath -Raw -Encoding utf8
+    $normalized = ($text -replace "`r`n", "`n")
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($normalized)
+    $hash = [Security.Cryptography.SHA256]::HashData($bytes)
+    return ([Convert]::ToHexString($hash)).ToUpperInvariant()
+}
+
 function ConvertTo-NormalPath {
     param([AllowEmptyString()][AllowNull()][string]$Path)
     if ([string]::IsNullOrEmpty($Path)) { return '' }
@@ -55,7 +64,7 @@ function Read-TaskContract {
     if (-not ($raw | Test-Json -SchemaFile $schema -ErrorAction Stop)) { throw 'Task contract schema validation failed.' }
     return [pscustomobject]@{
         Path = $resolved
-        Sha256 = Get-Sha256 $resolved
+        Sha256 = Get-NormalizedTextSha256 $resolved
         Value = $raw | ConvertFrom-Json -Depth 100
     }
 }

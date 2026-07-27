@@ -380,3 +380,11 @@
 - Correction: Safe Commit and Verifier now store/read receipts under the shared Git common directory.
 - Red team: 12/12 PASS, adding explicit common-git-dir receipt verification while retaining all previous rejection scenarios.
 - Scope: six governance/evidence files only; application source, configuration, dependencies, tests and databases unchanged.
+
+### TASK-G-001 Contract Revision r2
+
+- Supersedes r1 contract SHA-256 `A357B7DB8CA88D67080C8D82774B9140EA19E998C7E8235AFF1C9EF6AEB837BF`.
+- Finding: raw worktree-byte contract hashes differed across LF/CRLF worktrees even when authorization content was identical.
+- Correction: task contract identity now hashes normalized UTF-8/LF content; independent BOM/line-ending policy remains responsible for encoding enforcement.
+- Red team: 13/13 PASS, adding contract line-ending stability while retaining semantic contract-tamper rejection and all previous cases.
+- Integration requirement: verify the r2-attested commit from both Governance and Recovery worktrees before opening TASK-A-002.
