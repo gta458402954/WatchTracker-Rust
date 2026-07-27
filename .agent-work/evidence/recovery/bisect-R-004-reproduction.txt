@@ -1,0 +1,57 @@
+TASK-R-004 Reproduction and Recovery-Baseline Audit
+Date: 2026-07-27 (Australia/Perth)
+Executor/Reviewer: Codex
+
+1. First build-bad commit
+
+Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Parent: 38873240923c8efe145a3e16cd28065634417a0e
+Command: npm ci; npm run build
+Result at parent: exit 0
+Result at first bad: exit 2
+
+The first bad commit changes 14 files (+660/-43), combining Rust atomic transaction modules with frontend database, WebDAV and Zustand migration.
+
+Representative TypeScript failures at 29ea3a4:
+- src/store/useWatchListStore.ts: missing WatchRecord, WatchRecordInput, create and database-operation imports; cascading implicit-any errors.
+- src/features/settings/components/SettingsSyncTab.tsx: function expected 2 arguments but received 1.
+- src/shared/lib/webdav.ts: enum syntax rejected by erasableSyntaxOnly, unused imports and unused generation parameter.
+- src/shared/lib/database.ts: unused ImportMode.
+- src/app/App.tsx and SettingsToolsTab.tsx: implicit-any callback parameters.
+
+2. Current snapshot-layer check
+
+Commit tested: cebde478dae2fa1d49d63d912da7e5987f719596
+Command: npm ci; npm run build
+Result: exit 2
+Remaining failures:
+- App.tsx imports RegionFilter from useFilteredRecords, but the module does not export it.
+- The import handler accepts WatchRecord[] while Settings expects WatchRecord[] | SyncPayload.
+
+Conclusion: the WIP layer repairs many 29ea3a4 errors but is still not a buildable recovery baseline.
+
+3. Build-good boundary quality audit
+
+Commit: 38873240923c8efe145a3e16cd28065634417a0e
+- npm run typecheck: 0
+- npm run build: 0
+- npm run lint: 1 (8 fixture errors plus one hook warning)
+- npm run test: 1 (Vitest incorrectly collects tests/dashboard.spec.ts; 68 ordinary tests pass)
+
+Commit: 93b8f7cb7a8cdcf73ebaf8c84753e07900246b34
+- npm run typecheck: 0
+- npm run lint: 0 (one non-fatal hook warning)
+- npm run test: 0 (68 tests pass)
+- npm run build: 0
+- cargo test: 0 (11 tests pass)
+- cargo fmt -- --check: 1 (format differences)
+- cargo clippy --all-targets --all-features -- -D warnings: 101 (type_complexity and useless_conversion)
+
+Conclusion: 3887324 is only the last build-good boundary. Neither it nor 93b8f7c has evidence strong enough to replace the functionally verified 6fcbb1e recovery baseline.
+
+4. Selected recovery baseline
+
+Selected: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Reason: reproducible frontend/Rust/Tauri build, real release artifacts, user-verified desktop CRUD/restart behavior, and unchanged protected database hashes. Known exception: legacy cargo fmt check exits 1.
+
+No business source was modified during TASK-R-004. No push, PR, release, real database access, or desktop application launch was performed.

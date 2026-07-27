@@ -1,0 +1,35 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e Build Artifact Metadata (POST-BUILD FRESH)
+Task: TASK-R-002 / REVIEW-R-002 Remediation Round 2
+Worktree: D:\Project\Projects\WatchTracker-Stable-Verify
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Enumerated At: 2026-07-27T00:54:40+08:00
+===============================================================================
+
+1. COMPILED RELEASE BINARY
+-------------------------------------------------------------------------------
+File Path: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\release\app.exe
+Binary Name: app.exe
+File Size: 15,313,920 bytes
+Last Write Time: 2026-07-27T00:46:48.280+08:00
+SHA-256 Hash: 375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B
+
+2. COMPILED MSI INSTALLER
+-------------------------------------------------------------------------------
+File Path: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi
+File Name: WatchTracker_1.10.0_x64_en-US.msi
+File Size: 5,677,056 bytes
+Last Write Time: 2026-07-27T00:46:32.349+08:00
+SHA-256 Hash: 1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259
+
+3. COMPILED NSIS INSTALLER
+-------------------------------------------------------------------------------
+File Path: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe
+File Name: WatchTracker_1.10.0_x64-setup.exe
+File Size: 3,982,304 bytes
+Last Write Time: 2026-07-27T00:46:48.242+08:00
+SHA-256 Hash: 27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA
+
+4. VERIFICATION DOUBLE-PASS STABILITY
+-------------------------------------------------------------------------------
+All three physical files were hashed twice in succession after process exit; both hash passes matched 100% identically with disk state.

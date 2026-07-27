@@ -1,0 +1,26 @@
+===============================================================================
+WatchTracker Candidate Baseline Comparison Table
+Task: TASK-R-003 Remediation
+Target Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Created At: 2026-07-27T22:21:40+08:00
+===============================================================================
+
+BASELINE COMPARISON TABLE
+-------------------------------------------------------------------------------
+Feature / Quality Gate          | Old Portable Executable (Backup)      | GitHub Stable Candidate 6fcbb1e       | HEAD Candidate 29ea3a4                | Comparison Summary
+--------------------------------|---------------------------------------|---------------------------------------|---------------------------------------|-----------------------------------------
+npm ci Dependencies             | Pass (Exit 0)                         | Pass (Exit 0)                         | Pass (Exit 0)                         | All candidates install lockfile cleanly
+npm run typecheck               | N/A (Script not in package.json)      | N/A (Script not in package.json)      | Fail (Exit 2, TypeScript errors)      | 29ea3a4 fails standalone typecheck
+npm run lint                    | Pass (Exit 0)                         | Pass (Exit 0)                         | Pass (Exit 0)                         | All candidates pass ESLint check
+npm run test (Vitest)           | N/A (Script not in package.json)      | N/A (Script not in package.json)      | Pass (Exit 0, 1 test passed)          | 29ea3a4 includes vitest suite passing
+npm run build                   | Pass (Exit 0)                         | Pass (Exit 0)                         | Fail (Exit 2 in tsc; Vite not reached)| Build regression exists in committed changes
+npx playwright test             | N/A (Script not in package.json)      | N/A (Script not in package.json)      | Fail (Exit 1, 4/4 tests fail)         | 29ea3a4 Playwright tests fail (DOM missing)
+cargo fmt -- --check            | Formatting diff                       | Fail (Exit 1, Legacy format diff)     | Pass (Exit 0, 0 formatting errors)    | 29ea3a4 passes Rust code formatting
+cargo clippy                    | 0 Warnings                             | Pass (Exit 0, 0 warnings)             | Pass (Exit 0, 0 warnings)             | All candidates pass Clippy gate
+cargo test                      | Pass                                  | Pass (Exit 0, 3 tests)                | Pass (Exit 0, 3 tests)                | All candidates pass Rust unit tests
+npm run tauri dev               | Pass                                  | Pass (debug app verified)             | Mixed: initial debug app launched; remediation rerun blocked by port 5173 | No process remains; dev evidence is not a clean PASS
+npm run tauri build             | Pass                                  | Pass (Exit 0, app.exe built)          | Fail (Exit 1, beforeBuild failed)     | 6fcbb1e builds release; 29ea3a4 build fails
+Release Binary Status           | watch-tracker.exe (15,324,672 bytes)  | app.exe (15,313,920 bytes)            | NOT FOUND (0 bytes, Build Failed)     | No release executable exists for 29ea3a4
+Process Cleanup & Isolation     | Clean                                 | Clean (0 processes remain)            | Clean (0 processes remain)            | Both 6fcbb1e and 29ea3a4 processes cleaned
+Real Database Isolation         | Untouched                             | Untouched (Pre/post hash match)        | Untouched (Pre/post hash match)        | Real user databases 100% untouched
+Real UI Desktop Verification    | Pass (Manual Test)                    | Pass (Manual Test)                    | BLOCKED (Build Failed & No App Built)  | 29ea3a4 UI test cannot be executed

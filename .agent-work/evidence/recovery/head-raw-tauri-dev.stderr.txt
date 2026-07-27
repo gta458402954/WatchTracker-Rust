@@ -1,0 +1,21 @@
+===============================================================================
+Command: npm run tauri dev (STDERR)
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify
+Start Time: 2026-07-27T22:21:17.1926291+08:00
+End Time: 2026-07-27T22:21:34.9272937+08:00
+Parent PID: 9252 | Tauri CLI PID: None | Vite PID: 18480 | Cargo PID: None | App PID: None
+App Path: None
+===============================================================================
+RAW STDERR:
+     Running BeforeDevCommand (`npm run dev`)
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching D:\Project\Projects\WatchTracker-Head-Verify\src-tauri for changes...
+[31merror when starting dev server:
+Error: Port 5173 is already in use
+    at httpServerStart (file:///D:/Project/Projects/WatchTracker-Head-Verify/node_modules/vite/dist/node/chunks/node.js:10662:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async startServer (file:///D:/Project/Projects/WatchTracker-Head-Verify/node_modules/vite/dist/node/chunks/node.js:26386:30)
+    at async Object.listen (file:///D:/Project/Projects/WatchTracker-Head-Verify/node_modules/vite/dist/node/chunks/node.js:26203:4)
+    at async CAC.<anonymous> (file:///D:/Project/Projects/WatchTracker-Head-Verify/node_modules/vite/dist/node/cli.js:721:3)[39m
+       Error The "beforeDevCommand" terminated with a non-zero status code.
+

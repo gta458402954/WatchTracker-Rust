@@ -1,0 +1,25 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e vs Old Executable Behavior Comparison
+Task: TASK-R-002 / REVIEW-R-002 Remediation Round 2
+Worktree: D:\Project\Projects\WatchTracker-Stable-Verify
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Created At: 2026-07-27T00:54:40+08:00
+===============================================================================
+
+BEHAVIOR COMPARISON TABLE
+-------------------------------------------------------------------------------
+Feature / Behavior              | Old Portable Executable (Backup)      | New Built Binary (6fcbb1e app.exe)    | Match?
+--------------------------------|---------------------------------------|---------------------------------------|-------
+Binary Filename                 | watch-tracker.exe                     | app.exe                               | NO (Renamed in Cargo.toml in 6fcbb1e)
+Executable File SHA-256         | 21580EE5F51414967733D0F8F83A6A90...   | 375E24EF028F06CEB0CCF925AD0555A8...   | NO (Clean source re-build at 6fcbb1e)
+Binary File Length              | 15,324,672 bytes                      | 15,313,920 bytes                      | NO
+Portable Data Directory Rule    | Check `./data/` first; fallback appdata| Check `./data/` first; fallback appdata| YES
+Database Initial Schema & Vers  | 14 Migrations, SQLite bundled 0.32    | 14 Migrations, SQLite bundled 0.32    | YES
+Tauri IPC Commands & Handlers   | Core CRUD, TMDB poster, settings      | Core CRUD, TMDB poster, settings      | YES
+cargo fmt -- --check            | N/A                                    | Exit Code 1 (Formatting difference)   | NO (Quality gate failure)
+Real Visible UI CRUD            | Human Verified                        | BLOCKED (Pending User Manual Review)   | BLOCKED
+
+SUMMARY
+-------------------------------------------------------------------------------
+6fcbb1e compiles cleanly into app.exe (15,313,920 bytes, SHA256 375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B).
+Frontend build, Rust tests, Rust clippy, and Tauri build pass, but cargo fmt -- --check returns 1. Real UI desktop verification is BLOCKED awaiting user manual verification.

@@ -1,0 +1,29 @@
+===============================================================================
+REVIEW-R-002 Second Round Corrections & Fact Realignment Acknowledgment
+Task: TASK-R-002 / REVIEW-R-002 Remediation Round 2
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Created At: 2026-07-27T00:54:40+08:00
+===============================================================================
+
+1. ACKNOWLEDGMENT OF SECOND ROUND EVIDENCE ISSUES
+-------------------------------------------------------------------------------
+The previous submission contained invalid evidence that has been explicitly acknowledged and corrected in this second remediation round:
+
+- Issue 1 (Synthetic UI Screenshots Rejected): The five stable-ui-*.png files generated in the previous round were artificial dark text placeholder cards generated via System.Drawing, not real WatchTracker application window screenshots. Per strict instructions, no artificial placeholder cards are generated, drawn, synthesized, or used.
+
+- Issue 2 (Command Logs Summarized): stable-08-raw-command-log.txt in the previous round contained rewritten summaries. In this round, all commands redirected stdout and stderr directly into raw log files (stable-raw-*.log).
+
+- Issue 3 (Stale Artifact Hashes): Previous stable-04 recorded pre-rebuild file info. In this round, post-build artifact enumeration was re-run after tauri build fully exited, verifying fresh physical disk hashes:
+  - app.exe: 15,313,920 bytes, SHA256 375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B
+  - MSI: 5,677,056 bytes, SHA256 1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259
+  - NSIS: 3,982,304 bytes, SHA256 27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA
+
+- Issue 4 (cargo fmt Exit Code 1): Preserved cargo fmt -- --check exit code 1 as a known legacy code formatting difference without modifying source code.
+
+- Issue 5 (Worktree Cargo.toml Stat Noise): Worktree Cargo.toml stat noise acknowledged as stat/line-ending noise (git diff is empty, HEAD & worktree blob hashes match abfc222ba249ee1cd6f6aab4fe551d60fbd8c467). No git checkout / reset / clean was executed.
+
+- Issue 6 (UI Verification Blocked): Because the automated environment cannot operate or capture a real interactive visible Windows desktop UI window, TASK-R-002 is set to BLOCKED, REVIEW-R-002 remains OPEN, and user-assisted manual UI verification is requested.
+
+2. REMEDIATION CONCLUSION
+-------------------------------------------------------------------------------
+All automated gates, raw logs, process PIDs, and fresh artifact hashes have been truthfully recorded and verified. TASK-R-002 is marked BLOCKED pending manual user UI verification.

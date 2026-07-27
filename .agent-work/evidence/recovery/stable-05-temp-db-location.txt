@@ -1,0 +1,34 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e Isolated Temporary Database Locations
+Task: TASK-R-002 / REVIEW-R-002 Remediation Round 2
+Worktree: D:\Project\Projects\WatchTracker-Stable-Verify
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Created At: 2026-07-27T00:54:40+08:00
+===============================================================================
+
+1. ISOLATED RELEASE DATA DIRECTORY (TARGETED BY app.exe)
+-------------------------------------------------------------------------------
+Release Data Dir: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\release\data
+Database File: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\release\data\watchtracker.db
+
+2. ISOLATED DEBUG DATA DIRECTORY (TARGETED BY tauri dev)
+-------------------------------------------------------------------------------
+Debug Data Dir: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\debug\data
+Database File: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\debug\data\watchtracker.db
+
+3. REAL USER DATABASE PROTECTION & ISOLATION PROOF
+-------------------------------------------------------------------------------
+Real AppData DB: C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db
+- Pre-Test SHA256:  BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+- Post-Test SHA256: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+- Result: 100% UNTOUCHED (MATCH)
+
+Real Portable DB: D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db
+- Pre-Test SHA256:  6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE
+- Post-Test SHA256: 6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE
+- Result: 100% UNTOUCHED (MATCH)
+
+Real Public Release DB: D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db
+- Pre-Test SHA256:  D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+- Post-Test SHA256: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+- Result: 100% UNTOUCHED (MATCH)

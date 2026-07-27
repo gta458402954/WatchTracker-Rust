@@ -1,0 +1,29 @@
+TASK-R-004 Build Bisect Log
+Date: 2026-07-27 (Australia/Perth)
+Executor/Reviewer: Codex
+Worktree: D:\Project\Projects\WatchTracker-Bisect
+Criterion: npm ci, then npm run build; exit 0 = good, non-zero = bad.
+No desktop application was launched and no real database was accessed.
+
+# bad: [29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006] refactor: implement atomic SQLite transactions for DB operations and migrate state to Zustand
+# good: [6fcbb1e0ae851c554c905676ee9164bfb3ea303e] fix: infer actual MIME type for poster:// protocol instead of hardcoding image/jpeg
+git bisect start '29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006' '6fcbb1e0ae851c554c905676ee9164bfb3ea303e'
+# good: [813010076676166dffb708ec0344d458bd362f57] fix(tauri): translate camelCase keys to snake_case in update_record
+git bisect good 813010076676166dffb708ec0344d458bd362f57
+# good: [ac26566cc40570aa8c8194743a08c70bde4c67fa] build(deps): install zustand
+git bisect good ac26566cc40570aa8c8194743a08c70bde4c67fa
+# good: [16c89223d8ce71f53a356d38548f8c3dfe691f3f] test: add Playwright E2E testing framework and dashboard spec
+git bisect good 16c89223d8ce71f53a356d38548f8c3dfe691f3f
+# good: [38873240923c8efe145a3e16cd28065634417a0e] refactor(rust): add SyncCommit and ImportMode DTOs for atomic transactions
+git bisect good 38873240923c8efe145a3e16cd28065634417a0e
+# first 'bad' commit: [29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006] refactor: implement atomic SQLite transactions for DB operations and migrate state to Zustand
+
+Uniform command results:
+- 6fcbb1e: npm ci 0; npm run build 0
+- 8130100: npm ci 0; npm run build 0
+- ac26566: npm ci 0; npm run build 0
+- 16c8922: npm ci 0; npm run build 0
+- 3887324: npm ci 0; npm run build 0
+- 29ea3a4: npm ci 0; npm run build 2
+
+Result: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006 is the first build-bad commit.

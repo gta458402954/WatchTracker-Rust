@@ -1,0 +1,971 @@
+===============================================================================
+Command: cargo fmt -- --check
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify\src-tauri
+Start Time: 2026-07-27T12:17:11.4004168+08:00
+End Time: 2026-07-27T12:17:11.7490469+08:00
+Exit Code: 1
+===============================================================================
+RAW STDOUT / STDERR:
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:6:
+ fn get_derived_key() -> Result<Key<Aes256Gcm>, String> {
+     // 鑾峰彇鏈哄櫒鍞竴 ID
+     let uid = machine_uid::get().map_err(|e| format!("Failed to get machine UID: {}", e))?;
+[31m-    
+[0m[32m+
+[0m     // 浣跨敤 SHA-256 瀵?UID 鏁ｅ垪锛岀敓鎴?32 瀛楄妭鐨勫瘑閽?     let mut hasher = Sha256::new();
+     hasher.update(uid.as_bytes());
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:13:
+     // 涓轰簡澧炲姞澶嶆潅搴︼紝鍙互鍦ㄦ澶勬贩鍏ュ簲鐢ㄧ殑鍥哄畾 Salt
+     hasher.update(b"WatchTracker::Secure::Salt::2026");
+     let result = hasher.finalize();
+[31m-    
+[0m[32m+
+[0m     Ok(*Key::<Aes256Gcm>::from_slice(&result))
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:24:
+ 
+     let key = get_derived_key()?;
+     let cipher = Aes256Gcm::new(&key);
+[31m-    
+[0m[32m+
+[0m     // 鐢熸垚 12 瀛楄妭闅忔満 Nonce
+     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+[31m-    
+[0m[32m+
+[0m     // 鍔犲瘑
+     let ciphertext = cipher
+         .encrypt(&nonce, text.as_bytes())
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:34:
+         .map_err(|e| format!("Encryption failed: {:?}", e))?;
+[31m-        
+[0m[32m+
+[0m     // 缁勫悎 Nonce 鍜?Ciphertext
+     let mut payload = nonce.to_vec();
+     payload.extend_from_slice(&ciphertext);
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:39:
+[31m-    
+[0m[32m+
+[0m     let encoded = general_purpose::STANDARD.encode(&payload);
+     Ok(format!("machine_bound:v1:{}", encoded))
+ }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:58:
+     let encoded = id
+         .strip_prefix("machine_bound:v1:")
+         .ok_or_else(|| "Unsupported credential format".to_string())?;
+[31m-        
+[0m[32m+
+[0m     let payload = general_purpose::STANDARD
+         .decode(encoded)
+         .map_err(|error| error.to_string())?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:65:
+[31m-        
+[0m[32m+
+[0m     if payload.len() < 12 {
+         return Err("Invalid payload length".to_string());
+     }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:69:
+[31m-    
+[0m[32m+
+[0m     let (nonce_bytes, ciphertext) = payload.split_at(12);
+     let nonce = Nonce::from_slice(nonce_bytes);
+[31m-    
+[0m[32m+
+[0m     let key = get_derived_key()?;
+     let cipher = Aes256Gcm::new(&key);
+[31m-    
+[0m[32m+
+[0m     let decrypted_bytes = cipher
+         .decrypt(nonce, ciphertext)
+         .map_err(|_| "Decryption failed (machine mismatch or corrupted data)".to_string())?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\auth.rs:79:
+[31m-        
+[0m[32m+
+[0m     String::from_utf8(decrypted_bytes).map_err(|error| error.to_string())
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:1:
+ use crate::db::{self, DbState};
+ use crate::models::WatchRecord;
+[31m-use rusqlite::Connection;
+[0m use crate::{auth, net};
+[32m+use rusqlite::Connection;
+[0m use serde_json::Value;
+ use tauri::State;
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:417:
+         conflicts,
+     })
+ }
+[31m-use crate::models::{SyncCommit, SyncPayload, Tombstone};
+[0m use crate::error::AppError;
+[32m+use crate::models::{SyncCommit, SyncPayload, Tombstone};
+[0m 
+ #[tauri::command]
+ pub fn get_sync_snapshot(state: State<DbState>) -> Result<(Vec<WatchRecord>, i64), AppError> {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:425:
+[31m-    let conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m     let records = crate::db::get_all_records(&conn)?;
+     let generation = crate::db_atomic_helpers::get_records_generation(&conn)?;
+     Ok((records, generation))
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:434:
+     actor_id: String,
+     state: State<DbState>,
+ ) -> Result<Tombstone, AppError> {
+[31m-    let mut conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[31m-    Ok(crate::db_atomic_delete::delete_record_atomic(&mut conn, &id, &actor_id)?)
+[0m[32m+    let mut conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    Ok(crate::db_atomic_delete::delete_record_atomic(
+[0m[32m+        &mut conn, &id, &actor_id,
+[0m[32m+    )?)
+[0m }
+ 
+ #[tauri::command]
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:445:
+     actor_id: String,
+     state: State<DbState>,
+ ) -> Result<WatchRecord, AppError> {
+[31m-    let mut conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    let mut conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m     crate::db_atomic_update::update_record_atomic(&mut conn, &id, &updates, &actor_id)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:455:
+     actor_id: String,
+     state: State<DbState>,
+ ) -> Result<WatchRecord, AppError> {
+[31m-    let mut conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    let mut conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m     crate::db_atomic_restore::restore_record_atomic(&mut conn, record, &actor_id)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:465:
+     expected_generation: i64,
+     state: State<DbState>,
+ ) -> Result<(), AppError> {
+[31m-    let mut conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[31m-    crate::db_atomic_sync::apply_sync_result_atomic(&mut conn, commit, expected_generation)
+[0m[31m-        .map_err(|e| match e {
+[0m[32m+    let mut conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    crate::db_atomic_sync::apply_sync_result_atomic(&mut conn, commit, expected_generation).map_err(
+[0m[32m+        |e| match e {
+[0m             crate::db_atomic_sync::SyncApplyError::StaleSnapshot => {
+                 AppError::General("STALE_SNAPSHOT".to_string())
+             }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:474:
+             crate::db_atomic_sync::SyncApplyError::DbError(e) => AppError::DbError(e),
+             crate::db_atomic_sync::SyncApplyError::JsonError(e) => AppError::General(e.to_string()),
+[31m-        })
+[0m[32m+        },
+[0m[32m+    )
+[0m }
+ 
+ #[tauri::command]
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:482:
+     actor_id: String,
+     state: State<DbState>,
+ ) -> Result<(), AppError> {
+[31m-    let mut conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    let mut conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m     crate::db_atomic_import::apply_local_import_atomic(&mut conn, records, &actor_id)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\commands.rs:491:
+     payload: SyncPayload,
+     state: State<DbState>,
+ ) -> Result<(), AppError> {
+[31m-    let mut conn = state.conn.lock().map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m[32m+    let mut conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|_| AppError::General("Mutex poisoned".to_string()))?;
+[0m     crate::db_atomic_import::apply_cloud_import_atomic(&mut conn, payload)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db.rs:383:
+                 for (old_name, new_name) in renames.iter() {
+                     let exists: bool = conn
+                         .query_row(
+[31m-                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", old_name),
+[0m[32m+                            &format!(
+[0m[32m+                                "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
+[0m[32m+                                old_name
+[0m[32m+                            ),
+[0m                             [],
+                             |row| row.get(0),
+                         )
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db.rs:390:
+                         .unwrap_or(false);
+                     if exists {
+[31m-                        conn.execute(&format!("ALTER TABLE records RENAME COLUMN {} TO {}", old_name, new_name), [])?;
+[0m[32m+                        conn.execute(
+[0m[32m+                            &format!(
+[0m[32m+                                "ALTER TABLE records RENAME COLUMN {} TO {}",
+[0m[32m+                                old_name, new_name
+[0m[32m+                            ),
+[0m[32m+                            [],
+[0m[32m+                        )?;
+[0m                     }
+                 }
+                 Ok(())
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db.rs:660:
+             .expect("add legacy category");
+         conn.execute("ALTER TABLE records ADD COLUMN sortOrder INTEGER", [])
+             .expect("add legacy sort order");
+[31m-            
+[0m[32m+
+[0m         // 灏嗚 v19 淇敼鐨勫垪鍏ㄩ儴鏀瑰洖椹煎嘲锛屼互妯℃嫙鐪熷疄鐨?v12 schema 渚?13-18 杩佺Щ鑴氭湰鎵ц
+         let renames = [
+             ("original_name", "originalName"),
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db.rs:688:
+         for (new_name, old_name) in renames.iter() {
+             let exists: bool = conn
+                 .query_row(
+[31m-                    &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", new_name),
+[0m[32m+                    &format!(
+[0m[32m+                        "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
+[0m[32m+                        new_name
+[0m[32m+                    ),
+[0m                     [],
+                     |row| row.get(0),
+                 )
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db.rs:695:
+                 .unwrap_or(false);
+             if exists {
+[31m-                conn.execute(&format!("ALTER TABLE records RENAME COLUMN {} TO {}", new_name, old_name), []).unwrap();
+[0m[32m+                conn.execute(
+[0m[32m+                    &format!(
+[0m[32m+                        "ALTER TABLE records RENAME COLUMN {} TO {}",
+[0m[32m+                        new_name, old_name
+[0m[32m+                    ),
+[0m[32m+                    [],
+[0m[32m+                )
+[0m[32m+                .unwrap();
+[0m             }
+         }
+[31m-        
+[0m[32m+
+[0m         conn.execute(
+             "UPDATE records SET category = '闊╁墽', sortOrder = 7, contentTags = '闊╁浗' WHERE id = 'legacy'",
+             [],
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_delete.rs:1:
+[31m-use crate::models::Tombstone;
+[0m use crate::db_atomic_helpers::*;
+[31m-use rusqlite::Connection;
+[0m use crate::error::AppError;
+[31m-use std::cmp::max;
+[0m[32m+use crate::models::Tombstone;
+[0m use chrono::Utc;
+[32m+use rusqlite::Connection;
+[0m[32m+use std::cmp::max;
+[0m 
+[31m-pub fn delete_record_atomic(conn: &mut Connection, id: &str, actor_id: &str) -> Result<Tombstone, AppError> {
+[0m[32m+pub fn delete_record_atomic(
+[0m[32m+    conn: &mut Connection,
+[0m[32m+    id: &str,
+[0m[32m+    actor_id: &str,
+[0m[32m+) -> Result<Tombstone, AppError> {
+[0m     let tx = conn.transaction()?;
+[31m-    
+[0m[32m+
+[0m     let rev = {
+         let mut stmt = tx.prepare("SELECT rev FROM records WHERE id = ?")?;
+         let mut rows = stmt.query([id])?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_delete.rs:25:
+         .find(|t| t.id == id)
+         .map(|t| t.counter)
+         .unwrap_or(0);
+[31m-    
+[0m[32m+
+[0m     let counter = max(rev, old_counter) + 1;
+ 
+     let deleted_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_helpers.rs:1:
+[31m-use crate::models::{Tombstone};
+[0m[31m-use rusqlite::{params, Connection};
+[0m use crate::error::AppError;
+[32m+use crate::models::Tombstone;
+[0m[32m+use rusqlite::{params, Connection};
+[0m 
+ pub fn get_setting_tx(conn: &Connection, key: &str) -> Result<Option<String>, rusqlite::Error> {
+     let mut stmt = conn.prepare_cached("SELECT value FROM settings WHERE key = ?")?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_helpers.rs:21:
+ }
+ 
+ pub fn increment_records_generation(conn: &Connection) -> Result<i64, rusqlite::Error> {
+[31m-    let current_str = get_setting_tx(conn, "records_generation")?.unwrap_or_else(|| "0".to_string());
+[0m[32m+    let current_str =
+[0m[32m+        get_setting_tx(conn, "records_generation")?.unwrap_or_else(|| "0".to_string());
+[0m     let current: i64 = current_str.parse().unwrap_or(0);
+     let next = current + 1;
+     set_setting_tx(conn, "records_generation", &next.to_string())?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_helpers.rs:29:
+ }
+ 
+ pub fn get_records_generation(conn: &Connection) -> Result<i64, rusqlite::Error> {
+[31m-    let current_str = get_setting_tx(conn, "records_generation")?.unwrap_or_else(|| "0".to_string());
+[0m[32m+    let current_str =
+[0m[32m+        get_setting_tx(conn, "records_generation")?.unwrap_or_else(|| "0".to_string());
+[0m     Ok(current_str.parse().unwrap_or(0))
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_helpers.rs:44:
+ }
+ 
+ pub fn set_tombstones_tx(conn: &Connection, tombstones: &[Tombstone]) -> Result<(), AppError> {
+[31m-    let json_str = serde_json::to_string(tombstones).map_err(|e| AppError::General(e.to_string()))?;
+[0m[32m+    let json_str =
+[0m[32m+        serde_json::to_string(tombstones).map_err(|e| AppError::General(e.to_string()))?;
+[0m     set_setting_tx(conn, "sync_tombstones", &json_str)?;
+     Ok(())
+ }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_import.rs:1:
+[31m-use crate::models::{SyncPayload, WatchRecord};
+[0m[32m+use crate::db;
+[0m use crate::db_atomic_helpers::*;
+[31m-use rusqlite::Connection;
+[0m use crate::error::AppError;
+[32m+use crate::models::{SyncPayload, WatchRecord};
+[0m[32m+use rusqlite::Connection;
+[0m use std::cmp::max;
+[31m-use crate::db;
+[0m 
+ pub fn apply_local_import_atomic(
+     conn: &mut Connection,
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_import.rs:67:
+ 
+     let payload_json = serde_json::to_string(&payload).unwrap_or_default();
+     set_setting_tx(&tx, "sync_last_payload", &payload_json)?;
+[31m-    
+[0m[31m-    tx.execute("DELETE FROM settings WHERE key = 'sync_force_local_snapshot'", [])?;
+[0m[32m+
+[0m[32m+    tx.execute(
+[0m[32m+        "DELETE FROM settings WHERE key = 'sync_force_local_snapshot'",
+[0m[32m+        [],
+[0m[32m+    )?;
+[0m 
+     increment_records_generation(&tx)?;
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_restore.rs:1:
+[31m-use crate::models::WatchRecord;
+[0m[32m+use crate::db;
+[0m use crate::db_atomic_helpers::*;
+[31m-use rusqlite::Connection;
+[0m use crate::error::AppError;
+[32m+use crate::models::WatchRecord;
+[0m[32m+use rusqlite::Connection;
+[0m use std::cmp::max;
+[31m-use crate::db;
+[0m 
+ pub fn restore_record_atomic(
+     conn: &mut Connection,
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_restore.rs:13:
+     if actor_id.trim().is_empty() {
+         return Err(AppError::General("Missing sync actor ID".to_string()));
+     }
+[31m-    
+[0m[32m+
+[0m     let tx = conn.transaction()?;
+ 
+     let mut max_rev = 0;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_restore.rs:20:
+[31m-    
+[0m[32m+
+[0m     if let Some(existing) = db::get_record(&tx, &record.id)? {
+         max_rev = max(max_rev, existing.rev);
+     }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_restore.rs:24:
+[31m-    
+[0m[32m+
+[0m     let baseline_json = get_setting_tx(&tx, "sync_baseline_v3")?;
+     if let Some(json_str) = baseline_json {
+[31m-        if let Ok(baseline) = serde_json::from_str::<std::collections::HashMap<String, crate::models::VersionStamp>>(&json_str) {
+[0m[32m+        if let Ok(baseline) = serde_json::from_str::<
+[0m[32m+            std::collections::HashMap<String, crate::models::VersionStamp>,
+[0m[32m+        >(&json_str)
+[0m[32m+        {
+[0m             if let Some(stamp) = baseline.get(&record.id) {
+                 max_rev = max(max_rev, stamp.counter);
+             }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_restore.rs:31:
+         }
+     }
+[31m-    
+[0m[32m+
+[0m     let mut tombstones = get_tombstones_tx(&tx)?;
+     if let Some(t) = tombstones.iter().find(|t| t.id == record.id) {
+         max_rev = max(max_rev, t.counter);
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_restore.rs:37:
+     }
+[31m-    
+[0m[32m+
+[0m     record.rev = max(1, max_rev + 1);
+     record.rev_actor = actor_id.to_string();
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_sync.rs:1:
+[31m-use crate::models::SyncCommit;
+[0m[32m+use crate::db;
+[0m use crate::db_atomic_helpers::*;
+[31m-use rusqlite::Connection;
+[0m use crate::error::AppError;
+[31m-use crate::db;
+[0m[32m+use crate::models::SyncCommit;
+[0m[32m+use rusqlite::Connection;
+[0m 
+ #[derive(Debug)]
+ pub enum SyncApplyError {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_sync.rs:66:
+     }
+ 
+     if commit.consume_force_local {
+[31m-        tx.execute("DELETE FROM settings WHERE key = 'sync_force_local_snapshot'", [])?;
+[0m[32m+        tx.execute(
+[0m[32m+            "DELETE FROM settings WHERE key = 'sync_force_local_snapshot'",
+[0m[32m+            [],
+[0m[32m+        )?;
+[0m     }
+ 
+     set_setting_tx(&tx, "sync_last_commit_id", &commit.commit_id)?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:1:
+ #[cfg(test)]
+ mod tests {
+[31m-    use rusqlite::Connection;
+[0m[31m-    use serde_json::json;
+[0m     use crate::db;
+     use crate::db_atomic_delete::delete_record_atomic;
+[31m-    use crate::db_atomic_update::update_record_atomic;
+[0m[31m-    use crate::models::{WatchRecord, RecordStatus};
+[0m     use crate::db_atomic_helpers::get_tombstones_tx;
+[31m-    
+[0m[32m+    use crate::db_atomic_update::update_record_atomic;
+[0m[32m+    use crate::models::{RecordStatus, WatchRecord};
+[0m[32m+    use rusqlite::Connection;
+[0m[32m+    use serde_json::json;
+[0m[32m+
+[0m     fn setup_test_db() -> Connection {
+         let mut conn = Connection::open_in_memory().unwrap();
+         crate::db::setup_db(&mut conn).unwrap();
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:52:
+     fn test_delete_atomic_rollback() {
+         let mut conn = setup_test_db();
+         let record = create_test_record();
+[31m-        
+[0m[32m+
+[0m         {
+             let tx = conn.transaction().unwrap();
+             db::insert_record(&tx, record.clone()).unwrap();
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:65:
+                 SELECT RAISE(ABORT, 'Simulated failure during delete');
+              END;",
+             [],
+[31m-        ).unwrap();
+[0m[32m+        )
+[0m[32m+        .unwrap();
+[0m 
+         let result = delete_record_atomic(&mut conn, "test-id-1", "actor-2");
+[31m-        assert!(result.is_err(), "Expected atomic delete to fail due to trigger");
+[0m[32m+        assert!(
+[0m[32m+            result.is_err(),
+[0m[32m+            "Expected atomic delete to fail due to trigger"
+[0m[32m+        );
+[0m 
+         let tx = conn.transaction().unwrap();
+         let fetched = db::get_record(&tx, "test-id-1").unwrap();
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:75:
+[31m-        assert!(fetched.is_some(), "Record should still exist after failed delete rollback");
+[0m[31m-        
+[0m[32m+        assert!(
+[0m[32m+            fetched.is_some(),
+[0m[32m+            "Record should still exist after failed delete rollback"
+[0m[32m+        );
+[0m[32m+
+[0m         let tombstones = get_tombstones_tx(&tx).unwrap();
+[31m-        assert!(tombstones.is_empty(), "Tombstones should be empty after failed delete rollback");
+[0m[32m+        assert!(
+[0m[32m+            tombstones.is_empty(),
+[0m[32m+            "Tombstones should be empty after failed delete rollback"
+[0m[32m+        );
+[0m     }
+[31m-    
+[0m[32m+
+[0m     #[test]
+     fn test_update_atomic_rollback() {
+         let mut conn = setup_test_db();
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:84:
+         let record = create_test_record();
+[31m-        
+[0m[32m+
+[0m         {
+             let tx = conn.transaction().unwrap();
+             db::insert_record(&tx, record.clone()).unwrap();
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:95:
+                 SELECT RAISE(ABORT, 'Simulated failure during update');
+              END;",
+             [],
+[31m-        ).unwrap();
+[0m[32m+        )
+[0m[32m+        .unwrap();
+[0m 
+         let updates = json!({ "progress": "5" });
+         let result = update_record_atomic(&mut conn, "test-id-1", &updates, "actor-2");
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:102:
+[31m-        assert!(result.is_err(), "Expected atomic update to fail due to trigger");
+[0m[32m+        assert!(
+[0m[32m+            result.is_err(),
+[0m[32m+            "Expected atomic update to fail due to trigger"
+[0m[32m+        );
+[0m 
+         let tx = conn.transaction().unwrap();
+         let fetched = db::get_record(&tx, "test-id-1").unwrap().unwrap();
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_tests.rs:106:
+[31m-        assert_eq!(fetched.progress, "0", "Record progress should still be 0 after failed update rollback");
+[0m[31m-        
+[0m[32m+        assert_eq!(
+[0m[32m+            fetched.progress, "0",
+[0m[32m+            "Record progress should still be 0 after failed update rollback"
+[0m[32m+        );
+[0m[32m+
+[0m         let generation = crate::db_atomic_helpers::get_records_generation(&tx).unwrap();
+         assert_eq!(generation, 0, "Generation should not have incremented");
+     }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_update.rs:1:
+[31m-use crate::models::WatchRecord;
+[0m[32m+use crate::db;
+[0m use crate::db_atomic_helpers::*;
+[31m-use rusqlite::Connection;
+[0m use crate::error::AppError;
+[32m+use crate::models::WatchRecord;
+[0m[32m+use rusqlite::Connection;
+[0m use serde_json::Value;
+[31m-use crate::db;
+[0m 
+ pub fn update_record_atomic(
+     conn: &mut Connection,
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_update.rs:14:
+     if actor_id.trim().is_empty() {
+         return Err(AppError::General("Missing sync actor ID".to_string()));
+     }
+[31m-    
+[0m[32m+
+[0m     let tx = conn.transaction()?;
+ 
+     let obj = updates
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_update.rs:21:
+         .as_object()
+         .ok_or_else(|| AppError::General("Updates must be an object".to_string()))?;
+[31m-        
+[0m[32m+
+[0m     if obj.is_empty() {
+         return db::get_record(&tx, id)?
+             .ok_or_else(|| AppError::General(format!("Record not found: {id}")));
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_update.rs:28:
+ 
+     let mut set_clauses = Vec::new();
+     let mut params: Vec<rusqlite::types::Value> = Vec::new();
+[31m-    
+[0m[32m+
+[0m     for (key, value) in obj {
+         let column = match key.as_str() {
+             "originalName" => "original_name",
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_update.rs:83:
+     set_clauses.push("rev_actor = ?".to_string());
+     params.push(rusqlite::types::Value::Text(actor_id.to_string()));
+ 
+[31m-    let sql = format!(
+[0m[31m-        "UPDATE records SET {} WHERE id = ?",
+[0m[31m-        set_clauses.join(", ")
+[0m[31m-    );
+[0m[32m+    let sql = format!("UPDATE records SET {} WHERE id = ?", set_clauses.join(", "));
+[0m     params.push(rusqlite::types::Value::Text(id.to_string()));
+ 
+     let updated_count = tx.execute(&sql, rusqlite::params_from_iter(params.iter()))?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\db_atomic_update.rs:104:
+ 
+     let record = db::get_record(&tx, id)?.unwrap();
+     tx.commit()?;
+[31m-    
+[0m[32m+
+[0m     Ok(record)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\error.rs:5:
+ pub enum AppError {
+     #[error("Database error: {0}")]
+     DbError(#[from] rusqlite::Error),
+[31m-    
+[0m[32m+
+[0m     #[error("Network error: {0}")]
+     NetworkError(#[from] reqwest::Error),
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\lib.rs:2:
+ mod commands;
+ mod db;
+ mod error;
+[32m+mod merge;
+[0m mod models;
+ mod net;
+[31m-mod merge;
+[0m 
+[31m-pub mod db_atomic_helpers;
+[0m pub mod db_atomic_delete;
+[31m-pub mod db_atomic_update;
+[0m[32m+pub mod db_atomic_helpers;
+[0m[32m+pub mod db_atomic_import;
+[0m pub mod db_atomic_restore;
+ pub mod db_atomic_sync;
+[31m-pub mod db_atomic_import;
+[0m[32m+pub mod db_atomic_update;
+[0m 
+ use std::path::{Component, Path, PathBuf};
+ use tauri::Manager;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\lib.rs:102:
+                 let content = std::fs::read(&full_path).unwrap_or_default();
+                 let mime_type = infer::get(&content)
+                     .map(|t| t.mime_type())
+[31m-                    .unwrap_or_else(|| {
+[0m[31m-                        match full_path.extension().and_then(|e| e.to_str()) {
+[0m[31m-                            Some("png") | Some("PNG") => "image/png",
+[0m[31m-                            Some("webp") | Some("WEBP") => "image/webp",
+[0m[31m-                            Some("gif") | Some("GIF") => "image/gif",
+[0m[31m-                            _ => "image/jpeg",
+[0m[31m-                        }
+[0m[32m+                    .unwrap_or_else(|| match full_path.extension().and_then(|e| e.to_str()) {
+[0m[32m+                        Some("png") | Some("PNG") => "image/png",
+[0m[32m+                        Some("webp") | Some("WEBP") => "image/webp",
+[0m[32m+                        Some("gif") | Some("GIF") => "image/gif",
+[0m[32m+                        _ => "image/jpeg",
+[0m                     });
+ 
+                 tauri::http::Response::builder()
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:1:
+[31m-use crate::models::{SyncBaseline, SyncConflict, SyncPayload, Tombstone, VersionStamp, WatchRecord};
+[0m[32m+use crate::models::{
+[0m[32m+    SyncBaseline, SyncConflict, SyncPayload, Tombstone, VersionStamp, WatchRecord,
+[0m[32m+};
+[0m[32m+use chrono::Utc;
+[0m use serde_json::Value;
+ use std::collections::{BTreeMap, HashMap};
+[31m-use chrono::Utc;
+[0m 
+ pub fn version_of(record: &WatchRecord) -> VersionStamp {
+     VersionStamp {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:12:
+ 
+ pub fn compare_versions(left: &VersionStamp, right: &VersionStamp) -> i32 {
+     if left.counter != right.counter {
+[31m-        if left.counter > right.counter { 1 } else { -1 }
+[0m[32m+        if left.counter > right.counter {
+[0m[32m+            1
+[0m[32m+        } else {
+[0m[32m+            -1
+[0m[32m+        }
+[0m     } else if left.actor_id != right.actor_id {
+[31m-        if left.actor_id > right.actor_id { 1 } else { -1 }
+[0m[32m+        if left.actor_id > right.actor_id {
+[0m[32m+            1
+[0m[32m+        } else {
+[0m[32m+            -1
+[0m[32m+        }
+[0m     } else {
+         0
+     }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:71:
+     let mut tombstones: HashMap<String, Tombstone> = HashMap::new();
+     let mut conflicts: Vec<SyncConflict> = Vec::new();
+ 
+[31m-    for tombstone in remote.tombstones.into_iter().chain(local_tombstones.into_iter()) {
+[0m[32m+    for tombstone in remote
+[0m[32m+        .tombstones
+[0m[32m+        .into_iter()
+[0m[32m+        .chain(local_tombstones.into_iter())
+[0m[32m+    {
+[0m         let id = tombstone.id.clone();
+         if let Some(previous) = tombstones.get(&id) {
+[31m-            let t_stamp = VersionStamp { counter: tombstone.counter, actor_id: tombstone.actor_id.clone() };
+[0m[31m-            if compare_versions(&t_stamp, &VersionStamp { counter: previous.counter, actor_id: previous.actor_id.clone() }) > 0 {
+[0m[32m+            let t_stamp = VersionStamp {
+[0m[32m+                counter: tombstone.counter,
+[0m[32m+                actor_id: tombstone.actor_id.clone(),
+[0m[32m+            };
+[0m[32m+            if compare_versions(
+[0m[32m+                &t_stamp,
+[0m[32m+                &VersionStamp {
+[0m[32m+                    counter: previous.counter,
+[0m[32m+                    actor_id: previous.actor_id.clone(),
+[0m[32m+                },
+[0m[32m+            ) > 0
+[0m[32m+            {
+[0m                 tombstones.insert(id, tombstone);
+             }
+         } else {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:83:
+         }
+     }
+ 
+[31m-    let remote_by_id: HashMap<String, WatchRecord> = remote.records.clone().into_iter().map(|r| (r.id.clone(), r)).collect();
+[0m[32m+    let remote_by_id: HashMap<String, WatchRecord> = remote
+[0m[32m+        .records
+[0m[32m+        .clone()
+[0m[32m+        .into_iter()
+[0m[32m+        .map(|r| (r.id.clone(), r))
+[0m[32m+        .collect();
+[0m 
+     if let Some(force_actor) = force_local_actor {
+         for record in local {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:91:
+             if let Some(remote_record) = remote_by_id.get(&id) {
+                 if !records_equal(&record, remote_record) {
+                     let mut forced = record.clone();
+[31m-                    let t_stamp = tombstones.get(&id).map(|t| VersionStamp { counter: t.counter, actor_id: t.actor_id.clone() });
+[0m[32m+                    let t_stamp = tombstones.get(&id).map(|t| VersionStamp {
+[0m[32m+                        counter: t.counter,
+[0m[32m+                        actor_id: t.actor_id.clone(),
+[0m[32m+                    });
+[0m                     forced.rev = max_counter(&[
+                         Some(&version_of(&record)),
+                         Some(&version_of(remote_record)),
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:116:
+         for remote_record in remote.records {
+             let id = remote_record.id.clone();
+             if !records.contains_key(&id) {
+[31m-                let previous = tombstones.get(&id).map(|t| VersionStamp { counter: t.counter, actor_id: t.actor_id.clone() });
+[0m[31m-                tombstones.insert(id.clone(), Tombstone {
+[0m[31m-                    id,
+[0m[31m-                    deleted_at: Utc::now().to_rfc3339(),
+[0m[31m-                    counter: max_counter(&[Some(&version_of(&remote_record)), previous.as_ref()]) + 1,
+[0m[31m-                    actor_id: force_actor.clone(),
+[0m[32m+                let previous = tombstones.get(&id).map(|t| VersionStamp {
+[0m[32m+                    counter: t.counter,
+[0m[32m+                    actor_id: t.actor_id.clone(),
+[0m                 });
+[32m+                tombstones.insert(
+[0m[32m+                    id.clone(),
+[0m[32m+                    Tombstone {
+[0m[32m+                        id,
+[0m[32m+                        deleted_at: Utc::now().to_rfc3339(),
+[0m[32m+                        counter: max_counter(&[
+[0m[32m+                            Some(&version_of(&remote_record)),
+[0m[32m+                            previous.as_ref(),
+[0m[32m+                        ]) + 1,
+[0m[32m+                        actor_id: force_actor.clone(),
+[0m[32m+                    },
+[0m[32m+                );
+[0m             }
+         }
+     } else {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:136:
+                 if record.is_locked.unwrap_or(false) {
+                     if !records_equal(&record, &previous) {
+                         let mut locked_record = record.clone();
+[31m-                        let t_stamp = tombstones.get(&id).map(|t| VersionStamp { counter: t.counter, actor_id: t.actor_id.clone() });
+[0m[32m+                        let t_stamp = tombstones.get(&id).map(|t| VersionStamp {
+[0m[32m+                            counter: t.counter,
+[0m[32m+                            actor_id: t.actor_id.clone(),
+[0m[32m+                        });
+[0m                         locked_record.rev = max_counter(&[
+                             Some(&version_of(&record)),
+                             Some(&version_of(&previous)),
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:160:
+                     continue;
+                 }
+ 
+[31m-                let base_version = baseline.get(&id).cloned().unwrap_or(VersionStamp { counter: 0, actor_id: String::new() });
+[0m[32m+                let base_version = baseline.get(&id).cloned().unwrap_or(VersionStamp {
+[0m[32m+                    counter: 0,
+[0m[32m+                    actor_id: String::new(),
+[0m[32m+                });
+[0m                 let local_changed = compare_versions(&version_of(&record), &base_version) > 0;
+                 let remote_changed = compare_versions(&version_of(&previous), &base_version) > 0;
+                 let winner = choose_record(&record, &previous);
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:167:
+ 
+[31m-                if !records_equal(&record, &previous) && (local_changed && remote_changed || compare_versions(&version_of(&record), &version_of(&previous)) == 0) {
+[0m[32m+                if !records_equal(&record, &previous)
+[0m[32m+                    && (local_changed && remote_changed
+[0m[32m+                        || compare_versions(&version_of(&record), &version_of(&previous)) == 0)
+[0m[32m+                {
+[0m                     conflicts.push(SyncConflict {
+                         id: id.clone(),
+                         kept: winner.to_string(),
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:172:
+                         at: Utc::now().to_rfc3339(),
+[31m-                        discarded: if winner == "local" { previous.clone() } else { record.clone() },
+[0m[32m+                        discarded: if winner == "local" {
+[0m[32m+                            previous.clone()
+[0m[32m+                        } else {
+[0m[32m+                            record.clone()
+[0m[32m+                        },
+[0m                     });
+                 }
+[31m-                
+[0m[32m+
+[0m                 records.insert(id, if winner == "local" { record } else { previous });
+             } else {
+                 records.insert(id, record);
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\merge.rs:185:
+     for tombstone in current_tombstones {
+         let id = tombstone.id.clone();
+         if let Some(record) = records.get(&id) {
+[31m-            if record.is_locked.unwrap_or(false) || compare_versions(&version_of(record), &VersionStamp { counter: tombstone.counter, actor_id: tombstone.actor_id.clone() }) > 0 {
+[0m[32m+            if record.is_locked.unwrap_or(false)
+[0m[32m+                || compare_versions(
+[0m[32m+                    &version_of(record),
+[0m[32m+                    &VersionStamp {
+[0m[32m+                        counter: tombstone.counter,
+[0m[32m+                        actor_id: tombstone.actor_id.clone(),
+[0m[32m+                    },
+[0m[32m+                ) > 0
+[0m[32m+            {
+[0m                 tombstones.remove(&id);
+             } else {
+                 records.remove(&id);
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:4:
+ use std::fs;
+ use std::io::Write;
+ use std::path::PathBuf;
+[32m+use std::sync::{Mutex, OnceLock};
+[0m use tauri::AppHandle;
+ use tauri::Manager;
+[31m-use std::sync::{Mutex, OnceLock};
+[0m 
+ static CLIENT_CACHE: OnceLock<Mutex<Option<(Option<String>, Client)>>> = OnceLock::new();
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:13:
+ fn get_or_create_client(proxy: &Option<String>) -> Result<Client, crate::error::AppError> {
+     let mutex = CLIENT_CACHE.get_or_init(|| Mutex::new(None));
+[31m-    let mut cache = mutex.lock().map_err(|e| crate::error::AppError::General(format!("Lock error: {}", e)))?;
+[0m[31m-    
+[0m[32m+    let mut cache = mutex
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::General(format!("Lock error: {}", e)))?;
+[0m[32m+
+[0m     if let Some((cached_proxy, client)) = cache.as_ref() {
+         if cached_proxy == proxy {
+             return Ok(client.clone());
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:20:
+         }
+     }
+[31m-    
+[0m[32m+
+[0m     let mut builder = Client::builder()
+         .timeout(std::time::Duration::from_secs(30))
+         .redirect(reqwest::redirect::Policy::none());
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:26:
+[31m-        
+[0m[32m+
+[0m     if let Some(p) = proxy {
+         if !p.trim().is_empty() {
+[31m-            builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| crate::error::AppError::General(e.to_string()))?);
+[0m[32m+            builder = builder.proxy(
+[0m[32m+                reqwest::Proxy::all(p)
+[0m[32m+                    .map_err(|e| crate::error::AppError::General(e.to_string()))?,
+[0m[32m+            );
+[0m         }
+     }
+[31m-    
+[0m[31m-    let client = builder.build().map_err(|e| crate::error::AppError::General(e.to_string()))?;
+[0m[32m+
+[0m[32m+    let client = builder
+[0m[32m+        .build()
+[0m[32m+        .map_err(|e| crate::error::AppError::General(e.to_string()))?;
+[0m     *cache = Some((proxy.clone(), client.clone()));
+     Ok(client)
+ }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:206:
+                     .get("status_message")
+                     .and_then(Value::as_str)
+                     .unwrap_or("Unknown API error");
+[31m-                return Err(crate::error::AppError::General(format!("TMDB API Error ({}): {}", en_status, message)));
+[0m[32m+                return Err(crate::error::AppError::General(format!(
+[0m[32m+                    "TMDB API Error ({}): {}",
+[0m[32m+                    en_status, message
+[0m[32m+                )));
+[0m             }
+ 
+             if is_imdb_id {
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:269:
+     proxy: Option<String>,
+ ) -> Result<Value, crate::error::AppError> {
+     if !matches!(media_type.as_str(), "movie" | "tv") {
+[31m-        return Err(crate::error::AppError::General("Unsupported TMDB media type".to_string()));
+[0m[32m+        return Err(crate::error::AppError::General(
+[0m[32m+            "Unsupported TMDB media type".to_string(),
+[0m[32m+        ));
+[0m     }
+     if id <= 0 {
+[31m-        return Err(crate::error::AppError::General("Invalid TMDB ID".to_string()));
+[0m[32m+        return Err(crate::error::AppError::General(
+[0m[32m+            "Invalid TMDB ID".to_string(),
+[0m[32m+        ));
+[0m     }
+     log::info!("[TMDB] Fetching detail for {} ID: {}", media_type, id);
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:305:
+             .get("status_message")
+             .and_then(Value::as_str)
+             .unwrap_or("Unknown API error");
+[31m-        return Err(crate::error::AppError::General(format!("TMDB API Error ({}): {}", status, message)));
+[0m[32m+        return Err(crate::error::AppError::General(format!(
+[0m[32m+            "TMDB API Error ({}): {}",
+[0m[32m+            status, message
+[0m[32m+        )));
+[0m     }
+     Ok(json)
+ }
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:361:
+     let res = client.get(url).send().await?;
+ 
+     if !res.status().is_success() {
+[31m-        return Err(crate::error::AppError::General(format!("Download failed: {}", res.status())));
+[0m[32m+        return Err(crate::error::AppError::General(format!(
+[0m[32m+            "Download failed: {}",
+[0m[32m+            res.status()
+[0m[32m+        )));
+[0m     }
+ 
+     let bytes = res.bytes().await?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:371:
+     Ok(true)
+ }
+ 
+[31m-pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResult, crate::error::AppError> {
+[0m[32m+pub async fn webdav_request(
+[0m[32m+    request: WebDavRequest,
+[0m[32m+) -> Result<WebDavResult, crate::error::AppError> {
+[0m     let WebDavRequest {
+         method,
+         url,
+Diff in \\?\D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\src\net.rs:389:
+         "MKCOL" => client.request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &url),
+         "PUT" => client.put(&url),
+         "GET" => client.get(&url),
+[31m-        _ => return Err(crate::error::AppError::General(format!("Unsupported method: {}", method))),
+[0m[32m+        _ => {
+[0m[32m+            return Err(crate::error::AppError::General(format!(
+[0m[32m+                "Unsupported method: {}",
+[0m[32m+                method
+[0m[32m+            )))
+[0m[32m+        }
+[0m     };
+ 
+     req_builder = req_builder.basic_auth(&username, Some(&password));
+

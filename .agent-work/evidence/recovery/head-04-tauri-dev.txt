@@ -1,0 +1,32 @@
+===============================================================================
+WatchTracker HEAD Candidate 29ea3a4 Tauri Dev Execution Log
+Task: TASK-R-003
+Worktree: D:\Project\Projects\WatchTracker-Head-Verify
+Target Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Created At: 2026-07-27T12:17:30+08:00
+===============================================================================
+
+1. TAURI DEV RUNTIME DETAILS
+-------------------------------------------------------------------------------
+Command: npm run tauri dev
+Parent Process PID: 17300 (cmd.exe / tauri CLI)
+Child Process PID: 26032 (app.exe)
+Child Executable Path: D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\target\debug\app.exe
+Debug Data Directory: D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\target\debug\data
+Debug DB Created: D:\Project\Projects\WatchTracker-Head-Verify\src-tauri\target\debug\data\watchtracker.db (28,672 bytes)
+Initial Raw Stdout/Stderr Logs: NOT AVAILABLE; the previous `.log` references were invalid and those files were never committed.
+
+2. PROCESS TREE TERMINATION & CLEANUP
+-------------------------------------------------------------------------------
+Termination Command: taskkill /PID 26032 /T /F && taskkill /PID 17300 /T /F
+Process Tree Cleaned: Yes
+Post-Cleanup Process Count: ZERO (0)
+
+3. REMEDIATION RERUN
+-------------------------------------------------------------------------------
+The remediation rerun saved direct stdout/stderr to
+`head-raw-tauri-dev.stdout.txt` and `head-raw-tauri-dev.stderr.txt`.
+It did not launch Tauri CLI/Cargo/app because `beforeDevCommand` failed when
+port 5173 was already in use. The original run above did launch the debug app
+but leaked its process tree; Codex independently observed that process before
+cleanup. No Head-Verify process remains after remediation.

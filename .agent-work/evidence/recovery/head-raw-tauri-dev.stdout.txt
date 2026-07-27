@@ -1,0 +1,18 @@
+===============================================================================
+Command: npm run tauri dev (STDOUT)
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify
+Start Time: 2026-07-27T22:21:17.1926291+08:00
+End Time: 2026-07-27T22:21:34.9272937+08:00
+Parent PID: 9252 | Tauri CLI PID: None | Vite PID: 18480 | Cargo PID: None | App PID: None
+App Path: None
+===============================================================================
+RAW STDOUT:
+
+> watch-tracker@1.10.0 tauri
+> tauri dev
+
+
+> watch-tracker@1.10.0 dev
+> vite
+
+

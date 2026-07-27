@@ -1,0 +1,81 @@
+===============================================================================
+Command: npm run tauri build
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify
+Start Time: 2026-07-27T12:17:44.7191333+08:00
+End Time: 2026-07-27T12:18:01.2937890+08:00
+Exit Code: 1
+===============================================================================
+RAW STDOUT / STDERR:
+
+> watch-tracker@1.10.0 tauri
+> tauri build
+
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+
+> watch-tracker@1.10.0 build
+> tsc -b && vite build
+
+src/app/App.tsx(121,28): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/app/App.tsx(128,33): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/app/App.tsx(134,33): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/features/settings/components/SettingsSyncTab.tsx(87,54): error TS2554: Expected 2 arguments, but got 1.
+src/features/settings/components/SettingsToolsTab.tsx(20,42): error TS7006: Parameter 's' implicitly has an 'any' type.
+src/shared/lib/database.ts(5,51): error TS6196: 'ImportMode' is declared but never used.
+src/shared/lib/webdav.ts(3,70): error TS6133: 'applySyncResultAtomic' is declared but its value is never read.
+src/shared/lib/webdav.ts(3,93): error TS6133: 'getSyncSnapshotAsync' is declared but its value is never read.
+src/shared/lib/webdav.ts(29,13): error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+src/shared/lib/webdav.ts(467,65): error TS6133: 'generation' is declared but its value is never read.
+src/store/useWatchListStore.ts(20,12): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(25,30): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(26,23): error TS2304: Cannot find name 'WatchRecordInput'.
+src/store/useWatchListStore.ts(27,47): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(29,32): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(31,27): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(35,34): error TS2304: Cannot find name 'create'.
+src/store/useWatchListStore.ts(35,58): error TS7006: Parameter 'set' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(35,63): error TS7006: Parameter 'get' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(36,33): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(50,42): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(61,22): error TS2304: Cannot find name 'getAllRecordsAsync'.
+src/store/useWatchListStore.ts(64,26): error TS2554: Expected 2 arguments, but got 1.
+src/store/useWatchListStore.ts(69,15): error TS2304: Cannot find name 'replaceAllRecords'.
+src/store/useWatchListStore.ts(73,30): error TS2304: Cannot find name 'getAllRecordsAsync'.
+src/store/useWatchListStore.ts(98,32): error TS2304: Cannot find name 'getAllRecordsAsync'.
+src/store/useWatchListStore.ts(103,31): error TS2304: Cannot find name 'WatchRecordInput'.
+src/store/useWatchListStore.ts(106,31): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(116,11): error TS7006: Parameter 'state' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(120,33): error TS2304: Cannot find name 'insertRecord'.
+src/store/useWatchListStore.ts(122,47): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(126,13): error TS7006: Parameter 'state' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(126,55): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(131,55): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(133,43): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(138,11): error TS7006: Parameter 'state' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(138,50): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(142,17): error TS2304: Cannot find name 'clearRecordDeletion'.
+src/store/useWatchListStore.ts(143,35): error TS2304: Cannot find name 'dbUpdateRecord'.
+src/store/useWatchListStore.ts(144,47): error TS7006: Parameter 'record' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(155,43): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(159,11): error TS7006: Parameter 'state' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(159,53): error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(163,17): error TS2304: Cannot find name 'markRecordDeleted'.
+src/store/useWatchListStore.ts(164,17): error TS2304: Cannot find name 'dbDeleteRecord'.
+src/store/useWatchListStore.ts(165,50): error TS7006: Parameter 'record' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(173,40): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(178,31): error TS2304: Cannot find name 'prepareImportedRecords'.
+src/store/useWatchListStore.ts(179,13): error TS2304: Cannot find name 'replaceAllRecords'.
+src/store/useWatchListStore.ts(180,31): error TS2304: Cannot find name 'getAllRecordsAsync'.
+src/store/useWatchListStore.ts(181,13): error TS2304: Cannot find name 'commitImportedRecords'.
+src/store/useWatchListStore.ts(187,35): error TS2304: Cannot find name 'WatchRecord'.
+src/store/useWatchListStore.ts(188,31): error TS2304: Cannot find name 'insertRecord'.
+src/store/useWatchListStore.ts(189,42): error TS7006: Parameter 'item' implicitly has an 'any' type.
+src/store/useWatchListStore.ts(191,29): error TS7006: Parameter 'item' implicitly has an 'any' type.
+src/shared/lib/database.ts(5,51): error TS6196: 'ImportMode' is declared but never used.
+src/shared/lib/webdav.ts(3,70): error TS6133: 'applySyncResultAtomic' is declared but its value is never read.
+src/shared/lib/webdav.ts(3,93): error TS6133: 'getSyncSnapshotAsync' is declared but its value is never read.
+src/shared/lib/webdav.ts(29,13): error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+src/shared/lib/webdav.ts(467,65): error TS6133: 'generation' is declared but its value is never read.
+beforeBuildCommand `npm run build` failed with exit code 2
+       Error beforeBuildCommand `npm run build` failed with exit code 2
+

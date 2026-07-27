@@ -1,0 +1,54 @@
+===============================================================================
+Command: npm run test
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify
+Start Time: 2026-07-27T12:17:42.4956250+08:00
+End Time: 2026-07-27T12:17:48.2372685+08:00
+Exit Code: 1
+===============================================================================
+RAW STDOUT / STDERR:
+
+> watch-tracker@1.10.0 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Project/Projects/WatchTracker-Head-Verify[39m
+
+ [32m鉁?[39m src/shared/lib/__tests__/syncCoordinator.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m鉁?[39m src/shared/lib/__tests__/classification.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m鉁?[39m src/shared/lib/__tests__/asyncMutex.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m鉁?[39m src/shared/lib/__tests__/constants.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m鉁?[39m src/shared/lib/__tests__/tmdbMapper.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m鉁?[39m src/shared/lib/__tests__/recordLogic.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m鉁?[39m src/shared/lib/__tests__/webdav.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [31m鉂?[39m tests/dashboard.spec.ts [2m([22m[2m0 test[22m[2m)[22m
+
+鈳幆鈳幆鈳幆 Failed Suites 1 鈳幆鈳幆鈳幆鈳?[39m
+
+ FAIL  tests/dashboard.spec.ts [ tests/dashboard.spec.ts ]
+Error: Playwright Test did not expect test.describe() to be called here.
+Most common reasons include:
+- You are calling test.describe() in a configuration file.
+- You are calling test.describe() in a file that is imported by the configuration file.
+- You have two different versions of @playwright/test. This usually happens
+  when one of the dependencies in your package.json depends on @playwright/test.
+- You are calling test.describe() from an async test.describe() block. Only sync ones are supported.
+ 鉂?[22m _TestTypeImpl._currentSuite node_modules/playwright/lib/common/index.js:2266:13
+ 鉂?[22m _TestTypeImpl._describe node_modules/playwright/lib/common/index.js:2307:24
+ 鉂?[22m Function.describe node_modules/playwright/lib/common/index.js:1212:12
+ 鉂?[22m tests/dashboard.spec.ts:4:6
+      2| import { setupMockIpc } from './fixtures/mockIpc';
+      3|
+      4| test.describe('Dashboard E2E', () => {
+       |      ^
+      5|   test.beforeEach(async ({ page }) => {
+      6|     // Setup Tauri IPC Mocks
+
+鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆鈳幆[1/1]鈳?[22m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m7 passed[39m[22m[90m (8)[39m
+[2m      Tests [22m [1m[32m68 passed[39m[22m[90m (68)[39m
+[2m   Start at [22m 12:17:45
+[2m   Duration [22m 2.84s[2m (transform 1.46s, setup 0ms, import 2.11s, tests 104ms, environment 3ms)[22m
+
+

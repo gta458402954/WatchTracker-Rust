@@ -1,0 +1,103 @@
+===============================================================================
+Command: cargo test
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify\src-tauri
+Start Time: 2026-07-27T12:18:44.4083060+08:00
+End Time: 2026-07-27T12:20:20.5997871+08:00
+Exit Code: 0
+===============================================================================
+RAW STDOUT / STDERR:
+    Blocking waiting for file lock on build directory
+   Compiling app v1.10.0 (D:\Project\Projects\WatchTracker-Head-Verify\src-tauri)
+warning: unused import: `crate::error::AppError`
+ --> src\db_atomic_sync.rs:4:5
+  |
+4 | use crate::error::AppError;
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `insert_record` is never used
+  --> src\commands.rs:23:8
+   |
+23 | pub fn insert_record(
+   |        ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `update_record` is never used
+  --> src\commands.rs:33:8
+   |
+33 | pub fn update_record(
+   |        ^^^^^^^^^^^^^
+
+warning: function `update_record_tx` is never used
+  --> src\commands.rs:46:4
+   |
+46 | fn update_record_tx(
+   |    ^^^^^^^^^^^^^^^^
+
+warning: function `delete_record` is never used
+   --> src\commands.rs:144:8
+    |
+144 | pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `replace_all_records` is never used
+   --> src\commands.rs:149:8
+    |
+149 | pub fn replace_all_records(
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `delete_record` is never used
+   --> src\db.rs:490:8
+    |
+490 | pub fn delete_record(conn: &Connection, id: String) -> Result<()> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `replace_all_records` is never used
+   --> src\db.rs:499:8
+    |
+499 | pub fn replace_all_records(conn: &Connection, records: Vec<WatchRecord>) -> Result<()> {
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: enum `ImportMode` is never used
+   --> src\models.rs:124:10
+    |
+124 | pub enum ImportMode {
+    |          ^^^^^^^^^^
+
+warning: `app` (lib) generated 9 warnings (1 duplicate)
+warning: `app` (lib test) generated 6 warnings (5 duplicates) (run `cargo fix --lib -p app --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 35s
+     Running unittests src\lib.rs (target\debug\deps\app_lib-6eca82c9ecd585e6.exe)
+
+running 13 tests
+test commands::tests::rejects_cleartext_remote_webdav_and_unexpected_paths ... ok
+test commands::tests::rejects_embedded_credentials_queries_and_fragments ... ok
+test commands::tests::accepts_https_and_loopback_http_webdav_urls ... ok
+test db::tests::invalid_database_rows_are_reported_instead_of_silently_dropped ... ok
+test commands::tests::get_record_uses_indexed_lookup_and_returns_none_for_unknown ... ok
+test db::tests::deleting_a_missing_record_returns_an_error ... ok
+test db::tests::replace_all_records_preserves_locked_local_record ... ok
+test db::tests::schema_v19_and_record_round_trip ... ok
+test commands::tests::update_record_translates_camel_case_keys_and_bumps_rev ... ok
+test db_atomic_tests::tests::test_update_atomic_rollback ... ok
+test db_atomic_tests::tests::test_delete_atomic_rollback ... ok
+test db::tests::migrates_v17_revision_actor_without_losing_records ... ok
+test db::tests::migrates_v12_database_without_losing_records ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running unittests src\main.rs (target\debug\deps\app-d44f21c9ba2ca779.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests app_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
