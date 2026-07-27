@@ -1,0 +1,25 @@
+===============================================================================
+Command: npm run build
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:18:25.4595556+08:00
+End Time: 2026-07-27T23:18:30.0098189+08:00
+Duration: 4.5502633 seconds
+Exit Code: 0
+===============================================================================
+RAW STDOUT / STDERR:
+
+> watch-tracker@1.10.0 build
+> tsc -b && vite build
+
+[36mvite v8.0.13 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...鉁?601 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.48 kB 鈹?gzip:   0.33 kB
+dist/assets/index-BKpl4LZy.css      31.78 kB 鈹?gzip:   6.30 kB
+dist/assets/index-IM6zwU64.js      285.57 kB 鈹?gzip:  85.47 kB
+dist/assets/Dashboard-CxJR4aNk.js  358.34 kB 鈹?gzip: 103.95 kB
+
+[32m鉁?built in 983ms[39m
+

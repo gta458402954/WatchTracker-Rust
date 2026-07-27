@@ -1,0 +1,32 @@
+===============================================================================
+Command: cargo test
+Workdir: D:\Project\Projects\WatchTracker-Recovery\src-tauri
+Start Time: 2026-07-27T23:18:22.1732913+08:00
+End Time: 2026-07-27T23:18:23.3245989+08:00
+Duration: 1.1513076 seconds
+Exit Code: 0
+===============================================================================
+RAW STDOUT / STDERR:
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running unittests src\lib.rs (target\debug\deps\app_lib-8b09b51a6726ec41.exe)
+
+running 3 tests
+test db::tests::schema_v14_and_record_round_trip ... ok
+test db::tests::migrates_v12_database_without_losing_records ... ok
+test db::tests::replace_all_records_preserves_locked_local_record ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src\main.rs (target\debug\deps\app-a8373246ff8e8038.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests app_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+

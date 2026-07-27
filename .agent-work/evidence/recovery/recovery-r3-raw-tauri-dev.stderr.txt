@@ -1,0 +1,19 @@
+===============================================================================
+Command: npm run tauri dev (STDERR)
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:18:33.0100991+08:00
+End Time: 2026-07-27T23:18:49.2583634+08:00
+Duration: 16.2482643 seconds
+Exit Code: 1 (Terminated via taskkill /T /F after 15s run)
+Parent PID: 11860 | Tauri CLI PID: 19548 | Vite PID: 24276 | Cargo PID: None | App PID: 13196
+App Executable Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\app.exe
+Isolated Debug DB Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db (Exists: True, Size: 28672 bytes, Non-Zero: True)
+Log Error Checks: no_such_column=False, Database_error=False, startup_failure=False, panic=False
+===============================================================================
+RAW STDERR:
+     Running BeforeDevCommand (`npm run dev`)
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching D:\Project\Projects\WatchTracker-Recovery\src-tauri for changes...
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.60s
+[1m[92m     Running[0m `target\debug\app.exe`
+

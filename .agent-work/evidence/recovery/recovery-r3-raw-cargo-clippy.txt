@@ -1,0 +1,11 @@
+===============================================================================
+Command: cargo clippy --all-targets --all-features -- -D warnings
+Workdir: D:\Project\Projects\WatchTracker-Recovery\src-tauri
+Start Time: 2026-07-27T23:18:23.3297511+08:00
+End Time: 2026-07-27T23:18:24.4968213+08:00
+Duration: 1.1670702 seconds
+Exit Code: 0
+===============================================================================
+RAW STDOUT / STDERR:
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.92s
+

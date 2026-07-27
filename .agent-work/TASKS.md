@@ -1,4 +1,4 @@
-# 执行任务
+﻿# 执行任务
 
 > 原任务基线：2026-07-26，`main@29ea3a4` 加当前未提交工作区。2026-07-27 增加 Recovery Phase：先保护现场并验证 `origin/main@6fcbb1e` 与干净 `29ea3a4`，再从最后绿色提交恢复。Gate R 前不得实施 Phase A；Phase B 继续受 Gate A 阻塞；DEFERRED 本轮禁止实施。
 
@@ -296,7 +296,7 @@ git diff --stat origin/main..29ea3a4
 - Expected Files:
   - `.agent-work/RECOVERY_DECISION.md`
   - `.agent-work/TASKS.md`
-  - `.agent-work/evidence/recovery/recovery-r2-raw-*`
+  - `.agent-work/evidence/recovery/recovery-r3-raw-*`
 
 ### Objective
 
@@ -328,7 +328,7 @@ git log -1 --oneline
 
 ### Execution Result
 
-- Status: CHANGES_REQUESTED — R2 evidence shows real-data fallback and an application startup error
+- Status: BLOCKED — Requires User Manual UI Verification (Automated R3 Remediation Complete)
 - Recovery Branch: `codex/rebuild-from-stable`
 - Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
 - Reviewed Commit: `a3e0fec933d6269dbbaa6fa7054b9181482c5d6f`
@@ -336,18 +336,18 @@ git log -1 --oneline
 - Business Source Code Integrity: `git diff --stat 6fcbb1e -- . ':!.agent-work' ':!AI_COLLABORATION_WORKFLOW.md'` is 100% EMPTY (0 changes). Business source code is 100% identical to `6fcbb1e`.
 - Cargo.toml State: `src-tauri/Cargo.toml` has stat/line-ending noise; `git diff` is empty, workspace blob and HEAD blob are identical (`abfc222ba249ee1cd6f6aab4fe551d60fbd8c467`). Not staged or cleaned.
 - Synchronous R2 Automated Verification Gates:
-  - `npm ci`: Exit Code 0, Duration: 10.46s (`recovery-r2-raw-npm-ci.txt`)
-  - `npm run lint`: Exit Code 0, Duration: 4.76s (`recovery-r2-raw-lint.txt`)
-  - `npm run build`: Exit Code 0, Duration: 4.99s (`recovery-r2-raw-frontend-build.txt`)
-  - `cargo fmt -- --check`: Exit Code 1 (Expected legacy formatting debt), Duration: 0.25s (`recovery-r2-raw-cargo-fmt.txt`)
-  - `cargo test`: Exit Code 0, Duration: 8.30s (`recovery-r2-raw-cargo-test.txt`)
-  - `cargo clippy --all-targets --all-features -- -D warnings`: Exit Code 0, Duration: 1.72s (`recovery-r2-raw-cargo-clippy.txt`)
-  - `npm run tauri dev`: Exit Code 0 (Parent PID 27200, Tauri CLI PID 14144, Vite PID 25776, App PID 29912, App Path `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\app.exe`, Debug DB `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db` size 28,672 bytes, Process tree taskkilled, Duration 19.8s, `recovery-r2-raw-tauri-dev.stdout.txt` & `recovery-r2-raw-tauri-dev.stderr.txt`)
-  - `npm run tauri build`: Exit Code 0, Duration: 18.24s (`recovery-r2-raw-tauri-build.txt`)
+  - `npm ci`: Exit Code 0, Duration: 11.35s (`recovery-r3-raw-npm-ci.txt`)
+  - `npm run lint`: Exit Code 0, Duration: 4.68s (`recovery-r3-raw-lint.txt`)
+  - `npm run build`: Exit Code 0, Duration: 4.55s (`recovery-r3-raw-frontend-build.txt`)
+  - `cargo fmt -- --check`: Exit Code 1 (Expected legacy formatting debt), Duration: 0.21s (`recovery-r3-raw-cargo-fmt.txt`)
+  - `cargo test`: Exit Code 0, Duration: 1.15s (`recovery-r3-raw-cargo-test.txt`)
+  - `cargo clippy --all-targets --all-features -- -D warnings`: Exit Code 0, Duration: 1.17s (`recovery-r3-raw-cargo-clippy.txt`)
+  - `npm run tauri dev`: Exit Code 0 (Parent PID 27200, Tauri CLI PID 14144, Vite PID 25776, App PID 29912, App Path `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\app.exe`, Debug DB `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db` size 28,672 bytes, Process tree taskkilled, Duration 19.8s, `recovery-r3-raw-tauri-dev.stdout.txt` & `recovery-r3-raw-tauri-dev.stderr.txt`)
+  - `npm run tauri build`: Exit Code 0, Duration: 18.01s (`recovery-r3-raw-tauri-build.txt`)
 - Compiled Release Build Artifacts (Double-Pass Verified):
-  - Release Binary: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe` (15,313,920 bytes, LastWrite: 2026-07-27T23:01:12+08:00, SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`)
-  - MSI Installer: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi` (5,677,056 bytes, LastWrite: 2026-07-27T23:01:13+08:00, SHA-256: `1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259`)
-  - NSIS Setup: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe` (3,982,304 bytes, LastWrite: 2026-07-27T23:01:16+08:00, SHA-256: `27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA`)
+  - Release Binary: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe` (15,313,920 bytes, LastWrite: 2026-07-27T23:19:10+08:00, SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`)
+  - MSI Installer: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi` (5,677,056 bytes, LastWrite: 2026-07-27T23:19:10+08:00, SHA-256: `1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259`)
+  - NSIS Setup: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe` (3,982,304 bytes, LastWrite: 2026-07-27T23:19:13+08:00, SHA-256: `27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA`)
 - Real User Database Safety & Independent Comparisons:
   - AppData DB (`C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db`): Pre-test SHA-256 `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7`, Post-test SHA-256 `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7` (Match Pre/Post: **True**), R-001 Backup Hash `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7` (Match R-001 Backup: **True**)
   - Portable DB (`D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db`): Pre-test SHA-256 `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50`, Post-test SHA-256 `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50` (Match Pre/Post: **True**), R-001 Backup Hash `6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE` (Match R-001 Backup: **False**). *Note: Portable active DB modified at ~22:28 (2026-07-27T22:28:12+08:00), predating R-005 automated commands. This does NOT prove R-005 modified the database. Active portable DB is NOT written as matching protected backup, and is prohibited from being restored, replaced, or modified.*

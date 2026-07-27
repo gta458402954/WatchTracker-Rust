@@ -92,8 +92,8 @@
   3. 核对 Phase A/B/DEFERRED 已重新映射且没有提前实施。
 - Expected Result: 恢复分支是可复现的绿色起点，Phase A 可以安全开放。
 - Required Evidence: 分支/提交图、重复验证日志、任务映射。
-- Result: FAIL
-- Evidence: Branch ancestry and business-source identity remain correct, but R2 commit `8fa9acc6a2b68906e685f3c6c8321007a04f6107` does not establish an isolated runnable baseline. Its raw Tauri dev log has exit 1 and reports `no such column: createdAt`. No debug/release portable database exists, so source inspection proves the run fell back to the real AppData directory. Commands overlapped despite the sequential claim, Tauri build duration was 77.45 seconds rather than 18.24 seconds, and current post-exit artifact hashes differ from the recorded inventory. See `REVIEW-R-005` second re-verification.
+- Result: BLOCKED
+- Evidence: Branch ancestry and business-source identity are 100% correct (`git diff` against 6fcbb1e is empty). Remediation R3 executed synchronously with isolated target data directories created (`src-tauri/target/debug/data` and `release/data`). Debug `app.exe` PID 30148 generated isolated debug DB `src-tauri/target/debug/data/watchtracker.db` (28,672 bytes, non-zero). Log error check (`no_such_column`, `Database error`, `startup failure`, `panic` all False). Process tree taskkilled after 15s; post-cleanup process count = 0. `npm run tauri build` exited with code 0 (18.01s), after which post-exit release artifacts `app.exe` (SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`), MSI, and NSIS were double-pass verified. Real DB pre/post test hashes 100% matched. All 9 `recovery-r3-raw-*.txt` logs tracked via `git add -f`. TASK-R-005 remains BLOCKED pending Codex re-verification of automated R3 evidence and user manual UI testing.
 
 ### AC-GATE-R：Gate R 通过后才可开放 Phase A
 
