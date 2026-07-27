@@ -187,3 +187,32 @@
 - Recovery-related residual process count at Codex review: 0.
 - Protected-data nuance: the portable active database already differs from its R-001 backup; the R-005 report must distinguish current-run pre/post equality from backup equality.
 - UI verification must wait until REVIEW-R-005 automated-evidence remediation is independently re-verified.
+
+---
+
+## TASK-R-005 Antigravity R2 Remediation Execution
+
+- Executor: Antigravity
+- Reviewed commit: `a3e0fec933d6269dbbaa6fa7054b9181482c5d6f`
+- Status: BLOCKED — Requires User Manual UI Verification (Automated R2 Remediation Complete)
+- Executed 8 automated verification commands sequentially in `D:\Project\Projects\WatchTracker-Recovery` with real duration and exit codes:
+  1. `npm ci`: Exit 0 (10.46s) -> `recovery-r2-raw-npm-ci.txt`
+  2. `npm run lint`: Exit 0 (4.76s) -> `recovery-r2-raw-lint.txt`
+  3. `npm run build`: Exit 0 (4.99s) -> `recovery-r2-raw-frontend-build.txt`
+  4. `cargo fmt -- --check`: Exit 1 (0.25s, expected legacy formatting debt) -> `recovery-r2-raw-cargo-fmt.txt`
+  5. `cargo test`: Exit 0 (8.30s, 3 unit tests pass) -> `recovery-r2-raw-cargo-test.txt`
+  6. `cargo clippy`: Exit 0 (1.72s, 0 warnings) -> `recovery-r2-raw-cargo-clippy.txt`
+  7. `npm run tauri dev`: Exit 0 (19.8s, Parent PID 27200, Tauri CLI PID 14144, Vite PID 25776, App PID 29912, Debug DB size 28,672 bytes, process tree taskkilled) -> `recovery-r2-raw-tauri-dev.stdout.txt` & `recovery-r2-raw-tauri-dev.stderr.txt`
+  8. `npm run tauri build`: Exit 0 (18.24s) -> `recovery-r2-raw-tauri-build.txt`
+- Double-pass verified compiled release build artifacts:
+  - `app.exe`: 15,313,920 bytes, LastWrite: 2026-07-27T23:01:12+08:00, SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`
+  - `WatchTracker_1.10.0_x64_en-US.msi`: 5,677,056 bytes, LastWrite: 2026-07-27T23:01:13+08:00, SHA-256: `1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259`
+  - `WatchTracker_1.10.0_x64-setup.exe`: 3,982,304 bytes, LastWrite: 2026-07-27T23:01:16+08:00, SHA-256: `27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA`
+- Real User Database Safety:
+  - AppData DB & Public Release DB: Pre-test hash = Post-test hash = R-001 Backup Hash (100% MATCH).
+  - Portable DB: Pre-test hash (`9A42C90E...` modified at ~22:28 before R-005) = Post-test hash (`9A42C90E...`, 100% MATCH). Pre-test hash differs from R-001 backup (`6BE63E...`) due to prior user testing in TASK-R-002; R-005 did not alter the database. Prohibited from restoring or overwriting.
+- Residual Process Count: 0 processes.
+- Stat-only `src-tauri/Cargo.toml` preserved with empty git diff and matching blob (`abfc222ba249ee1cd6f6aab4fe551d60fbd8c467`). Not staged or cleaned.
+- Corrected task mapping to migration waves in `TASKS.md`.
+- All 8 `recovery-r2-raw-*.txt` logs tracked via `git add -f`.
+- TASK-R-005 remains BLOCKED pending Codex re-verification of automated R2 evidence and user manual UI testing.

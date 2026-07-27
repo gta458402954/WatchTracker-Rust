@@ -1,0 +1,442 @@
+===============================================================================
+Command: cargo fmt -- --check
+Workdir: D:\Project\Projects\WatchTracker-Recovery\src-tauri
+Start Time: 2026-07-27T23:00:19.7594944+08:00
+End Time: 2026-07-27T23:00:20.0137681+08:00
+Duration: 0.2542737 seconds
+Exit Code: 1
+===============================================================================
+RAW STDOUT / STDERR:
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:6:
+ fn get_derived_key() -> Result<Key<Aes256Gcm>, String> {
+     // 鑾峰彇鏈哄櫒鍞竴 ID
+     let uid = machine_uid::get().map_err(|e| format!("Failed to get machine UID: {}", e))?;
+[31m-    
+[0m[32m+
+[0m     // 浣跨敤 SHA-256 瀵?UID 鏁ｅ垪锛岀敓鎴?32 瀛楄妭鐨勫瘑閽?     let mut hasher = Sha256::new();
+     hasher.update(uid.as_bytes());
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:13:
+     // 涓轰簡澧炲姞澶嶆潅搴︼紝鍙互鍦ㄦ澶勬贩鍏ュ簲鐢ㄧ殑鍥哄畾 Salt
+     hasher.update(b"WatchTracker::Secure::Salt::2026");
+     let result = hasher.finalize();
+[31m-    
+[0m[32m+
+[0m     Ok(*Key::<Aes256Gcm>::from_slice(&result))
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:24:
+ 
+     let key = get_derived_key()?;
+     let cipher = Aes256Gcm::new(&key);
+[31m-    
+[0m[32m+
+[0m     // 鐢熸垚 12 瀛楄妭闅忔満 Nonce
+     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+[31m-    
+[0m[32m+
+[0m     // 鍔犲瘑
+     let ciphertext = cipher
+         .encrypt(&nonce, text.as_bytes())
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:34:
+         .map_err(|e| format!("Encryption failed: {:?}", e))?;
+[31m-        
+[0m[32m+
+[0m     // 缁勫悎 Nonce 鍜?Ciphertext
+     let mut payload = nonce.to_vec();
+     payload.extend_from_slice(&ciphertext);
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:39:
+[31m-    
+[0m[32m+
+[0m     let encoded = general_purpose::STANDARD.encode(&payload);
+     Ok(format!("machine_bound:v1:{}", encoded))
+ }
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:58:
+     let encoded = id
+         .strip_prefix("machine_bound:v1:")
+         .ok_or_else(|| "Unsupported credential format".to_string())?;
+[31m-        
+[0m[32m+
+[0m     let payload = general_purpose::STANDARD
+         .decode(encoded)
+         .map_err(|error| error.to_string())?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:65:
+[31m-        
+[0m[32m+
+[0m     if payload.len() < 12 {
+         return Err("Invalid payload length".to_string());
+     }
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:69:
+[31m-    
+[0m[32m+
+[0m     let (nonce_bytes, ciphertext) = payload.split_at(12);
+     let nonce = Nonce::from_slice(nonce_bytes);
+[31m-    
+[0m[32m+
+[0m     let key = get_derived_key()?;
+     let cipher = Aes256Gcm::new(&key);
+[31m-    
+[0m[32m+
+[0m     let decrypted_bytes = cipher
+         .decrypt(nonce, ciphertext)
+         .map_err(|_| "Decryption failed (machine mismatch or corrupted data)".to_string())?;
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\auth.rs:79:
+[31m-        
+[0m[32m+
+[0m     String::from_utf8(decrypted_bytes).map_err(|error| error.to_string())
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:6:
+ 
+ #[tauri::command]
+ pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate::error::AppError> {
+[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::get_all_records(&conn)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:13:
+ #[tauri::command]
+ pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), crate::error::AppError> {
+[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::insert_record(&conn, r)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:19:
+ #[tauri::command]
+[31m-pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Result<(), crate::error::AppError> {
+[0m[32m+pub fn update_record(
+[0m[32m+    state: State<DbState>,
+[0m[32m+    id: String,
+[0m[32m+    updates: Value,
+[0m[32m+) -> Result<(), crate::error::AppError> {
+[0m     log::info!("[Commands] update_record called for id: {}", id);
+[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m 
+[31m-    let obj = updates.as_object().ok_or_else(|| crate::error::AppError::General("Updates must be an object".to_string()))?;
+[0m[32m+    let obj = updates
+[0m[32m+        .as_object()
+[0m[32m+        .ok_or_else(|| crate::error::AppError::General("Updates must be an object".to_string()))?;
+[0m     if obj.is_empty() {
+         return Ok(());
+     }
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:28:
+ 
+     let allowed_columns = [
+[31m-        "originalName", "chineseName", "progress", "totalEpisodes", "status", "platform",
+[0m[31m-        "rating", "startDate", "endDate", "notes", "createdAt", "movieProgress",
+[0m[31m-        "movieDuration", "releaseYear", "posterPath", "updatedAt", "imdbId", "isLocked",
+[0m[31m-        "genres", "originCountry", "imdbRating", "tmdbStatus", "interestLevel",
+[0m[31m-        "episodeRuntime", "mediaType", "contentTags"
+[0m[32m+        "originalName",
+[0m[32m+        "chineseName",
+[0m[32m+        "progress",
+[0m[32m+        "totalEpisodes",
+[0m[32m+        "status",
+[0m[32m+        "platform",
+[0m[32m+        "rating",
+[0m[32m+        "startDate",
+[0m[32m+        "endDate",
+[0m[32m+        "notes",
+[0m[32m+        "createdAt",
+[0m[32m+        "movieProgress",
+[0m[32m+        "movieDuration",
+[0m[32m+        "releaseYear",
+[0m[32m+        "posterPath",
+[0m[32m+        "updatedAt",
+[0m[32m+        "imdbId",
+[0m[32m+        "isLocked",
+[0m[32m+        "genres",
+[0m[32m+        "originCountry",
+[0m[32m+        "imdbRating",
+[0m[32m+        "tmdbStatus",
+[0m[32m+        "interestLevel",
+[0m[32m+        "episodeRuntime",
+[0m[32m+        "mediaType",
+[0m[32m+        "contentTags",
+[0m     ];
+ 
+     let mut set_clauses = Vec::new();
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:42:
+             continue;
+         }
+         set_clauses.push(format!("{} = ?", k));
+[31m-        
+[0m[32m+
+[0m         let param = match v {
+             Value::Null => rusqlite::types::Value::Null,
+             Value::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:54:
+                 } else {
+                     rusqlite::types::Value::Null
+                 }
+[31m-            },
+[0m[32m+            }
+[0m             Value::String(s) => rusqlite::types::Value::Text(s.clone()),
+             _ => rusqlite::types::Value::Text(v.to_string()),
+         };
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:65:
+         return Ok(());
+     }
+ 
+[31m-    let sql = format!(
+[0m[31m-        "UPDATE records SET {} WHERE id = ?",
+[0m[31m-        set_clauses.join(", ")
+[0m[31m-    );
+[0m[32m+    let sql = format!("UPDATE records SET {} WHERE id = ?", set_clauses.join(", "));
+[0m 
+     params.push(rusqlite::types::Value::Text(id));
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:79:
+ 
+ #[tauri::command]
+ pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
+[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::delete_record(&conn, id)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:86:
+ #[tauri::command]
+[31m-pub fn replace_all_records(state: State<DbState>, records: Vec<WatchRecord>) -> Result<(), crate::error::AppError> {
+[0m[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+pub fn replace_all_records(
+[0m[32m+    state: State<DbState>,
+[0m[32m+    records: Vec<WatchRecord>,
+[0m[32m+) -> Result<(), crate::error::AppError> {
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::replace_all_records(&conn, records)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:92:
+ #[tauri::command]
+ pub fn vacuum_db(state: State<DbState>) -> Result<(), crate::error::AppError> {
+[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::vacuum_db(&conn)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:98:
+ #[tauri::command]
+[31m-pub fn get_setting(state: State<DbState>, key: String) -> Result<Option<String>, crate::error::AppError> {
+[0m[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+pub fn get_setting(
+[0m[32m+    state: State<DbState>,
+[0m[32m+    key: String,
+[0m[32m+) -> Result<Option<String>, crate::error::AppError> {
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::get_setting(&conn, key)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:104:
+ #[tauri::command]
+[31m-pub fn set_setting(state: State<DbState>, key: String, value: String) -> Result<(), crate::error::AppError> {
+[0m[31m-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m[32m+pub fn set_setting(
+[0m[32m+    state: State<DbState>,
+[0m[32m+    key: String,
+[0m[32m+    value: String,
+[0m[32m+) -> Result<(), crate::error::AppError> {
+[0m[32m+    let conn = state
+[0m[32m+        .conn
+[0m[32m+        .lock()
+[0m[32m+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+[0m     Ok(db::set_setting(&conn, key, value)?)
+ }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:110:
+ #[tauri::command]
+ pub fn encrypt(text: String, tag: Option<String>) -> Result<String, crate::error::AppError> {
+[31m-    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds")).map_err(crate::error::AppError::General)
+[0m[32m+    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds"))
+[0m[32m+        .map_err(crate::error::AppError::General)
+[0m }
+ 
+ #[tauri::command]
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:159:
+     path: String,
+     proxy: Option<String>,
+ ) -> Result<bool, crate::error::AppError> {
+[31m-    net::download_poster(&app, path, proxy).await.map_err(crate::error::AppError::General)
+[0m[32m+    net::download_poster(&app, path, proxy)
+[0m[32m+        .await
+[0m[32m+        .map_err(crate::error::AppError::General)
+[0m }
+ 
+ #[tauri::command]
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\commands.rs:172:
+     proxy: Option<String>,
+ ) -> Result<Value, crate::error::AppError> {
+     if !matches!(method.as_str(), "GET" | "PUT" | "MKCOL") {
+[31m-        return Err(crate::error::AppError::General("Unsupported WebDAV method".to_string()));
+[0m[32m+        return Err(crate::error::AppError::General(
+[0m[32m+            "Unsupported WebDAV method".to_string(),
+[0m[32m+        ));
+[0m     }
+     if !url.starts_with("http://") && !url.starts_with("https://") {
+[31m-        return Err(crate::error::AppError::General("Invalid WebDAV URL".to_string()));
+[0m[32m+        return Err(crate::error::AppError::General(
+[0m[32m+            "Invalid WebDAV URL".to_string(),
+[0m[32m+        ));
+[0m     }
+[31m-    net::webdav_request(&method, &url, &username, &password, body, proxy).await.map_err(crate::error::AppError::General)
+[0m[32m+    net::webdav_request(&method, &url, &username, &password, body, proxy)
+[0m[32m+        .await
+[0m[32m+        .map_err(crate::error::AppError::General)
+[0m }
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:90:
+                 for (name, col_type) in cols {
+                     let exists: bool = conn
+                         .query_row(
+[31m-                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+[0m[32m+                            &format!(
+[0m[32m+                                "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
+[0m[32m+                                name
+[0m[32m+                            ),
+[0m                             [],
+                             |row| row.get(0),
+                         )
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:97:
+                         .unwrap_or(false);
+                     if !exists {
+[31m-                        conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+[0m[32m+                        conn.execute(
+[0m[32m+                            &format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type),
+[0m[32m+                            [],
+[0m[32m+                        )?;
+[0m                     }
+                 }
+                 Ok(())
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:129:
+                     )
+                     .unwrap_or(false);
+                 if !exists {
+[31m-                    conn.execute("ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0", [])?;
+[0m[32m+                    conn.execute(
+[0m[32m+                        "ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0",
+[0m[32m+                        [],
+[0m[32m+                    )?;
+[0m                 }
+                 Ok(())
+             },
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:147:
+                 for (name, col_type) in cols {
+                     let exists: bool = conn
+                         .query_row(
+[31m-                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+[0m[32m+                            &format!(
+[0m[32m+                                "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
+[0m[32m+                                name
+[0m[32m+                            ),
+[0m                             [],
+                             |row| row.get(0),
+                         )
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:154:
+                         .unwrap_or(false);
+                     if !exists {
+[31m-                        conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+[0m[32m+                        conn.execute(
+[0m[32m+                            &format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type),
+[0m[32m+                            [],
+[0m[32m+                        )?;
+[0m                     }
+                 }
+                 Ok(())
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:185:
+         Migration {
+             version: 10,
+             up: |conn| {
+[31m-                conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", []).ok();
+[0m[31m-                conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", []).ok();
+[0m[32m+                conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", [])
+[0m[32m+                    .ok();
+[0m[32m+                conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", [])
+[0m[32m+                    .ok();
+[0m                 conn.execute("UPDATE records SET mediaType = CASE WHEN category IN ('鐢靛奖', '绾綍鐗?) THEN '鐢靛奖' WHEN category = '缁艰壓' THEN '缁艰壓' WHEN category = '鍔ㄧ敾' THEN '鍔ㄧ敾' ELSE '鍓ч泦' END WHERE mediaType IS NULL OR mediaType = ''", [])?;
+                 conn.execute("UPDATE records SET contentTags = CASE WHEN contentTags IS NULL OR contentTags = '' THEN CASE WHEN category = '绾綍鐗? THEN '绾綍鐗? ELSE '' END ELSE contentTags END", [])?;
+                 Ok(())
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:202:
+         Migration {
+             version: 12,
+             up: |conn| {
+[31m-                conn.execute("UPDATE records SET mediaType = '绾綍鐗? WHERE category = '绾綍鐗?", [])?;
+[0m[32m+                conn.execute(
+[0m[32m+                    "UPDATE records SET mediaType = '绾綍鐗? WHERE category = '绾綍鐗?",
+[0m[32m+                    [],
+[0m[32m+                )?;
+[0m                 Ok(())
+             },
+         },
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\db.rs:476:
+         let conn = Connection::open_in_memory().expect("open database");
+         setup_db(&conn).expect("migrate database");
+ 
+[31m-        let version: String =
+[0m[31m-            get_setting(&conn, "db_version".to_string()).unwrap().unwrap();
+[0m[32m+        let version: String = get_setting(&conn, "db_version".to_string())
+[0m[32m+            .unwrap()
+[0m[32m+            .unwrap();
+[0m         assert_eq!(version, "15");
+ 
+         let legacy_tables: i32 = conn
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\error.rs:5:
+ pub enum AppError {
+     #[error("Database error: {0}")]
+     DbError(#[from] rusqlite::Error),
+[31m-    
+[0m[32m+
+[0m     #[error("Network error: {0}")]
+     NetworkError(#[from] reqwest::Error),
+ 
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\lib.rs:97:
+                 let content = std::fs::read(&full_path).unwrap_or_default();
+                 let mime_type = infer::get(&content)
+                     .map(|t| t.mime_type())
+[31m-                    .unwrap_or_else(|| {
+[0m[31m-                        match full_path.extension().and_then(|e| e.to_str()) {
+[0m[31m-                            Some("png") | Some("PNG") => "image/png",
+[0m[31m-                            Some("webp") | Some("WEBP") => "image/webp",
+[0m[31m-                            Some("gif") | Some("GIF") => "image/gif",
+[0m[31m-                            _ => "image/jpeg",
+[0m[31m-                        }
+[0m[32m+                    .unwrap_or_else(|| match full_path.extension().and_then(|e| e.to_str()) {
+[0m[32m+                        Some("png") | Some("PNG") => "image/png",
+[0m[32m+                        Some("webp") | Some("WEBP") => "image/webp",
+[0m[32m+                        Some("gif") | Some("GIF") => "image/gif",
+[0m[32m+                        _ => "image/jpeg",
+[0m                     });
+ 
+                 tauri::http::Response::builder()
+Diff in \\?\D:\Project\Projects\WatchTracker-Recovery\src-tauri\src\models.rs:1:
+[31m-use serde::{Deserialize, Serialize};
+[0m[31m-use rusqlite::types::{FromSql, FromSqlResult, ValueRef, ToSqlOutput};
+[0m[32m+use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
+[0m use rusqlite::ToSql;
+[32m+use serde::{Deserialize, Serialize};
+[0m 
+ #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+ pub enum RecordStatus {
+

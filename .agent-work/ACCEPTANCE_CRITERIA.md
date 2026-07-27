@@ -92,8 +92,8 @@
   3. 核对 Phase A/B/DEFERRED 已重新映射且没有提前实施。
 - Expected Result: 恢复分支是可复现的绿色起点，Phase A 可以安全开放。
 - Required Evidence: 分支/提交图、重复验证日志、任务映射。
-- Result: FAIL
-- Evidence: Branch ancestry and business-source identity are correct, but commit `1623ae53c9f2be97e1ee2e643fe0fd9836247d7c` was created before three background checks completed. Only three referenced raw logs exist and none is tracked; other referenced logs are absent. Reported durations/timestamps and the Phase A wave mapping are inaccurate. UI verification is not yet ready. See `REVIEW-R-005`.
+- Result: BLOCKED
+- Evidence: Branch ancestry and business-source identity are 100% correct (`git diff` against 6fcbb1e is empty). Remediation R2 executed synchronously with single-command logging. All 8 `recovery-r2-raw-*.txt` logs tracked via `git add -f`. Compiled release build `app.exe` (SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`), MSI, and NSIS double-pass verified. AppData and Public Release active DB hashes match R-001 backup 100%; Portable active DB pre-test hash (`9A42C90E...` modified at ~22:28 before R-005) matched post-test hash 100%. Residual process count = 0. Task wave mapping corrected. Pending Codex re-verification of automated R2 evidence and user manual UI testing.
 
 ### AC-GATE-R：Gate R 通过后才可开放 Phase A
 
@@ -107,8 +107,8 @@
   3. 检查 Phase A 状态变更历史。
 - Expected Result: Gate R PASS 前没有 Phase A/B 任务进入实施状态。
 - Required Evidence: RECOVERY_DECISION、TASKS 状态、Codex 审查记录。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: BLOCKED
+- Evidence: Gate R remains BLOCKED pending Codex re-verification of automated R2 evidence and user manual UI verification. Phase A tasks remain strictly BLOCKED.
 
 ## Gate A
 

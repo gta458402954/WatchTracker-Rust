@@ -1,0 +1,21 @@
+===============================================================================
+Command: npm run tauri dev (STDERR)
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:00:35.3598688+08:00
+End Time: 2026-07-27T23:00:52.1001309+08:00
+Duration: 16.7402621 seconds
+Exit Code: 1 (Terminated via taskkill /T /F)
+Parent PID: 27200 | Tauri CLI PID: 14144 | Vite PID: 25776 | Cargo PID: None | App PID: 29912
+App Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\app.exe
+Debug DB Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db (Size: 0 bytes)
+===============================================================================
+RAW STDERR:
+     Running BeforeDevCommand (`npm run dev`)
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching D:\Project\Projects\WatchTracker-Recovery\src-tauri for changes...
+[1m[92m   Compiling[0m app v1.10.0 (D:\Project\Projects\WatchTracker-Recovery\src-tauri)
+[1m[96m    Building[0m [=======================> ] 454/455: app(bin)                                                            [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 2.60s
+[1m[92m     Running[0m `target\debug\app.exe`
+[2m23:00:42[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [2m[console.error] [22m[App] 鍔犺浇鏁版嵁澶辫触: Database error: no such column: createdAt in SELECT * FROM records ORDER BY createdAt DESC at offset 31
+[2m23:00:42[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [2m[console.error] [22m[App] 鍔犺浇鏁版嵁澶辫触: Database error: no such column: createdAt in SELECT * FROM records ORDER BY createdAt DESC at offset 31
+
