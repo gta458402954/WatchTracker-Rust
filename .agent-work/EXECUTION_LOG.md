@@ -305,3 +305,19 @@
 - Release isolated database: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data\watchtracker.db`; 28,672 bytes; SHA-256 `13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9`.
 - Read-only final hashes: AppData `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7`; portable `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50`; public release `D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE`. All match their pre-UI references; no disk-content change was detected.
 - Final status: TASK-R-005 ACCEPTED; REVIEW-R-005 CLOSED; AC-R-005 PASS; AC-GATE-R PASS; TASK-A-001 READY.
+
+---
+
+## TASK-A-001 Antigravity Execution
+
+- Executor: Antigravity
+- BASE commit: `11e5492bfcba584ff29d24ee7bfc857d789f7920`
+- Recovery Branch: `codex/rebuild-from-stable`
+- Worktree Verification: Recorded in `.agent-work/evidence/logs/TASK-A-001-worktree.txt` (HEAD matches BASE, 0 business code diffs against 6fcbb1e).
+- Environment Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-environment.txt` (Node `v24.18.0`, npm `11.16.0`, rustc/cargo `1.97.1`, git `2.55.0.windows.3`).
+- Migration Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-migration-audit.txt` (9 items audited: Test Framework -> REDO, Atomic Transactions -> REDO, Schema Columns -> REDO, Zustand Store -> DEFER/REDO, UI Components -> SELECTIVE_PORT, Typed Error -> SELECTIVE_PORT, WebDAV Sync -> DEFER/REDO, Path/Delivery -> REDO, Region -> DISCARD for Phase A).
+- Data Safety Strategy: Recorded in `.agent-work/evidence/tests/TASK-A-001-data-safety.txt` (Real databases cited without reading/modifying; temporary test root created at `D:\Project\Projects\WatchTracker-TestData\TASK-A-001`).
+- Failure & Quality Gate Matrix: Recorded in `.agent-work/evidence/tests/TASK-A-001-failure-matrix.txt` (Cargo fmt exit code 1 cited as known historical debt; no commands executed).
+- Process Audit: 0 WatchTracker/Recovery processes running.
+- Code Modification: 0 business source code changes made.
+- Status: IMPLEMENTED (Awaiting Codex verification).
