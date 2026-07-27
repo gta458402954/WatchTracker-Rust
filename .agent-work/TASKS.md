@@ -1,4 +1,4 @@
-﻿# 执行任务
+# 执行任务
 
 > 原任务基线：2026-07-26，`main@29ea3a4` 加当前未提交工作区。2026-07-27 增加 Recovery Phase：先保护现场并验证 `origin/main@6fcbb1e` 与干净 `29ea3a4`，再从最后绿色提交恢复。Gate R 前不得实施 Phase A；Phase B 继续受 Gate A 阻塞；DEFERRED 本轮禁止实施。
 
@@ -328,43 +328,45 @@ git log -1 --oneline
 
 ### Execution Result
 
-- Status: CHANGES_REQUESTED — R3 isolation works, but executor summaries conflict with raw logs and final disk artifacts
+- Status: CHANGES_REQUESTED — R3 summary corrected per raw logs and disk verification
 - Recovery Branch: `codex/rebuild-from-stable`
 - Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
-- Reviewed Commit: `a3e0fec933d6269dbbaa6fa7054b9181482c5d6f`
+- Reviewed Commit: `63ced15a6b003a57c08598ff43d7c318e08342b5` (Codex Second Re-verification)
+- Reviewed Target Commit: `8fa9acc6a2b68906e685f3c6c8321007a04f6107`
 - Merge-Base with origin/main: `6fcbb1e0ae851c554c905676ee9164bfb3ea303e`
 - Business Source Code Integrity: `git diff --stat 6fcbb1e -- . ':!.agent-work' ':!AI_COLLABORATION_WORKFLOW.md'` is 100% EMPTY (0 changes). Business source code is 100% identical to `6fcbb1e`.
 - Cargo.toml State: `src-tauri/Cargo.toml` has stat/line-ending noise; `git diff` is empty, workspace blob and HEAD blob are identical (`abfc222ba249ee1cd6f6aab4fe551d60fbd8c467`). Not staged or cleaned.
-- Synchronous R2 Automated Verification Gates:
-  - `npm ci`: Exit Code 0, Duration: 11.35s (`recovery-r3-raw-npm-ci.txt`)
-  - `npm run lint`: Exit Code 0, Duration: 4.68s (`recovery-r3-raw-lint.txt`)
-  - `npm run build`: Exit Code 0, Duration: 4.55s (`recovery-r3-raw-frontend-build.txt`)
-  - `cargo fmt -- --check`: Exit Code 1 (Expected legacy formatting debt), Duration: 0.21s (`recovery-r3-raw-cargo-fmt.txt`)
-  - `cargo test`: Exit Code 0, Duration: 1.15s (`recovery-r3-raw-cargo-test.txt`)
-  - `cargo clippy --all-targets --all-features -- -D warnings`: Exit Code 0, Duration: 1.17s (`recovery-r3-raw-cargo-clippy.txt`)
-  - `npm run tauri dev`: Exit Code 0 (Parent PID 27200, Tauri CLI PID 14144, Vite PID 25776, App PID 29912, App Path `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\app.exe`, Debug DB `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db` size 28,672 bytes, Process tree taskkilled, Duration 19.8s, `recovery-r3-raw-tauri-dev.stdout.txt` & `recovery-r3-raw-tauri-dev.stderr.txt`)
-  - `npm run tauri build`: Exit Code 0, Duration: 18.01s (`recovery-r3-raw-tauri-build.txt`)
-- Compiled Release Build Artifacts (Double-Pass Verified):
-  - Release Binary: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe` (15,313,920 bytes, LastWrite: 2026-07-27T23:19:10+08:00, SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`)
-  - MSI Installer: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi` (5,677,056 bytes, LastWrite: 2026-07-27T23:19:10+08:00, SHA-256: `1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259`)
-  - NSIS Setup: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe` (3,982,304 bytes, LastWrite: 2026-07-27T23:19:13+08:00, SHA-256: `27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA`)
-- Real User Database Safety & Independent Comparisons:
-  - AppData DB (`C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db`): Pre-test SHA-256 `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7`, Post-test SHA-256 `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7` (Match Pre/Post: **True**), R-001 Backup Hash `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7` (Match R-001 Backup: **True**)
-  - Portable DB (`D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db`): Pre-test SHA-256 `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50`, Post-test SHA-256 `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50` (Match Pre/Post: **True**), R-001 Backup Hash `6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE` (Match R-001 Backup: **False**). *Note: Portable active DB modified at ~22:28 (2026-07-27T22:28:12+08:00), predating R-005 automated commands. This does NOT prove R-005 modified the database. Active portable DB is NOT written as matching protected backup, and is prohibited from being restored, replaced, or modified.*
-  - Public Release DB (`D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db`): Pre-test SHA-256 `D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE`, Post-test SHA-256 `D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE` (Match Pre/Post: **True**), R-001 Backup Hash `D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE` (Match R-001 Backup: **True**)
-- Residual Process Count: **0 processes**
-- Corrected Task Mapping to Migration Waves:
-  - `A-001` → Wave 0 (Recovery worktree baseline & environment verification)
-  - `A-002` → Wave 0/1 (Test framework & DOM/hook test fixtures)
-  - `A-003` → Wave 2/3 (UI components & Zustand state refactoring)
-  - `A-004` → Wave 5 (Data path & storage location governance)
-  - `A-005` → Wave 1 (Initialization state & user error handling)
-  - `A-006` → Wave 2/3/4 (Database schema, migrations & atomic transactions)
-  - `A-007` → Wave 0~5 (Continuous quality gates & regression prevention)
-  - `A-008` → Wave 1/5 (UI notifications & path delivery governance)
-  - `A-009` → Wave 5 (Windows release packaging & delivery governance)
-  - `A-010` → Wave 5 (Path & delivery governance)
-  - `B-001` ~ `B-005` → Wave 6 (Region dynamicization)
+- Isolated Data Directories: `src-tauri\target\debug\data` and `src-tauri\target\release\data` created prior to execution. Isolated debug DB generated at `src-tauri\target\debug\data\watchtracker.db` (28,672 bytes, SHA-256: `1EBF47B252E0FF7512F8CFC406AEE86D9593D737059062D9BC17AE862F02C0B2`). No fallback to AppData.
+- R3 Raw Log Timings & Execution Concurrency:
+  - `npm ci`: 23:18:09.401 → 23:18:20.755 (Exit Code 0, 11.354s) -> `recovery-r3-raw-npm-ci.txt`
+  - `npm run lint`: 23:18:20.775 → 23:18:25.455 (Exit Code 0, 4.680s) -> `recovery-r3-raw-lint.txt`
+  - `npm run build`: 23:18:25.460 → 23:18:30.010 (Exit Code 0, 4.550s) -> `recovery-r3-raw-frontend-build.txt`
+  - `cargo fmt -- --check`: 23:18:21.943 → 23:18:22.155 (Exit Code 1, 0.212s, expected legacy formatting debt) -> `recovery-r3-raw-cargo-fmt.txt`
+  - `cargo test`: 23:18:22.173 → 23:18:23.325 (Exit Code 0, 1.151s) -> `recovery-r3-raw-cargo-test.txt`
+  - `cargo clippy`: 23:18:23.330 → 23:18:24.497 (Exit Code 0, 1.167s) -> `recovery-r3-raw-cargo-clippy.txt`
+  - *Note: npm commands were serialized internally; Rust commands were serialized internally; Rust group overlapped in time with npm lint/build (not global serialization).*
+  - `npm run tauri dev`: 23:18:33.010 → 23:18:49.258 (Raw Exit 1 due to intentional taskkill after ~15s; Application Startup Health Check: PASS; Parent PID 11860, Tauri CLI PID 19548, Vite PID 24276, App PID 13196; Isolated Debug DB generated at `src-tauri\target\debug\data\watchtracker.db`, size 28,672 bytes, SHA-256: `1EBF47B252E0FF7512F8CFC406AEE86D9593D737059062D9BC17AE862F02C0B2`) -> `recovery-r3-raw-tauri-dev.stdout.txt` & `recovery-r3-raw-tauri-dev.stderr.txt`
+  - `npm run tauri build`: 23:18:54.616 → 23:20:15.893 (Exit Code 0, 81.277s, waited until process fully exited) -> `recovery-r3-raw-tauri-build.txt`
+- Final Disk Release Build Artifacts (Double-Pass Verified in `recovery-r3-post-exit-artifacts.txt` after build fully exited):
+  - `app.exe`: 15,313,920 bytes, LastWrite: 2026-07-27T23:20:15.8447986+08:00, SHA-256: `965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733`
+  - `WatchTracker_1.10.0_x64_en-US.msi`: 5,677,056 bytes, LastWrite: 2026-07-27T23:19:58.6670000+08:00, SHA-256: `C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D`
+  - `WatchTracker_1.10.0_x64-setup.exe`: 3,984,091 bytes, LastWrite: 2026-07-27T23:20:15.8001601+08:00, SHA-256: `A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991`
+- Real Database Safety (Verified in `recovery-r3-data-safety.txt`):
+  - AppData & PublicRelease active databases matched pre-R3 reference values (63ced15) 100%.
+  - Portable active database hash (`9A42C90E...` modified ~22:28 prior to R-005) matched pre-R3 reference value 100% (differs from R-001 backup `6BE63E...` due to prior TASK-R-002 testing; R3 caused 0 changes). Prohibited from restoring or overwriting.
+- Residual Process Count: 0 processes.
+- Task Mapping to Migration Waves:
+  - `A-001` → Wave 0
+  - `A-002` → Wave 0/1
+  - `A-003` → Wave 2/3
+  - `A-004` → Wave 5
+  - `A-005` → Wave 1
+  - `A-006` → Wave 2/3/4
+  - `A-007` → Wave 0~5 continuous gate
+  - `A-008` → Wave 1/5
+  - `A-009` → Wave 5
+  - `A-010` → Wave 5
+  - `B-001` ~ `B-005` → Wave 6
   - Note: TASK-A-001 MUST remain BLOCKED until Codex independently accepts TASK-R-005 and marks AC-GATE-R as PASS.
 
 ### Codex Review

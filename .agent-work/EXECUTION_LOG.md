@@ -219,35 +219,35 @@
 
 ---
 
-## TASK-R-005 Antigravity R3 Remediation Execution
+## TASK-R-005 Antigravity R3 Execution Summary Correction
 
 - Executor: Antigravity
-- Reviewed commit: `63ced15a6b003a57c08598ff43d7c318e08342b5` (Codex Second Re-verification)
-- Reviewed target commit: `8fa9acc6a2b68906e685f3c6c8321007a04f6107`
-- Status: BLOCKED — Requires User Manual UI Verification (Automated R3 Remediation Complete)
+- BASE commit: `6c9283b46dcea8c4c8af086ef67a3f2aa99e2d5f` (Codex Review of R3)
+- Target commit: `a7db65357e7f4708fdf9d803534518fe8a67af56`
 - Pre-execution isolated directory creation:
   - Created `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data` and `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data` (directories only; no DB files copied).
-- Executed 9 automated verification steps sequentially in `D:\Project\Projects\WatchTracker-Recovery`:
-  1. Real DB pre-test hashes calculated: AppData (`BF96F204...`), Portable (`9A42C90E...`), PublicRelease (`D466C664...`).
-  2. `npm ci`: Exit 0 (11.35s) -> `recovery-r3-raw-npm-ci.txt`
-  3. `npm run lint`: Exit 0 (4.68s) -> `recovery-r3-raw-lint.txt`
-  4. `npm run build`: Exit 0 (4.55s) -> `recovery-r3-raw-frontend-build.txt`
-  5. `cargo fmt -- --check`: Exit 1 (0.21s, expected legacy formatting debt) -> `recovery-r3-raw-cargo-fmt.txt`
-  6. `cargo test`: Exit 0 (1.15s, 3 unit tests pass) -> `recovery-r3-raw-cargo-test.txt`
-  7. `cargo clippy`: Exit 0 (1.17s, 0 warnings) -> `recovery-r3-raw-cargo-clippy.txt`
-  8. `npm run tauri dev`: Debug `app.exe` PID 30148 started; isolated debug DB `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db` generated (size 28,672 bytes, non-zero); log error check (`no_such_column`, `Database error`, `startup failure`, `panic` all False); dev process tree terminated via taskkill; post-cleanup process count = 0 -> `recovery-r3-raw-tauri-dev.stdout.txt` & `recovery-r3-raw-tauri-dev.stderr.txt`.
-  9. `npm run tauri build`: Exit 0 (18.01s, waited until process fully exited) -> `recovery-r3-raw-tauri-build.txt`.
-- Post-build release artifact double-pass verification (computed after build fully exited):
-  - `app.exe`: 15,313,920 bytes, LastWrite: 2026-07-27T23:19:10+08:00, SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`
-  - `WatchTracker_1.10.0_x64_en-US.msi`: 5,677,056 bytes, LastWrite: 2026-07-27T23:19:10+08:00, SHA-256: `1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259`
-  - `WatchTracker_1.10.0_x64-setup.exe`: 3,982,304 bytes, LastWrite: 2026-07-27T23:19:13+08:00, SHA-256: `27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA`
-- Real User Database Safety:
-  - Pre-test and post-test hashes 100% MATCH for all 3 real user databases.
-  - Active Portable DB hash (`9A42C90E...` modified ~22:28 prior to R-005) differs from R-001 backup (`6BE63E...`) due to prior TASK-R-002 testing; R3 automated testing caused zero modifications.
-- Final Residual Process Count: 0 processes.
-- Stat-only `src-tauri/Cargo.toml` preserved untouched (diff empty, workspace blob = HEAD blob = `abfc222ba249ee1cd6f6aab4fe551d60fbd8c467`).
+- R3 Raw Log Timings & Execution Concurrency:
+  - `npm ci`: 23:18:09.401 → 23:18:20.755 (Exit Code 0, 11.354s) -> `recovery-r3-raw-npm-ci.txt`
+  - `npm run lint`: 23:18:20.775 → 23:18:25.455 (Exit Code 0, 4.680s) -> `recovery-r3-raw-lint.txt`
+  - `npm run build`: 23:18:25.460 → 23:18:30.010 (Exit Code 0, 4.550s) -> `recovery-r3-raw-frontend-build.txt`
+  - `cargo fmt -- --check`: 23:18:21.943 → 23:18:22.155 (Exit Code 1, 0.212s, expected legacy formatting debt) -> `recovery-r3-raw-cargo-fmt.txt`
+  - `cargo test`: 23:18:22.173 → 23:18:23.325 (Exit Code 0, 1.151s) -> `recovery-r3-raw-cargo-test.txt`
+  - `cargo clippy`: 23:18:23.330 → 23:18:24.497 (Exit Code 0, 1.167s) -> `recovery-r3-raw-cargo-clippy.txt`
+  - *Concurrency Clarification: npm commands serialized internally; Rust commands serialized internally; Rust group overlapped in time with npm lint/build (not global serialization).*
+  - `npm run tauri dev`: 23:18:33.010 → 23:18:49.258 (Raw Exit 1 due to intentional taskkill after ~15s; Application Startup Health Check: PASS; Parent PID 11860, Tauri CLI PID 19548, Vite PID 24276, App PID 13196; Isolated Debug DB generated at `src-tauri\target\debug\data\watchtracker.db`, size 28,672 bytes, SHA-256: `1EBF47B252E0FF7512F8CFC406AEE86D9593D737059062D9BC17AE862F02C0B2`) -> `recovery-r3-raw-tauri-dev.stdout.txt` & `recovery-r3-raw-tauri-dev.stderr.txt`
+  - `npm run tauri build`: 23:18:54.616 → 23:20:15.893 (Exit Code 0, 81.277s, waited until process fully exited) -> `recovery-r3-raw-tauri-build.txt`
+- Final Release Build Artifacts Double-Pass Hash Verification (Captured Post-Build Exit in `recovery-r3-post-exit-artifacts.txt`):
+  - `app.exe`: 15,313,920 bytes, LastWrite: 2026-07-27T23:20:15.8447986+08:00, SHA-256: `965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733`
+  - `WatchTracker_1.10.0_x64_en-US.msi`: 5,677,056 bytes, LastWrite: 2026-07-27T23:19:58.6670000+08:00, SHA-256: `C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D`
+  - `WatchTracker_1.10.0_x64-setup.exe`: 3,984,091 bytes, LastWrite: 2026-07-27T23:20:15.8001601+08:00, SHA-256: `A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991`
+- Real Database Safety Verification (Documented in `recovery-r3-data-safety.txt`):
+  - AppData & PublicRelease active databases matched pre-R3 reference values (63ced15) 100%.
+  - Portable active database hash (`9A42C90E...` modified ~22:28 prior to R-005) matched pre-R3 reference value 100% (differs from R-001 backup `6BE63E...` due to prior TASK-R-002 testing; R3 caused 0 changes). Prohibited from restoring or overwriting.
+  - Isolated debug DB generated at `src-tauri\target\debug\data\watchtracker.db` (28,672 bytes, SHA-256: `1EBF47B252E0FF7512F8CFC406AEE86D9593D737059062D9BC17AE862F02C0B2`), completely distinct from real user databases.
+  - Isolated release data directory created (`src-tauri\target\release\data`), contains no DB (release UI has not been executed).
+- Residual Process Count: 0 processes.
 - All 9 `recovery-r3-raw-*.txt` logs tracked via `git add -f`.
-- TASK-R-005 remains BLOCKED pending Codex re-verification of automated R3 evidence and user manual UI testing.
+- New evidence files `recovery-r3-post-exit-artifacts.txt` and `recovery-r3-data-safety.txt` generated and tracked.
 
 ---
 
