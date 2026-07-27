@@ -357,3 +357,18 @@
 - Failure matrix and dual-BASE labelling: PASS.
 - Final status: TASK-A-001 ACCEPTED; REVIEW-A-001 CLOSED; AC-A-001 PASS.
 - Next control: TASK-A-002 remains unopened until independent TASK-G-001 governance tooling and red-team verification are complete.
+
+---
+
+## TASK-G-001 Governance Tooling
+
+- Owner/Reviewer: Codex
+- Branch: `codex/governance-tools`
+- Worktree: `D:\Project\Projects\WatchTracker-Governance`
+- BASE: `912c6307ad1cb46875f7c158a91fb6a1a16c3c8a`
+- Components: immutable task contract + JSON Schema, repository identity, ownership policy, task Runner, evidence manifest, precommit scope checker, Safe Commit, pre-commit hook and attestation verifier.
+- Red-team iteration 1: 6/10; exposed Git stderr path pollution and CRLF/LF protected-region false positives; implementation was corrected rather than weakening expected results.
+- Hook iteration: 10/11; established that Git maps hook exit 20 to commit exit 1 while retaining the explicit `SAFE_COMMIT_REQUIRED` marker; test expectation corrected to Git's actual behavior.
+- Final red-team result: 11/11 PASS in an isolated temporary repository.
+- Safety boundary: no application business source, configuration, dependency, test fixture or database changed. Temporary fixtures were verified under the system temp root and removed after each run.
+- Status: TASK-G-001 ACCEPTED. TASK-A-002 remains unopened pending issuance of its Codex-owned contract.

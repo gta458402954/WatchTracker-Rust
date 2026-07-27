@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "TASK-G-001",
+  "sessions": [
+    {
+      "session_id": "21f57fd8-6ac9-4eb8-bdf5-166f530e3958",
+      "contract_sha256": "6679DB5CB33F05612080029A3AA90A7113E69CC9E161C224A2DA9989EAC3DCF3",
+      "disposition": "OBSOLETE_CONTRACT",
+      "reason": "The contract and checker were subsequently strengthened with executor_summary_files; retained because recursive deletion was refused by local safety policy."
+    },
+    {
+      "session_id": "ab1d1071-d19e-4e4a-be2b-93df0235c192",
+      "contract_sha256": "8D499EA361510CA576861944FD0A62C28120FFACA1EB386FC48B7CDD87ADE312",
+      "disposition": "OBSOLETE_CONTRACT",
+      "reason": "Generated before Codex corrected the TASK-G-001 self-bootstrap file-count budget from 20 to 40."
+    },
+    {
+      "session_id": "8a6781e0-768b-44ca-9cd4-a3bb06a7f109",
+      "contract_sha256": "3A230DCE99CFB205535528E14FE5FD214A4D0EC813BB92737A59B659BCC28B7B",
+      "disposition": "OBSOLETE_CONTRACT",
+      "reason": "Generated before the Safe Commit failure-path rollback fix and final 3500-line governance budget."
+    },
+    {
+      "session_id": "e4a865f2-207b-4b17-8e0b-e62dec21bc68",
+      "contract_sha256": "0DF74F0F1933A1EA9B228DC5599292CFA9CED54FCDDEEEA7DAD9C8789AFC985D",
+      "disposition": "ACCEPTED_CONTRACT",
+      "reason": "Generated after final schema, checker, Safe Commit rollback fix, 11/11 red-team pass and explicit governance bootstrap budgets."
+    }
+  ]
+}

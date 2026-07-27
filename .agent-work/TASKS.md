@@ -395,6 +395,44 @@ git log -1 --oneline
 
 ## Phase A：恢复运行和建立稳定基线
 
+## TASK-G-001：建立 AI 执行合同、证据与安全提交闭环
+
+- Phase: Governance
+- Owner: Codex
+- Status: ACCEPTED
+- Priority: P0 / Critical
+- Dependencies: TASK-A-001
+- Expected Files:
+  - `.agent-work/OWNERSHIP.md`
+  - `.agent-work/REPOSITORY_ID`
+  - `.agent-work/tasks/TASK-G-001.json`
+  - `.agent-work/schemas/task-contract.schema.json`
+  - `.agent-work/tools/*.ps1`
+  - `.githooks/pre-commit`
+  - `.agent-work/tests/governance/RED_TEAM_TESTS.ps1`
+  - `.agent-work/evidence/governance/*`
+
+### Objective
+
+在 TASK-A-002 前建立机器可读授权、逐步骤事实记录、所有权/范围检查、证据 Hash、Safe Commit、hook 与 attestation，并在一次性临时 Git 仓库验证拒绝路径。
+
+### Execution Result
+
+- Contract/Schema: PASS; contract is Codex-owned and binds repository UUID, worktree, branch, BASE, remote, workspace policy, staged policy, budget, steps and evidence policy.
+- Runner: PASS; records raw stdout/stderr, UTC plus task-session monotonic offsets, four command result classes, process identity and pre/post Git/process/environment snapshots.
+- Scope/Ownership: PASS; rejects forbidden/unattributed/ignored files, protected files/regions, contract mutation, encoding changes, evidence hash mismatch, budget overflow and incomplete staged sets.
+- Safe Commit: PASS; refuses non-empty initial index, stages only contract-authorized paths, runs checker before commit and through hook, writes trailers and an external receipt, and verifies committed file equality.
+- Red Team: PASS; 11/11 isolated fixture scenarios passed, including direct commit rejection and `--no-verify` attestation rejection.
+- Limitation: same-account tooling is an engineering guardrail, not a malicious same-privilege security boundary.
+- TASK-A-002 remains unopened until Codex issues its immutable task contract from the accepted governance tooling.
+
+### Codex Review
+
+<!-- BEGIN OWNER:CODEX TASK-G-001 REVIEW -->
+- Result: ACCEPTED after schema validation, PowerShell parser validation, two corrective red-team iterations and final 11/11 isolated red-team pass.
+- Business/source/data scope: no application source, configuration, dependency, test fixture or database was modified.
+<!-- END OWNER:CODEX TASK-G-001 REVIEW -->
+
 ## TASK-A-001：建立安全基线并复现当前状态
 
 - Phase: A

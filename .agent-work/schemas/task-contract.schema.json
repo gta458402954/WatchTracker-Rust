@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://watchtracker.local/schemas/task-contract.schema.json",
+  "title": "WatchTracker AI Task Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "contract_id", "task_id", "owner", "repository",
+    "workspace_policy", "commit_policy", "change_budget", "steps",
+    "evidence", "forbidden_phrases"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "contract_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "pattern": "^TASK-[A-Z]+-[0-9]{3}([a-z])?$" },
+    "owner": { "const": "CODEX" },
+    "supersedes": { "type": ["string", "null"] },
+    "previous_contract_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_id", "expected_root_name", "expected_worktree", "expected_remote", "expected_branch", "expected_base", "allow_detached_head"],
+      "properties": {
+        "repository_id": { "type": "string", "format": "uuid" },
+        "expected_root_name": { "type": "string" },
+        "expected_worktree": { "type": "string" },
+        "expected_remote": { "type": "string" },
+        "expected_branch": { "type": "string" },
+        "expected_base": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+        "allow_detached_head": { "type": "boolean" }
+      }
+    },
+    "workspace_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_modified_files", "allowed_generated_paths", "forbidden_modified_files", "monitored_roots"],
+      "properties": {
+        "allowed_modified_files": { "$ref": "#/$defs/stringArray" },
+        "allowed_generated_paths": { "$ref": "#/$defs/stringArray" },
+        "forbidden_modified_files": { "$ref": "#/$defs/stringArray" },
+        "monitored_roots": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "commit_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_staged_files", "required_staged_files", "forbidden_staged_files", "protected_files", "protected_regions", "executor_summary_files"],
+      "properties": {
+        "allowed_staged_files": { "$ref": "#/$defs/stringArray" },
+        "required_staged_files": { "$ref": "#/$defs/stringArray" },
+        "forbidden_staged_files": { "$ref": "#/$defs/stringArray" },
+        "protected_files": { "$ref": "#/$defs/stringArray" },
+        "executor_summary_files": { "$ref": "#/$defs/stringArray" },
+        "protected_regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "begin_marker", "end_marker"],
+            "properties": {
+              "path": { "type": "string" },
+              "begin_marker": { "type": "string" },
+              "end_marker": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "change_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_files", "max_insertions", "max_deletions", "max_binary_changes", "forbid_file_rewrite", "preserve_encoding", "preserve_line_endings"],
+      "properties": {
+        "max_files": { "type": "integer", "minimum": 0 },
+        "max_insertions": { "type": "integer", "minimum": 0 },
+        "max_deletions": { "type": "integer", "minimum": 0 },
+        "max_binary_changes": { "type": "integer", "minimum": 0 },
+        "forbid_file_rewrite": { "type": "boolean" },
+        "preserve_encoding": { "type": "boolean" },
+        "preserve_line_endings": { "type": "boolean" }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "executable", "arguments", "cwd", "timeout_seconds", "on_nonzero", "requires", "observation_seconds"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "executable": { "type": "string" },
+          "arguments": { "$ref": "#/$defs/stringArray" },
+          "cwd": { "type": "string" },
+          "timeout_seconds": { "type": "integer", "minimum": 1 },
+          "on_nonzero": { "enum": ["STOP", "CONTINUE_DIAGNOSTICS"] },
+          "requires": { "$ref": "#/$defs/stringArray" },
+          "observation_seconds": { "type": "integer", "minimum": 0 },
+          "health_stdout_regex": { "type": ["string", "null"] },
+          "waiver_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "environment_allowlist"],
+      "properties": {
+        "root": { "type": "string" },
+        "environment_allowlist": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "forbidden_phrases": { "$ref": "#/$defs/stringArray" },
+    "waivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["waiver_id", "command_step", "expected_exit_codes", "gate_effect", "continue_for_diagnostics", "baseline_commit", "baseline_evidence_sha256", "expires_after_task"],
+        "properties": {
+          "waiver_id": { "type": "string" },
+          "command_step": { "type": "string" },
+          "expected_exit_codes": { "type": "array", "items": { "type": "integer" } },
+          "gate_effect": { "const": "FAIL" },
+          "continue_for_diagnostics": { "type": "boolean" },
+          "baseline_commit": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+          "baseline_evidence_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "expires_after_task": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    }
+  }
+}

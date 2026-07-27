@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "session_id": "ab1d1071-d19e-4e4a-be2b-93df0235c192",
+  "task_id": "TASK-G-001",
+  "contract_sha256": "8D499EA361510CA576861944FD0A62C28120FFACA1EB386FC48B7CDD87ADE312",
+  "session_started_at_utc": "2026-07-27T16:27:23.4952809Z",
+  "session_ended_at_utc": "2026-07-27T16:27:24.9256415Z",
+  "duration_ms_monotonic": 1428,
+  "steps": []
+}
