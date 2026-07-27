@@ -1,8 +1,8 @@
 ===============================================================================
-TASK-A-001 ORIGINAL FAILURE & QUALITY GATE MATRIX (REVISED)
+TASK-A-001 ORIGINAL FAILURE & QUALITY GATE MATRIX (FINAL REVISED)
 Execution Workdir: D:\Project\Projects\WatchTracker-Recovery
 Baseline Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
-Matrix Date: 2026-07-27T23:56:32.2357515+08:00
+Matrix Date: 2026-07-28T00:02:46.1818281+08:00
 ===============================================================================
 NOTE: This matrix is established strictly from accepted Gate R evidence files.
 No commands (npm, cargo, tauri, playwright) were re-executed during TASK-A-001.
@@ -58,14 +58,14 @@ GATE 6: RUST LINTING & CLIPPY (cargo clippy --all-targets --all-features -- -D w
 GATE 7: TAURI DEV APPLICATION STARTUP (npm run tauri dev)
   - Command: npm run tauri dev
   - Evidence Files: .agent-work/evidence/recovery/recovery-r3-raw-tauri-dev.stdout.txt & stderr.txt
-  - Raw Command Exit Code: 1
+  - Raw Exit Code: 1
   - Command Result: TERMINATED / EXIT 1
   - Termination Reason: 启动观察 15 秒后主动 taskkill 终止进程树
   - Startup Health Check: PASS
   - Isolated Debug DB Creation: PASS (target/debug/data/watchtracker.db generated, size 28,672 bytes)
-  - Status: TERMINATED / EXIT 1 (Startup Health Check & Isolated Debug DB Creation: PASS)
+  - Status: TERMINATED / EXIT 1 (Startup Health Check: PASS, Isolated DB Creation: PASS)
   - Historical Debt: No
-  - Re-verification Task: TASK-A-003 / TASK-A-005
+  - Re-verification Tasks: TASK-A-002 (First Re-verification), TASK-A-006 (Database & Offline E2E), TASK-A-010 (Phase A Final Gate)
 -------------------------------------------------------------------------------
 GATE 8: TAURI RELEASE PACKAGING (npm run tauri build)
   - Command: npm run tauri build
@@ -81,5 +81,5 @@ GATE 9: PLAYWRIGHT E2E TESTS (npx playwright test)
   - Existing Exit Code: N/A (E2E framework in 6fcbb1e was unconfigured; E2E replaced by verified manual UI test)
   - Status: BLOCKED / NOT CONFIGURED IN STABLE BASELINE
   - Historical Debt: Yes (Requires setup in Wave 0/1)
-  - Re-verification Task: TASK-A-002 (Wave 0/1)
+  - Re-verification Tasks: TASK-A-007 (Framework & Regression Implementation), TASK-A-010 (Phase A Final Re-verification)
 ===============================================================================

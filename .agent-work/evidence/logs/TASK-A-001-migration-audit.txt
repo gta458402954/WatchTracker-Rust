@@ -1,101 +1,109 @@
 ===============================================================================
-TASK-A-001 MIGRATION AUDIT LOG (REVISED)
+TASK-A-001 MIGRATION AUDIT LOG (FINAL REVISED)
 Recovery Worktree: D:\Project\Projects\WatchTracker-Recovery
 Baseline Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
-Audit Date: 2026-07-27T23:56:27.1226860+08:00
+Audit Date: 2026-07-28T00:02:42.4241371+08:00
 ===============================================================================
 EXECUTIVE SUMMARY:
 This audit examines the 17 commits between 6fcbb1e (stable baseline) and 29ea3a4 (fault head)
-plus uncommitted snapshot layers (bffd6cc). Direct cherry-pick or full-tree overwrite
-is strictly prohibited due to build breakage, tight coupling, and schema regression risks.
+plus snapshot layer bffd6cc. Direct cherry-pick or full-tree overwrite is strictly
+prohibited due to build breakage, tight coupling, and schema compatibility risks.
 -------------------------------------------------------------------------------
 1. ITEM AUDIT: TEST FRAMEWORK & FIXTURES
    - Classification: REDO
-   - Source Commit/Path: 16c8922 (vitest.config.ts, playwright.config.ts)
-   - Target Task: TASK-A-002 (Wave 0/1)
-   - Objective Rationale: 16c8922's config caused ESLint to fail on Playwright spec files and caused Vitest to erroneously execute Playwright E2E specs. Configuration must be re-designed cleanly.
+   - Source Commit: 16c89223d8ce71f53a356d38548f8c3dfe691f3f (16c8922)
+   - Actual Paths: package.json, package-lock.json, playwright.config.ts, tests/dashboard.spec.ts, tests/fixtures/mockIpc.ts, playwright-report/index.html, test-results/.last-run.json
+   - Target Tasks: TASK-A-007 (Test Framework, Fixtures & E2E Regression Matrix) & TASK-A-010 (Final Phase A Gate)
+   - Objective Rationale: 16c8922's Playwright configuration caused ESLint to fail on E2E spec files and caused Vitest to erroneously execute Playwright specs. Clean runner separation and fixture design must be built in TASK-A-007. (Note: TASK-A-002 only handles dependency installation and dev startup).
    - Potential Impact: Misconfigured test runners mask test failures or break quality gates.
-   - Test-First Requirement: Yes. Pure DOM/hook test fixtures and clean runner separation must be built first.
-   - Full-Tree Overwrite Warning: PROHIBITED. Do not import 16c8922 playwright.config.ts or vitest.config.ts directly.
+   - Test-First Requirement: Yes.
+   - Full-Tree Overwrite Warning: PROHIBITED. Do not import 16c8922 playwright.config.ts directly.
 -------------------------------------------------------------------------------
 2. ITEM AUDIT: ATOMIC TRANSACTIONS & RUST DATABASE MODULE
    - Classification: REDO
-   - Source Commit/Path: 29ea3a4 (src-tauri/src/db_atomic_*.rs, src-tauri/src/commands.rs, src-tauri/src/lib.rs, src/shared/lib/database.ts, src/shared/lib/webdav.ts, src/store/useWatchListStore.ts)
-   - Target Task: TASK-A-003 (Main Implementation / Wave 2/3) & TASK-A-006 (Database Upgrade & E2E / Wave 2/3/4)
-   - Objective Rationale: Rust atomic transaction logic in 29ea3a4 is structurally useful, but the commit simultaneously mutated frontend Zustand stores and schema column names without proper export, breaking TypeScript compilation.
-   - Potential Impact: Premature introduction breaks build before frontend handlers and stores are adapted.
-   - Test-First Requirement: Yes. Rust unit tests for atomic rollback and transaction isolation must pass first.
+   - Source Commit: 29ea3a4
+   - Actual Paths: src-tauri/src/db_atomic_*.rs, src-tauri/src/commands.rs, src-tauri/src/lib.rs, src/shared/lib/database.ts, src/shared/lib/webdav.ts, src/store/useWatchListStore.ts, Cargo.toml, Cargo.lock
+   - Target Tasks: TASK-A-003 (Atomic Updates, IPC, Store & Contracts) & TASK-A-006 (Database Upgrade & Real Workflow Verification)
+   - Objective Rationale: Rust atomic transaction logic in 29ea3a4 is structurally useful, but the commit simultaneously mutated frontend Zustand stores without proper export, breaking TypeScript compilation. (Note: 29ea3a4 did not modify schema migration logic).
+   - Potential Impact: Premature introduction breaks build before frontend handlers are adapted.
+   - Test-First Requirement: Yes. Rust unit tests for atomic rollback and transaction isolation required first.
    - Full-Tree Overwrite Warning: PROHIBITED. Do not copy db_atomic_*.rs or commands.rs from 29ea3a4.
 -------------------------------------------------------------------------------
 3. ITEM AUDIT: DATABASE SCHEMA & MIGRATIONS
    - Classification: REDO
-   - Source Commit/Path: 29ea3a4 (src-tauri/src/db_atomic_*.rs schema migrations)
-   - Target Task: TASK-A-006 (Wave 2/3/4)
-   - Objective Rationale: Adding/renaming columns without schema migration fallback caused 'no such column: createdAt' startup panics when reading existing database files.
-   - Potential Impact: Data corruption or startup crash on existing user databases.
-   - Test-First Requirement: Yes. Idempotent schema migration and backward compatibility tests must precede code changes.
+   - Source Commits: ed3ff3b (snake_case column migration), 8130100 (camelCase to snake_case field translation), bffd6cc (snapshot layer for db.rs/models.rs)
+   - Actual Paths: src-tauri/src/db.rs, src-tauri/src/models.rs, relevant IPC translation paths
+   - Target Tasks: TASK-A-003 (Migration & Settings Contracts), TASK-A-006 (Legacy Schema, Upgrade, CRUD & Offline Verification), TASK-A-007 (Automated Regression Coverage)
+   - Evidence Conclusion: R2 evidence proved stable app fallback to real AppData resulted in schema incompatibility: 'no such column: createdAt'. Idempotent schema migration and backward compatibility tests required.
+   - Potential Impact: Schema mismatch between frontend IPC payloads and backend SQLite database.
+   - Test-First Requirement: Yes.
    - Full-Tree Overwrite Warning: PROHIBITED. Never overwrite database schema or migrations in bulk.
 -------------------------------------------------------------------------------
 4. ITEM AUDIT: ZUSTAND STATE STORE & UNIFIED WRITE ENTRY
    - Classification: DEFER (then REDO)
-   - Source Commit/Path: 29ea3a4 (src/store/useWatchListStore.ts, src/shared/types/index.ts)
-   - Target Task: TASK-A-003 (Wave 2/3)
-   - Objective Rationale: The primary build failures in 29ea3a4 stemmed from unexported types and signature mismatches in useWatchListStore.ts.
+   - Source Commit: 29ea3a4
+   - Actual Paths: src/store/useWatchListStore.ts, src/shared/lib/database.ts, src/shared/lib/webdav.ts
+   - Target Task: TASK-A-003
+   - Objective Rationale: Build failures in 29ea3a4 stemmed from unexported types and signature mismatches in useWatchListStore.ts.
    - Potential Impact: Breaks TypeScript typecheck (exit code 2) and component rendering.
-   - Test-First Requirement: Yes. Zustand store unit tests for state mutation and React StrictMode safety required.
+   - Test-First Requirement: Yes. Store mutation & React StrictMode safety tests required.
    - Full-Tree Overwrite Warning: PROHIBITED. Do not copy store files from 29ea3a4 or bffd6cc.
 -------------------------------------------------------------------------------
 5. ITEM AUDIT: STRUCTURED RUST ERROR HANDLING
    - Classification: SELECTIVE_PORT
-   - Source Commit/Path: 611ea97 (src-tauri/src/error.rs)
-   - Target Task: TASK-A-005 (Wave 1)
-   - Objective Rationale: Clean structured Rust error types and conversion traits for Tauri commands.
+   - Source Commit: 611ea97
+   - Actual Path: src-tauri/src/error.rs
+   - Target Tasks: TASK-A-003 / TASK-A-005 (Consumer Behavior) & TASK-A-006 (Integration Verification)
+   - Objective Rationale: Clean structured Rust error types and conversion traits for Tauri IPC.
    - Potential Impact: Improves error propagation and user error messages.
    - Test-First Requirement: Yes. Error serialization unit tests required.
-   - Full-Tree Overwrite Warning: PROHIBITED. Port selectively without breaking IPC contracts.
+   - Full-Tree Overwrite Warning: PROHIBITED.
 -------------------------------------------------------------------------------
 6. ITEM AUDIT: RUST NETWORK CLIENT CACHING
    - Classification: SELECTIVE_PORT
-   - Source Commit/Path: a86aec9 (src-tauri/src/net.rs)
-   - Target Task: TASK-A-005 (Wave 1)
+   - Source Commit: a86aec9
+   - Actual Path: src-tauri/src/net.rs
+   - Target Tasks: TASK-A-004 (Path Consumers & Network Resource Governance) & TASK-A-006 (Offline & Network Failure Verification)
    - Objective Rationale: Network client caching logic, but triggered strict clippy warnings (type_complexity). Requires refinement.
    - Potential Impact: Strict clippy failure (exit code 101) under -D warnings if not refined.
    - Test-First Requirement: Yes. Rust clippy cleanliness must be validated.
    - Full-Tree Overwrite Warning: PROHIBITED. Do not copy net.rs without resolving clippy warnings.
 -------------------------------------------------------------------------------
-7. ITEM AUDIT: UI ARCHITECTURE & FEATURE PATHS
+7. ITEM AUDIT: UI ARCHITECTURE & COMPONENT PATHS
    - Classification: SELECTIVE_PORT
-   - Source Commit/Path: eda30dc, 3ae5bf4 (src/app/*, src/features/*, src/shared/*)
-   - Target Task: TASK-A-003 (Wave 2/3)
-   - Objective Rationale: Component UI improvements (dialogs, filters, cards) can be ported selectively in task slices once core state & IPC APIs are stable.
+   - Source Commits: eda30dc, 3ae5bf4
+   - Actual Paths: src/app/*, src/features/*, src/shared/*
+   - Target Tasks: TASK-A-003 (UI call sites directly linked to store, IPC, and update contracts), TASK-A-005 (UI for init state, error notifications, user feedback), Pure Layout/Architecture -> DEFER for independent feature tasks
+   - Objective Rationale: Component UI improvements should be ported selectively in task slices once core state & IPC APIs are stable.
    - Potential Impact: Uncontrolled UI changes cause layout regressions and component prop type mismatches.
-   - Test-First Requirement: Yes. Component render tests must verify props before porting.
-   - Full-Tree Overwrite Warning: PROHIBITED. Only port isolated UI components after inspecting signatures.
+   - Test-First Requirement: Yes.
+   - Full-Tree Overwrite Warning: PROHIBITED.
 -------------------------------------------------------------------------------
-8. ITEM AUDIT: WEBDAV SYNC & OFFLINE WORKFLOW
+8. ITEM AUDIT: WEBDAV DATA SAFETY & OFFLINE WORKFLOW
    - Classification: DEFER (then REDO)
-   - Source Commit/Path: 29ea3a4 and bffd6cc (src/shared/lib/webdav.ts)
-   - Target Task: TASK-A-006 (Wave 2/3/4) & Phase B (Wave 4/6)
-   - Objective Rationale: WebDAV sync and offline data safety logic must be deferred until local atomic storage is 100% stable.
-   - Potential Impact: Silent remote data loss or sync conflicts during development.
-   - Test-First Requirement: Yes. WebDAV mock server integration tests required.
+   - Source Commits: 29ea3a4, bffd6cc
+   - Actual Path: src/shared/lib/webdav.ts
+   - Target Tasks: Phase A TASK-A-006 (Import, restore, WebDAV failures must not corrupt local data; local CRUD available without credentials/on network failure); Advanced WebDAV (sync conflicts, dirty/outbox, active pull, credential security) -> DEFERRED to TASK-D-R0
+   - Objective Rationale: Basic WebDAV data safety must be verified in TASK-A-006. Complex sync features deferred to TASK-D-R0.
+   - Potential Impact: Remote sync conflicts if introduced before local atomic storage is solid.
+   - Test-First Requirement: Yes.
    - Full-Tree Overwrite Warning: PROHIBITED. Never copy WebDAV sync logic wholesale.
 -------------------------------------------------------------------------------
 9. ITEM AUDIT: PATH & UNIFIED DATA DIRECTORY GOVERNANCE
    - Classification: REDO
-   - Source Commit/Path: Phase A / Wave 5 planning
-   - Target Task: TASK-A-004 (Wave 5)
+   - Source Commit: Phase A / Wave 5 planning
+   - Target Task: TASK-A-004
    - Objective Rationale: TASK-A-004 is dedicated to unified data root directory, portable vs AppData path resolution, and path consumers.
    - Potential Impact: User data directory overwrite or accidental fallback to AppData.
-   - Test-First Requirement: Yes. Data path resolution tests required.
+   - Test-First Requirement: Yes.
    - Full-Tree Overwrite Warning: PROHIBITED.
 -------------------------------------------------------------------------------
 10. ITEM AUDIT: REGION DYNAMIZATION
     - Classification: DISCARD (for Phase A; DEFER to Phase B Wave 6)
-    - Source Commit/Path: bffd6cc (src/shared/lib/countryNames.ts, src/shared/hooks/useFilteredRecords.ts; note: 29ea3a4 does not contain region types or components)
+    - Source Commit: bffd6cc (src/shared/lib/countryNames.ts, src/shared/hooks/useFilteredRecords.ts)
     - Target Task: Phase B (Wave 6)
-    - Objective Rationale: Region dynamicization is strictly prohibited prior to Gate A. Note: cebde47 is a recovery acceptance documentation commit, not a business code implementation source.
+    - Objective Rationale: Region dynamicization is strictly prohibited prior to Gate A.
     - Potential Impact: Architectural scope creep and compilation failure.
-    - Test-First Requirement: Yes. Region dynamicization requires separate AC in Phase B.
-    - Full-Tree Overwrite Warning: PROHIBITED. Do not introduce any Region code during Phase A.
+    - Test-First Requirement: Yes.
+    - Full-Tree Overwrite Warning: PROHIBITED.
 ===============================================================================

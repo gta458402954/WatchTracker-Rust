@@ -308,20 +308,20 @@
 
 ---
 
-## TASK-A-001 Antigravity Execution (Remediation)
+## TASK-A-001 Antigravity Execution (Final Remediation)
 
 - Executor: Antigravity
-- BASE commit: `ba8bf2dd5c6e7e6ef5179a4df3f8251877a7d7cc`
+- Original Task BASE: `11e5492bfcba584ff29d24ee7bfc857d789f7920`
+- Remediation BASE: `ee7f942b2ac32eca612bdbec53b748dbc970c2f5`
 - Recovery Branch: `codex/rebuild-from-stable`
-- Worktree Verification: Recorded in `.agent-work/evidence/logs/TASK-A-001-worktree.txt` (HEAD matches BASE, 0 business code diffs against 6fcbb1e).
+- Worktree Verification: Recorded in `.agent-work/evidence/logs/TASK-A-001-worktree.txt` (HEAD matches Original BASE `11e5492...`, 0 business code diffs against 6fcbb1e).
 - Environment Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-environment.txt` (Node `v24.18.0`, npm `11.16.0`, rustc/cargo `1.97.1`, git `2.55.0.windows.3`).
 - Process Audit: Raw process command output recorded in `.agent-work/evidence/logs/TASK-A-001-processes.txt` (0 WatchTracker/Recovery processes running).
-- Migration Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-migration-audit.txt` (10 items audited with exact paths and commit citations: db_atomic_*.rs/commands.rs/database.ts -> REDO A-003/A-006, useWatchListStore.ts -> DEFER/REDO A-003, error.rs (611ea97) -> SELECTIVE_PORT A-005, net.rs (a86aec9) -> SELECTIVE_PORT A-005, src/app/*/features/*/shared/* -> SELECTIVE_PORT A-003, webdav.ts -> DEFER/REDO A-006, path/unified dir -> REDO A-004, countryNames.ts/useFilteredRecords.ts (bffd6cc) -> DISCARD for Phase A).
+- Migration Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-migration-audit.txt` (10 items audited with exact paths and commit citations: test framework 16c8922 -> REDO A-007/A-010; db_atomic_*.rs/commands.rs -> REDO A-003/A-006; schema migration ed3ff3b/8130100/bffd6cc -> REDO A-003/A-006/A-007; useWatchListStore.ts 29ea3a4 -> DEFER/REDO A-003; error.rs 611ea97 -> SELECTIVE_PORT A-003/A-005/A-006; net.rs a86aec9 -> SELECTIVE_PORT A-004/A-006; src/app/*/features/*/shared/* -> SELECTIVE_PORT A-003/A-005; webdav.ts 29ea3a4 -> DEFER/REDO A-006 / TASK-D-R0 DEFERRED; unified path dir -> REDO A-004; countryNames.ts/useFilteredRecords.ts bffd6cc -> DISCARD Phase A).
 - Data Safety Strategy: Recorded in `.agent-work/evidence/tests/TASK-A-001-data-safety.txt` (Real databases cited without reading/modifying; temporary test root created at `D:\Project\Projects\WatchTracker-TestData\TASK-A-001`).
-- Failure & Quality Gate Matrix: Recorded in `.agent-work/evidence/tests/TASK-A-001-failure-matrix.txt` (cargo fmt exit code 1 cited as known historical debt mapped to A-003/A-007/A-010; tauri dev status recorded as TERMINATED / EXIT 1 with Startup Health Check PASS; no commands executed).
-- Process Audit: 0 WatchTracker/Recovery processes running.
+- Failure & Quality Gate Matrix: Recorded in `.agent-work/evidence/tests/TASK-A-001-failure-matrix.txt` (cargo fmt exit code 1 cited as historical debt mapped to A-003/A-007/A-010; tauri dev status recorded as TERMINATED / EXIT 1 with Startup Health Check PASS mapped to A-002/A-006/A-010; Playwright E2E mapped to A-007/A-010; no commands executed).
 - Code Modification: 0 business source code changes made.
-- Status: IMPLEMENTED / awaiting review (Remediation per REVIEW-A-001).
+- Status: IMPLEMENTED / awaiting review (Final text remediation per REVIEW-A-001).
 
 ---
 
