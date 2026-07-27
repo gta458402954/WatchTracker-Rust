@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "contract_id": "TASK-G-001-r1",
+  "task_id": "TASK-G-001",
+  "owner": "CODEX",
+  "supersedes": "TASK-G-001",
+  "previous_contract_sha256": "0DF74F0F1933A1EA9B228DC5599292CFA9CED54FCDDEEEA7DAD9C8789AFC985D",
+  "repository": {
+    "repository_id": "eb0c26e7-a964-48df-8729-def18675d6e7",
+    "expected_root_name": "WatchTracker-Governance",
+    "expected_worktree": "D:/Project/Projects/WatchTracker-Governance",
+    "expected_remote": "https://github.com/gta458402954/WatchTracker-Rust.git",
+    "expected_branch": "codex/governance-tools",
+    "expected_base": "55629c7911e23282f34561741c2ca0f413e0a16c",
+    "allow_detached_head": false
+  },
+  "workspace_policy": {
+    "allowed_modified_files": [
+      ".agent-work/tasks/TASK-G-001-r1.json",
+      ".agent-work/tools/SAFE_COMMIT.ps1",
+      ".agent-work/tools/VERIFY_ATTESTATION.ps1",
+      ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      ".agent-work/evidence/governance/TASK-G-001-r1-*.json",
+      ".agent-work/EXECUTION_LOG.md"
+    ],
+    "allowed_generated_paths": [],
+    "forbidden_modified_files": ["src/**", "src-tauri/**", "package.json", "package-lock.json", ".agent-work/ACCEPTANCE_CRITERIA.md", ".agent-work/REVIEW_FEEDBACK.md", ".agent-work/RECOVERY_DECISION.md"],
+    "monitored_roots": [".agent-work", "src", "src-tauri"]
+  },
+  "commit_policy": {
+    "allowed_staged_files": [
+      ".agent-work/tasks/TASK-G-001-r1.json",
+      ".agent-work/tools/SAFE_COMMIT.ps1",
+      ".agent-work/tools/VERIFY_ATTESTATION.ps1",
+      ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      ".agent-work/evidence/governance/TASK-G-001-r1-red-team.json",
+      ".agent-work/EXECUTION_LOG.md"
+    ],
+    "required_staged_files": [
+      ".agent-work/tasks/TASK-G-001-r1.json",
+      ".agent-work/tools/SAFE_COMMIT.ps1",
+      ".agent-work/tools/VERIFY_ATTESTATION.ps1",
+      ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      ".agent-work/evidence/governance/TASK-G-001-r1-red-team.json",
+      ".agent-work/EXECUTION_LOG.md"
+    ],
+    "forbidden_staged_files": ["src/**", "src-tauri/**", "package.json", "package-lock.json"],
+    "protected_files": [".agent-work/ACCEPTANCE_CRITERIA.md", ".agent-work/REVIEW_FEEDBACK.md", ".agent-work/RECOVERY_DECISION.md", ".agent-work/TASKS.md", ".agent-work/tasks/TASK-G-001.json", ".agent-work/schemas/task-contract.schema.json"],
+    "executor_summary_files": [".agent-work/EXECUTION_LOG.md"],
+    "protected_regions": []
+  },
+  "change_budget": {
+    "max_files": 6,
+    "max_insertions": 400,
+    "max_deletions": 40,
+    "max_binary_changes": 0,
+    "forbid_file_rewrite": true,
+    "preserve_encoding": true,
+    "preserve_line_endings": true
+  },
+  "steps": [],
+  "evidence": { "root": ".agent-work/evidence", "environment_allowlist": ["TEMP"] },
+  "forbidden_phrases": ["已完整实现", "所有功能正常", "测试全部通过", "可以安全合并", "已验收"],
+  "waivers": []
+}

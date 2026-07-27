@@ -12,9 +12,9 @@ if ($message -notmatch "(?m)^Contract-SHA256:\s*([A-Fa-f0-9]{64})\s*$") { throw 
 if ($Matches[1].ToUpperInvariant() -cne $contractInfo.Sha256) { throw 'Commit contract trailer does not match contract.' }
 if ($message -notmatch '(?m)^Safe-Commit-Version:\s*1\s*$') { throw 'Commit lacks supported Safe-Commit-Version trailer.' }
 if ($message -notmatch '(?m)^Scope-Check:\s*PASS\s*$') { throw 'Commit lacks Scope-Check PASS trailer.' }
-$gitPath = Invoke-GitText @('rev-parse','--git-path','codex-attestations') $root
-if (-not [IO.Path]::IsPathRooted($gitPath)) { $gitPath = Join-Path $root $gitPath }
-$receiptPath = Join-Path $gitPath ("$resolvedCommit.json")
+$commonGitDir = Invoke-GitText @('rev-parse','--git-common-dir') $root
+if (-not [IO.Path]::IsPathRooted($commonGitDir)) { $commonGitDir = Join-Path $root $commonGitDir }
+$receiptPath = Join-Path (Join-Path $commonGitDir 'codex-attestations') ("$resolvedCommit.json")
 if (-not (Test-Path -LiteralPath $receiptPath)) { throw 'Safe Commit receipt is missing.' }
 $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 100
 if ([string]$receipt.commit -cne $resolvedCommit -or [string]$receipt.contract_sha256 -cne $contractInfo.Sha256 -or [int]$receipt.scope_check_exit -ne 0) { throw 'Safe Commit receipt is inconsistent.' }

@@ -60,9 +60,9 @@ $actual = if ($actualText) { @($actualText -split "`n" | Sort-Object) } else { @
 $expected = @($staged | Sort-Object)
 if (($actual -join "`n") -cne ($expected -join "`n")) { throw "Committed file set differs from staged set.`nExpected: $($expected -join ', ')`nActual: $($actual -join ', ')" }
 
-$gitPath = Invoke-GitText @('rev-parse','--git-path','codex-attestations') $root
-if (-not [IO.Path]::IsPathRooted($gitPath)) { $gitPath = Join-Path $root $gitPath }
-$receiptPath = Join-Path $gitPath ("$commit.json")
+$commonGitDir = Invoke-GitText @('rev-parse','--git-common-dir') $root
+if (-not [IO.Path]::IsPathRooted($commonGitDir)) { $commonGitDir = Join-Path $root $commonGitDir }
+$receiptPath = Join-Path (Join-Path $commonGitDir 'codex-attestations') ("$commit.json")
 $receipt = [ordered]@{
     schema_version = 1
     commit = $commit

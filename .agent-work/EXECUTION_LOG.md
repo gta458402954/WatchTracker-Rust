@@ -372,3 +372,11 @@
 - Final red-team result: 11/11 PASS in an isolated temporary repository.
 - Safety boundary: no application business source, configuration, dependency, test fixture or database changed. Temporary fixtures were verified under the system temp root and removed after each run.
 - Status: TASK-G-001 ACCEPTED. TASK-A-002 remains unopened pending issuance of its Codex-owned contract.
+
+### TASK-G-001 Contract Revision r1
+
+- Supersedes contract SHA-256 `0DF74F0F1933A1EA9B228DC5599292CFA9CED54FCDDEEEA7DAD9C8789AFC985D` without amending its accepted commit.
+- Finding: worktree-specific receipt storage prevented attestation verification after integration into another worktree.
+- Correction: Safe Commit and Verifier now store/read receipts under the shared Git common directory.
+- Red team: 12/12 PASS, adding explicit common-git-dir receipt verification while retaining all previous rejection scenarios.
+- Scope: six governance/evidence files only; application source, configuration, dependencies, tests and databases unchanged.

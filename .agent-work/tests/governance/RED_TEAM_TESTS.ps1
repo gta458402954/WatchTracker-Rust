@@ -128,6 +128,11 @@ try {
     $verify = Join-Path $fixture '.agent-work\tools\VERIFY_ATTESTATION.ps1'
     $verifyRun = Invoke-Child $verify @('-ContractPath',$contractPath,'-Commit','HEAD')
     Add-Result 'safe-commit-attestation' ($safeRun.ExitCode -eq 0 -and $verifyRun.ExitCode -eq 0) ($safeRun.Output + "`n" + $verifyRun.Output)
+    $commonDir = (& git -C $fixture rev-parse --git-common-dir).Trim()
+    if (-not [IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $fixture $commonDir }
+    $safeCommit = (& git -C $fixture rev-parse HEAD).Trim()
+    $commonReceipt = Join-Path (Join-Path $commonDir 'codex-attestations') ("$safeCommit.json")
+    Add-Result 'common-git-dir-receipt' (Test-Path -LiteralPath $commonReceipt) $commonReceipt
 
     [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "direct`n", [Text.UTF8Encoding]::new($false)); & git -C $fixture add -- allowed.txt
     $directOutput = & git -C $fixture commit -m 'direct commit' 2>&1; $directExit = $LASTEXITCODE
