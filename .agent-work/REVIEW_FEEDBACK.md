@@ -293,3 +293,44 @@ git status --short --branch
 - Release isolation: PASS; `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data\watchtracker.db` exists, is 28,672 bytes and has SHA-256 `13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9`.
 - Real-data check: read-only SHA-256 values match the pre-UI references for AppData (`BF96F204...`), portable (`9A42C90E...`) and public release (`D466C664...`); no disk-content change was detected. This does not claim that hashing performed no read access.
 - Final disposition: REVIEW-R-005 CLOSED; TASK-R-005 ACCEPTED; AC-R-005 PASS; AC-GATE-R PASS; TASK-A-001 READY.
+
+---
+
+## REVIEW-A-001：进程原始证据缺失，迁移审计来源与任务映射不准确
+
+- Related Task: TASK-A-001
+- Related Criteria: AC-A-001
+- Severity: Major
+- Status: OPEN
+- Reviewed Commit: `7ab03f1b3f95d888dbe474814390277553103919`
+- BASE: `11e5492bfcba584ff29d24ee7bfc857d789f7920`
+
+### Independently Verified Passes
+
+1. Commit ancestry and branch are correct; `7ab03f1` is directly based on the required BASE on `codex/rebuild-from-stable`.
+2. The commit changes exactly seven allowed documentation/evidence files. Business source and configuration diff is empty.
+3. The pre-existing stat-only `src-tauri/Cargo.toml` and three untracked recovery logs remain unstaged and untouched.
+4. The external TASK-A-001 temporary test root exists and is empty. No database was copied into it.
+5. Environment commands and referenced Gate R evidence files are present; no build, application or test command was rerun.
+6. Codex's current independent Recovery-process query returned no rows.
+
+### Findings
+
+1. No submitted TASK-A-001 evidence file contains the required `Get-CimInstance Win32_Process` command, execution time and raw empty output. `TASKS.md` and `EXECUTION_LOG.md` state “0 processes,” but this is an unsupported executor conclusion rather than saved evidence.
+2. The atomic-transaction item attributes `29ea3a4` to `src-tauri/src/db.rs` and `models.rs`; that commit actually adds/changes `db_atomic_*.rs`, `commands.rs`, `lib.rs`, `src/shared/lib/database.ts`, `src/shared/lib/webdav.ts` and `src/store/useWatchListStore.ts`.
+3. The Zustand item names `src/store/useWatchStore.ts`; that path does not exist in the audited history. The relevant path is `src/store/useWatchListStore.ts`.
+4. The typed-error/network item attributes `error.rs` and `net.rs` to `93b8f7c`, but that commit changes neither file. Git history identifies structured error work at `611ea97` and the client-cache change at `a86aec9`; their risks and dispositions must be audited separately or accurately grouped with both sources.
+5. The UI item cites the nonexistent/generalized `src/components/*`; the referenced commits use paths under `src/features/...`, `src/app/...` and `src/shared/...`.
+6. The WebDAV item cites nonexistent `src/services/webdav.ts` and maps it to TASK-A-004. The actual path is `src/shared/lib/webdav.ts`; TASK-A-004 is data-path governance, while WebDAV safety is explicitly verified under TASK-A-006. Path-resolution aspects may reference A-004 only if separately justified.
+7. Region paths attributed to `29ea3a4` are not present in that commit and the named `src/types/region.ts` / `src/components/RegionFilter.tsx` paths do not exist in the reviewed history. The audit must identify the actual snapshot paths/commits or state that the proposed source was not found.
+8. The failure matrix records raw Tauri dev exit 1 after intentional termination but then labels the overall gate `PASS`. Record command result as `TERMINATED / EXIT 1 (not command PASS)` and separately record `Startup Health Check: PASS`.
+9. `cargo fmt -- --check` is already required by TASK-A-003 as well as the continuous TASK-A-007 matrix; its re-verification mapping should not list only TASK-A-007.
+
+### Required Change
+
+1. Do not rerun environment, build, lint, test, Tauri or application commands. Do not touch any database.
+2. Run only the required read-only process query, save the exact command, working directory, execution time and raw result (including an explicit empty result) in a new allowed evidence file.
+3. Correct `TASK-A-001-migration-audit.txt` using `git show`, `git log --all -- <path>` and current TASKS/RECOVERY_DECISION facts. Do not invent or normalize paths and do not change the accepted recovery decision.
+4. Correct the Tauri dev status and cargo-fmt task mapping in `TASK-A-001-failure-matrix.txt`.
+5. Correct only executor-owned TASK-A-001 summaries in TASKS/EXECUTION_LOG. Do not edit this review, ACCEPTANCE_CRITERIA, RECOVERY_DECISION, business code, configuration, dependencies or tests.
+6. Create a new local remediation commit without amend or push. Keep TASK-A-001 as IMPLEMENTED in the executor result, then stop for Codex review; only Codex may restore ACCEPTED/PASS.

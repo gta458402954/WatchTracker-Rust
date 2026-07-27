@@ -124,8 +124,8 @@
   3. 检查 Phase A 只在 Gate R 后实施，并检查 Phase B 任务状态变更历史。
 - Expected Result: Gate R 前没有实施 Phase A；阶段 A 报告为 PASS（或用户书面接受指定条件的 CONDITIONAL PASS）前，没有 Phase B 任务进入 READY/IN_PROGRESS/IMPLEMENTED。
 - Required Evidence: baseline 报告、TASKS 状态、用户确认（如适用）。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: FAIL
+- Evidence: Commit `7ab03f1b3f95d888dbe474814390277553103919` preserves the worktree and user-data boundary, but TASK-A-001 evidence is incomplete/inaccurate. The required process query was not saved with command, time and raw empty output. The migration audit attributes several implementations to commits/paths that did not modify or do not contain them, and maps WebDAV to TASK-A-004 instead of the database/offline-flow task. The Tauri dev command's raw exit 1 is also labelled as an overall PASS rather than separating command termination from startup-health PASS. See `REVIEW-A-001`.
 
 ## 阶段 A：恢复运行和稳定基线
 

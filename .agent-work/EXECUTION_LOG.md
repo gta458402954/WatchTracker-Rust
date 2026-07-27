@@ -321,3 +321,15 @@
 - Process Audit: 0 WatchTracker/Recovery processes running.
 - Code Modification: 0 business source code changes made.
 - Status: IMPLEMENTED (Awaiting Codex verification).
+
+---
+
+## TASK-A-001 Codex Initial Review
+
+- Reviewer: Codex
+- BASE: `11e5492bfcba584ff29d24ee7bfc857d789f7920`
+- Reviewed commit: `7ab03f1b3f95d888dbe474814390277553103919`
+- Status: CHANGES_REQUESTED
+- PASS: exact allowed-file scope, clean business/config diff, preserved dirty-worktree evidence, empty synthetic test root, environment capture and current process cleanup.
+- FAIL: required process command/time/raw-empty evidence was not saved; multiple migration-audit source commits, paths and target-task mappings are factually inaccurate; Tauri dev raw exit 1 is incorrectly summarized as overall PASS.
+- Required action: documentation/evidence-only correction. No command-suite rerun, application launch, database access or business-code change is authorized. See `REVIEW-A-001`.
