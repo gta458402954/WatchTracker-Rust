@@ -442,15 +442,15 @@ cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
 
 ### Execution Result
 
-- Status: IMPLEMENTED — Safety baseline established and migration audit completed
-- BASE Commit: `11e5492bfcba584ff29d24ee7bfc857d789f7920`
+- Status: IMPLEMENTED / awaiting review — Safety baseline established and audit evidence revised per REVIEW-A-001
+- BASE Commit: `ba8bf2dd5c6e7e6ef5179a4df3f8251877a7d7cc`
 - Recovery Branch: `codex/rebuild-from-stable`
 - Worktree Verification: Recorded in `.agent-work/evidence/logs/TASK-A-001-worktree.txt`
 - Environment Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-environment.txt` (Node `v24.18.0`, npm `11.16.0`, rustc/cargo `1.97.1`, git `2.55.0.windows.3`)
-- Migration Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-migration-audit.txt` (9 functional items categorized into SELECTIVE_PORT, REDO, DEFER, DISCARD)
+- Process Audit: Raw process snapshot recorded in `.agent-work/evidence/logs/TASK-A-001-processes.txt` (0 WatchTracker/Recovery processes running)
+- Migration Audit: Recorded in `.agent-work/evidence/logs/TASK-A-001-migration-audit.txt` (10 functional items audited with exact paths and commit citations: db_atomic_*.rs/commands.rs/database.ts -> REDO A-003/A-006, useWatchListStore.ts -> DEFER/REDO A-003, error.rs (611ea97) -> SELECTIVE_PORT A-005, net.rs (a86aec9) -> SELECTIVE_PORT A-005, src/app/*/features/*/shared/* -> SELECTIVE_PORT A-003, webdav.ts -> DEFER/REDO A-006, path/unified dir -> REDO A-004, countryNames.ts/useFilteredRecords.ts (bffd6cc) -> DISCARD for Phase A)
 - Data Safety Strategy: Recorded in `.agent-work/evidence/tests/TASK-A-001-data-safety.txt` (Real databases cited without reading/modifying; temporary test root created at `D:\Project\Projects\WatchTracker-TestData\TASK-A-001`)
-- Failure & Quality Gate Matrix: Recorded in `.agent-work/evidence/tests/TASK-A-001-failure-matrix.txt` (Cargo fmt exit code 1 cited as known historical debt; no commands executed)
-- Process Audit: 0 WatchTracker/Recovery processes running
+- Failure & Quality Gate Matrix: Recorded in `.agent-work/evidence/tests/TASK-A-001-failure-matrix.txt` (cargo fmt exit code 1 cited as known historical debt mapped to A-003/A-007/A-010; tauri dev status recorded as TERMINATED / EXIT 1 with Startup Health Check PASS; no commands executed)
 - Code Modification: 0 business source code changes made
 
 ### Codex Review

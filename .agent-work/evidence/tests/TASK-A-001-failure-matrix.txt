@@ -1,8 +1,8 @@
 ===============================================================================
-TASK-A-001 ORIGINAL FAILURE & QUALITY GATE MATRIX
+TASK-A-001 ORIGINAL FAILURE & QUALITY GATE MATRIX (REVISED)
 Execution Workdir: D:\Project\Projects\WatchTracker-Recovery
 Baseline Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
-Matrix Date: 2026-07-27T23:46:03.8129961+08:00
+Matrix Date: 2026-07-27T23:56:32.2357515+08:00
 ===============================================================================
 NOTE: This matrix is established strictly from accepted Gate R evidence files.
 No commands (npm, cargo, tauri, playwright) were re-executed during TASK-A-001.
@@ -35,9 +35,9 @@ GATE 4: RUST FORMATTING CHECK (cargo fmt -- --check)
   - Command: cargo fmt -- --check
   - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-cargo-fmt.txt
   - Existing Exit Code: 1
-  - Status: FAIL (Known Historical Format Debt)
+  - Status: FAIL — inherited historical formatting debt
   - Historical Debt: Yes (Inherited from 6fcbb1e; not modified in TASK-A-001)
-  - Re-verification Task: TASK-A-007 (Wave 0~5)
+  - Re-verification Tasks: TASK-A-003 (First Slice), TASK-A-007 (Continuous Quality Gate), TASK-A-010 (Phase A Final Gate)
 -------------------------------------------------------------------------------
 GATE 5: RUST UNIT TESTS (cargo test)
   - Command: cargo test
@@ -58,8 +58,12 @@ GATE 6: RUST LINTING & CLIPPY (cargo clippy --all-targets --all-features -- -D w
 GATE 7: TAURI DEV APPLICATION STARTUP (npm run tauri dev)
   - Command: npm run tauri dev
   - Evidence Files: .agent-work/evidence/recovery/recovery-r3-raw-tauri-dev.stdout.txt & stderr.txt
-  - Existing Exit Code: 1 (Raw exit 1 after 15s intentional taskkill; Startup Health Check: PASS)
-  - Status: PASS (Startup Health Check & Isolated Debug DB Generation PASS)
+  - Raw Command Exit Code: 1
+  - Command Result: TERMINATED / EXIT 1
+  - Termination Reason: 启动观察 15 秒后主动 taskkill 终止进程树
+  - Startup Health Check: PASS
+  - Isolated Debug DB Creation: PASS (target/debug/data/watchtracker.db generated, size 28,672 bytes)
+  - Status: TERMINATED / EXIT 1 (Startup Health Check & Isolated Debug DB Creation: PASS)
   - Historical Debt: No
   - Re-verification Task: TASK-A-003 / TASK-A-005
 -------------------------------------------------------------------------------

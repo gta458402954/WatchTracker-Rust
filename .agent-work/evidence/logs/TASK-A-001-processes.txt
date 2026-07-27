@@ -1,0 +1,89 @@
+===============================================================================
+TASK-A-001 PROCESS AUDIT LOG
+Working Directory: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:56:19.2710473+08:00
+End Time: 2026-07-27T23:56:19.4518708+08:00
+Duration: 0.1808235 seconds
+Exit Code: 0
+===============================================================================
+COMMAND:
+Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'cargo|rustc|clippy|tauri|node|npm|pnpm|app|WatchTracker' } | Select-Object ProcessId, Name, CommandLine
+-------------------------------------------------------------------------------
+RAW OUTPUT:
+ProcessId   : 6092
+Name        : unsecapp.exe
+CommandLine : 
+
+ProcessId   : 16980
+Name        : AppleMobileDeviceService.exe
+CommandLine : 
+
+ProcessId   : 10160
+Name        : unsecapp.exe
+CommandLine : 
+
+ProcessId   : 30068
+Name        : LockApp.exe
+CommandLine : "C:\WINDOWS\SystemApps\Microsoft.LockApp_cw5n1h2txyewy\LockApp.exe" -ServerName:WindowsDefaultLockScreen.AppX7y4nbzq37zn4ks9k7amqjywdat7d3j2z.mca
+
+ProcessId   : 27440
+Name        : ApplicationFrameHost.exe
+CommandLine : C:\WINDOWS\system32\ApplicationFrameHost.exe -Embedding
+
+ProcessId   : 6616
+Name        : node_repl.exe
+CommandLine : "C:\Users\markp\AppData\Local\OpenAI\Codex\runtimes\cua_node\f8d2abcb7481383b\bin\node_repl.exe"
+
+ProcessId   : 26412
+Name        : unsecapp.exe
+CommandLine : C:\WINDOWS\system32\wbem\unsecapp.exe -Embedding
+
+ProcessId   : 2568
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --log-level=2 --helper-handle-value=1126298996 --lang=zh-CN --wechat-files-path="C:\Users\markp\Documents\xwechat_files" --product-id=1002 --wechat-sub-user-agent="MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541c18)" --web-translate --client_version=4065598488 --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --enable-applet-v3 --wmpf-drm-plugin-path="C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\WMPFDrm\1004\extracted\WidevineCdm" --instance-index=0 --wmpf-yyb-plugin-path --mojo-platform-channel-handle=8024
+
+ProcessId   : 23788
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=zh-CN --service-sandbox-type=none --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --product-id=1002 --disable-mojo-broker --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708987248913343 --log-level=2 --mojo-platform-channel-handle=2660 /prefetch:11
+
+ProcessId   : 7612
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=gpu-process --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --product-id=1002 --gpu-preferences=SAAAAAAAAADgAAAEAAAAAAAAAAAAAGAAAQAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAAAAAACAAAAAAAAAAIAAAAAAAAAA== --disable-mojo-broker --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708989122997041 --log-level=2 --mojo-platform-channel-handle=2832 /prefetch:2
+
+ProcessId   : 13208
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=5 --product-id=1002 --no-sandbox --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=4 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858058575999 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708990060038890 --log-level=2 --mojo-platform-channel-handle=4236 /prefetch:1
+
+ProcessId   : 29152
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=utility --utility-sub-type=flue.mojom.ILinkServiceHost --lang=zh-CN --service-sandbox-type=none --video-capture-use-gpu-memory-buffer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --product-id=1002 --disable-mojo-broker --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708991934122588 --log-level=2 --mojo-platform-channel-handle=4676 /prefetch:14
+
+ProcessId   : 22516
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=7 --product-id=1002 --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=8 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858059398232 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708993808206286 --log-level=2 --mojo-platform-channel-handle=5052 /prefetch:1
+
+ProcessId   : 4144
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=6 --product-id=1002 --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=7 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858059416733 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708992871164437 --log-level=2 --mojo-platform-channel-handle=5052 /prefetch:1
+
+ProcessId   : 6860
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=7 --product-id=1002 --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=9 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858059638654 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708994745248135 --log-level=2 --mojo-platform-channel-handle=5620 /prefetch:1
+
+ProcessId   : 4368
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=7 --product-id=1002 --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=14 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858083267620 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190708999430457380 --log-level=2 --mojo-platform-channel-handle=6792 /prefetch:1
+
+ProcessId   : 4576
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=7 --product-id=1002 --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=15 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858084280528 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190709000367499229 --log-level=2 --mojo-platform-channel-handle=6328 /prefetch:1
+
+ProcessId   : 10684
+Name        : WeChatAppEx.exe
+CommandLine : "C:\Users\markp\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\25297\extracted\runtime\WeChatAppEx.exe" --type=renderer --client_version=4065598488 --enable-crash-reporter --wmpf_root_dir="C:\Users\markp\AppData\Roaming\Tencent\xwechat\radium" --instance-index=0 --wmpf-render-type=7 --product-id=1002 --disable-notifications --video-capture-use-gpu-memory-buffer --lang=zh-CN --device-scale-factor=2 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=16 --time-ticks-at-unix-epoch=-1784304830200882 --disable-mojo-broker --launch-time-ticks=858084786883 --field-trial-handle=2672,i,4827796050498914177,14204938928999740665,262144 --enable-features=FluentOverlayScrollbar,WinSystemLocationPermission,XWorker --disable-features=AudioServiceOutOfProcess,AutoupgradeMixedContent,BackForwardCache,DigitalGoodsApi,PeriodicBackgroundSync,TFLiteLanguageDetectionEnabled,Vulkan,WebOTP --variations-seed-version --trace-process-track-uuid=3190709001304541078 --log-level=2 --mojo-platform-channel-handle=7128 /prefetch:1
+
+ProcessId   : 9168
+Name        : node_repl.exe
+CommandLine : "C:\Users\markp\AppData\Local\OpenAI\Codex\runtimes\cua_node\f8d2abcb7481383b\bin\node_repl.exe"
+
+===============================================================================
