@@ -1,164 +1,41 @@
-param(
-    [string]$OutputPath = '.agent-work/evidence/governance/TASK-G-001-red-team.json'
-)
-
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-$sourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-$tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
-$fixture = Join-Path $tempBase ("watchtracker-governance-redteam-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $fixture | Out-Null
-$results = @()
-
-function Add-Result([string]$Name, [bool]$Passed, [string]$Details) {
-    $script:results += [ordered]@{ name=$Name; passed=$Passed; details=$Details }
-}
-
-function Invoke-Child([string]$Script, [string[]]$Arguments) {
-    Push-Location $script:fixture
-    try {
-        $output = & pwsh -NoProfile -File $Script @Arguments 2>&1
-        return [pscustomobject]@{ ExitCode=$LASTEXITCODE; Output=($output -join "`n") }
-    } finally {
-        Pop-Location
-    }
-}
-
-try {
-    & git -C $fixture init -b test | Out-Null
-    & git -C $fixture config user.email 'governance-test@example.invalid'
-    & git -C $fixture config user.name 'Governance Red Team'
-    & git -C $fixture remote add origin 'https://example.invalid/repo.git'
-    New-Item -ItemType Directory -Force -Path (Join-Path $fixture '.agent-work\tools'), (Join-Path $fixture '.agent-work\schemas'), (Join-Path $fixture '.agent-work\tasks') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\tools\Common.ps1') -Destination (Join-Path $fixture '.agent-work\tools\Common.ps1')
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\tools\ANTIGRAVITY_TASK_RUNNER.ps1') -Destination (Join-Path $fixture '.agent-work\tools\ANTIGRAVITY_TASK_RUNNER.ps1')
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\tools\PRECOMMIT_SCOPE_CHECK.ps1') -Destination (Join-Path $fixture '.agent-work\tools\PRECOMMIT_SCOPE_CHECK.ps1')
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\tools\EVIDENCE_MANIFEST.ps1') -Destination (Join-Path $fixture '.agent-work\tools\EVIDENCE_MANIFEST.ps1')
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\tools\SAFE_COMMIT.ps1') -Destination (Join-Path $fixture '.agent-work\tools\SAFE_COMMIT.ps1')
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\tools\VERIFY_ATTESTATION.ps1') -Destination (Join-Path $fixture '.agent-work\tools\VERIFY_ATTESTATION.ps1')
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.agent-work\schemas\task-contract.schema.json') -Destination (Join-Path $fixture '.agent-work\schemas\task-contract.schema.json')
-    New-Item -ItemType Directory -Force -Path (Join-Path $fixture '.githooks') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $sourceRoot '.githooks\pre-commit') -Destination (Join-Path $fixture '.githooks\pre-commit')
-    [IO.File]::WriteAllText((Join-Path $fixture '.agent-work\REPOSITORY_ID'), "11111111-1111-4111-8111-111111111111`n", [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "original`n", [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $fixture 'protected.md'), "<!-- BEGIN OWNER:CODEX TEST -->`nprotected`n<!-- END OWNER:CODEX TEST -->`n", [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $fixture '.gitignore'), "monitored/hidden.tmp`n", [Text.UTF8Encoding]::new($false))
-    & git -C $fixture add -- .agent-work/tools .agent-work/schemas .agent-work/REPOSITORY_ID .githooks/pre-commit allowed.txt protected.md .gitignore
-    & git -C $fixture commit -m 'fixture baseline' | Out-Null
-    & git -C $fixture config core.hooksPath .githooks
-    $base = (& git -C $fixture rev-parse HEAD).Trim()
-
-    $contract = [ordered]@{
-        schema_version=1; contract_id='TASK-X-001'; task_id='TASK-X-001'; owner='CODEX'; supersedes=$null; previous_contract_sha256=$null
-        repository=[ordered]@{ repository_id='11111111-1111-4111-8111-111111111111'; expected_root_name=(Split-Path $fixture -Leaf); expected_worktree=($fixture -replace '\\','/'); expected_remote='https://example.invalid/repo.git'; expected_branch='test'; expected_base=$base; allow_detached_head=$false }
-        workspace_policy=[ordered]@{ allowed_modified_files=@('allowed.txt','protected.md','forbidden.txt'); allowed_generated_paths=@('.agent-work/tasks/**','.agent-work/evidence/**'); forbidden_modified_files=@('forbidden.txt','.gitignore'); monitored_roots=@('monitored') }
-        commit_policy=[ordered]@{ allowed_staged_files=@('allowed.txt'); required_staged_files=@('allowed.txt'); forbidden_staged_files=@('forbidden.txt','.gitignore'); protected_files=@('protected.md'); executor_summary_files=@('allowed.txt'); protected_regions=@([ordered]@{path='protected.md';begin_marker='<!-- BEGIN OWNER:CODEX TEST -->';end_marker='<!-- END OWNER:CODEX TEST -->'}) }
-        change_budget=[ordered]@{max_files=1;max_insertions=5;max_deletions=5;max_binary_changes=0;forbid_file_rewrite=$true;preserve_encoding=$true;preserve_line_endings=$true}
-        steps=@(
-            [ordered]@{id='success';executable='pwsh';arguments=@('-NoProfile','-Command','Write-Output OK; exit 0');cwd='.';timeout_seconds=5;on_nonzero='STOP';requires=@();observation_seconds=0;health_stdout_regex=$null;waiver_id=$null},
-            [ordered]@{id='failure';executable='pwsh';arguments=@('-NoProfile','-Command','Write-Error FAIL; exit 7');cwd='.';timeout_seconds=5;on_nonzero='STOP';requires=@('success');observation_seconds=0;health_stdout_regex=$null;waiver_id=$null},
-            [ordered]@{id='blocked';executable='pwsh';arguments=@('-NoProfile','-Command','exit 0');cwd='.';timeout_seconds=5;on_nonzero='STOP';requires=@('failure');observation_seconds=0;health_stdout_regex=$null;waiver_id=$null},
-            [ordered]@{id='observed';executable='pwsh';arguments=@('-NoProfile','-Command','Write-Output READY; Start-Sleep -Seconds 10');cwd='.';timeout_seconds=15;on_nonzero='STOP';requires=@('success');observation_seconds=1;health_stdout_regex='READY';waiver_id=$null},
-            [ordered]@{id='timeout';executable='pwsh';arguments=@('-NoProfile','-Command','Start-Sleep -Seconds 10');cwd='.';timeout_seconds=1;on_nonzero='STOP';requires=@('success');observation_seconds=0;health_stdout_regex=$null;waiver_id=$null}
-        )
-        evidence=[ordered]@{root='.agent-work/evidence';environment_allowlist=@('TEMP')}
-        forbidden_phrases=@('可以安全合并');waivers=@()
-    }
-    $contractPath = Join-Path $fixture '.agent-work\tasks\TASK-X-001.json'
-    [IO.File]::WriteAllText($contractPath, (($contract | ConvertTo-Json -Depth 100) + "`n"), [Text.UTF8Encoding]::new($false))
-    . (Join-Path $fixture '.agent-work\tools\Common.ps1')
-    $contractHash = Get-NormalizedTextSha256 $contractPath
-
-    $runner = Join-Path $fixture '.agent-work\tools\ANTIGRAVITY_TASK_RUNNER.ps1'
-    $run = Invoke-Child $runner @('-ContractPath',$contractPath)
-    if ($run.ExitCode -ne 0) { throw "Runner fixture failed ($($run.ExitCode)):`n$($run.Output)" }
-    $summaryPath = ($run.Output -split "`n" | Select-Object -Last 1).Trim()
-    if (-not (Test-Path -LiteralPath $summaryPath)) { throw "Runner summary path is missing: $summaryPath`nRunner output:`n$($run.Output)" }
-    $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -Depth 100
-    $states = @{}; foreach($s in $summary.steps){$states[[string]$s.step_id]=[string]$s.result}
-    $runnerPass = $run.ExitCode -eq 0 -and $states.success -eq 'SUCCEEDED' -and $states.failure -eq 'FAILED' -and $states.blocked -eq 'BLOCKED_BY_PREVIOUS_STEP' -and $states.observed -eq 'OBSERVED_THEN_TERMINATED' -and $states.timeout -eq 'TIMED_OUT'
-    Add-Result 'runner-result-model' $runnerPass (($states | ConvertTo-Json -Compress))
-    $preflightPath = Join-Path (Split-Path $summaryPath -Parent) 'preflight.json'
-
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "changed`n", [Text.UTF8Encoding]::new($false)); & git -C $fixture add -- allowed.txt
-    $checker = Join-Path $fixture '.agent-work\tools\PRECOMMIT_SCOPE_CHECK.ps1'
-    $valid = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash,'-PreflightManifest',$preflightPath)
-    Add-Result 'valid-scope' ($valid.ExitCode -eq 0) $valid.Output
-
-    $savedContract = [IO.File]::ReadAllBytes($contractPath); [IO.File]::AppendAllText($contractPath, " `n")
-    $tamper = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
-    Add-Result 'contract-tamper' ($tamper.ExitCode -eq 10) $tamper.Output
-    [IO.File]::WriteAllBytes($contractPath,$savedContract)
-
-    $lfContract = Get-Content -LiteralPath $contractPath -Raw -Encoding utf8
-    [IO.File]::WriteAllText($contractPath, ($lfContract -replace "(?<!`r)`n", "`r`n"), [Text.UTF8Encoding]::new($false))
-    $lineEndingStable = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
-    Add-Result 'contract-line-ending-stability' ($lineEndingStable.ExitCode -eq 0) $lineEndingStable.Output
-    [IO.File]::WriteAllBytes($contractPath,$savedContract)
-
-    [IO.File]::WriteAllText((Join-Path $fixture 'forbidden.txt'), "forbidden`n", [Text.UTF8Encoding]::new($false))
-    $forbidden = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
-    Add-Result 'forbidden-file' ($forbidden.ExitCode -eq 11) $forbidden.Output
-    Remove-Item -LiteralPath (Join-Path $fixture 'forbidden.txt')
-
-    [IO.File]::WriteAllText((Join-Path $fixture 'protected.md'), "<!-- BEGIN OWNER:CODEX TEST -->`nchanged`n<!-- END OWNER:CODEX TEST -->`n", [Text.UTF8Encoding]::new($false))
-    $protected = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
-    Add-Result 'protected-region' ($protected.ExitCode -eq 12) $protected.Output
-    & git -C $fixture restore --worktree -- protected.md
-
-    New-Item -ItemType Directory -Force -Path (Join-Path $fixture 'monitored') | Out-Null
-    [IO.File]::WriteAllText((Join-Path $fixture 'monitored\hidden.tmp'), 'hidden', [Text.UTF8Encoding]::new($false))
-    $ignored = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash)
-    Add-Result 'ignored-hidden-file' ($ignored.ExitCode -eq 19) $ignored.Output
-    Remove-Item -LiteralPath (Join-Path $fixture 'monitored\hidden.tmp'); Remove-Item -LiteralPath (Join-Path $fixture 'monitored')
-
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), ([char]0xFEFF) + "changed`n", [Text.UTF8Encoding]::new($false)); & git -C $fixture add -- allowed.txt
-    $encoding = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash,'-PreflightManifest',$preflightPath)
-    Add-Result 'encoding-change' ($encoding.ExitCode -eq 18) $encoding.Output
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "changed`n", [Text.UTF8Encoding]::new($false)); & git -C $fixture add -- allowed.txt
-
-    $rawSessionRoot = Split-Path (Split-Path $summaryPath -Parent) -Parent -Resolve
-    $rawTaskRoot = Join-Path $fixture '.agent-work\evidence\raw\TASK-X-001'
-    $manifestPath = Join-Path (Split-Path $summaryPath -Parent) 'evidence-index.json'
-    $manifestTool = Join-Path $fixture '.agent-work\tools\EVIDENCE_MANIFEST.ps1'
-    $manifestRun = Invoke-Child $manifestTool @('-ContractPath',$contractPath,'-TaskEvidenceRoot',$rawTaskRoot,'-OutputPath',([IO.Path]::GetRelativePath($fixture,$manifestPath)))
-    $rawFile = Get-ChildItem -LiteralPath $rawTaskRoot -File -Recurse | Select-Object -First 1
-    [IO.File]::AppendAllText($rawFile.FullName,'tamper')
-    $rawTamper = Invoke-Child $checker @('-ContractPath',$contractPath,'-ExpectedContractSha256',$contractHash,'-EvidenceManifest',$manifestPath)
-    Add-Result 'raw-evidence-tamper' ($rawTamper.ExitCode -eq 14) $rawTamper.Output
-    [IO.File]::WriteAllText($rawFile.FullName, '', [Text.UTF8Encoding]::new($false))
-
-    & git -C $fixture restore --staged -- allowed.txt
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "safe commit`n", [Text.UTF8Encoding]::new($false))
-    $safe = Join-Path $fixture '.agent-work\tools\SAFE_COMMIT.ps1'
-    $safeRun = Invoke-Child $safe @('-ContractPath',$contractPath,'-Message','safe fixture commit')
-    $verify = Join-Path $fixture '.agent-work\tools\VERIFY_ATTESTATION.ps1'
-    $verifyRun = Invoke-Child $verify @('-ContractPath',$contractPath,'-Commit','HEAD')
-    Add-Result 'safe-commit-attestation' ($safeRun.ExitCode -eq 0 -and $verifyRun.ExitCode -eq 0) ($safeRun.Output + "`n" + $verifyRun.Output)
-    $commonDir = (& git -C $fixture rev-parse --git-common-dir).Trim()
-    if (-not [IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $fixture $commonDir }
-    $safeCommit = (& git -C $fixture rev-parse HEAD).Trim()
-    $commonReceipt = Join-Path (Join-Path $commonDir 'codex-attestations') ("$safeCommit.json")
-    Add-Result 'common-git-dir-receipt' (Test-Path -LiteralPath $commonReceipt) $commonReceipt
-
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "direct`n", [Text.UTF8Encoding]::new($false)); & git -C $fixture add -- allowed.txt
-    $directOutput = & git -C $fixture commit -m 'direct commit' 2>&1; $directExit = $LASTEXITCODE
-    $directText = $directOutput -join "`n"
-    Add-Result 'direct-commit-hook-rejection' ($directExit -ne 0 -and $directText -match 'SAFE_COMMIT_REQUIRED') $directText
-    & git -C $fixture restore --staged -- allowed.txt
-    [IO.File]::WriteAllText((Join-Path $fixture 'allowed.txt'), "bypass`n", [Text.UTF8Encoding]::new($false)); & git -C $fixture add -- allowed.txt; & git -C $fixture commit --no-verify -m 'bypass' | Out-Null
-    $bypass = Invoke-Child $verify @('-ContractPath',$contractPath,'-Commit','HEAD')
-    Add-Result 'no-verify-lacks-attestation' ($bypass.ExitCode -ne 0) $bypass.Output
-
-    $report = [ordered]@{ schema_version=1; generated_at_utc=[DateTime]::UtcNow.ToString('o'); fixture=$fixture; passed=(@($results | Where-Object passed).Count); failed=(@($results | Where-Object { -not $_.passed }).Count); results=$results }
-    $destination = Join-Path $sourceRoot ($OutputPath -replace '/', '\')
-    New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent) | Out-Null
-    [IO.File]::WriteAllText($destination, (($report | ConvertTo-Json -Depth 100) + "`n"), [Text.UTF8Encoding]::new($false))
-    if ($report.failed -gt 0) { throw "$($report.failed) governance red-team tests failed. See $destination" }
-    Write-Output $destination
-} finally {
-    $resolvedFixture = [IO.Path]::GetFullPath($fixture)
-    if ($resolvedFixture.StartsWith($tempBase + '\',[StringComparison]::OrdinalIgnoreCase) -and (Split-Path $resolvedFixture -Leaf).StartsWith('watchtracker-governance-redteam-')) {
-        if (Test-Path -LiteralPath $resolvedFixture) { Remove-Item -LiteralPath $resolvedFixture -Recurse -Force }
-    }
-}
+param([string]$OutputPath='.agent-work/evidence/governance/TASK-G-001-r3-red-team.json')
+Set-StrictMode -Version Latest;$ErrorActionPreference='Stop'
+$sourceRoot=(Resolve-Path(Join-Path $PSScriptRoot '..\..\..')).Path;$tempBase=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\');$sandbox=Join-Path $tempBase('watchtracker-governance-r3-'+[guid]::NewGuid().ToString('N'));$gov=Join-Path $sandbox 'Governance';$exec=Join-Path $sandbox 'Execution';$results=@()
+function Add-Result([string]$Name,[bool]$Passed,[string]$Details){$script:results+=[ordered]@{name=$Name;passed=$Passed;details=$Details}}
+function Invoke-Child([string]$Cwd,[string]$Script,[string[]]$Arguments){Push-Location $Cwd;try{$out=& pwsh -NoProfile -File $Script @Arguments 2>&1;return [pscustomobject]@{ExitCode=$LASTEXITCODE;Output=($out-join"`n")}}finally{Pop-Location}}
+function Write-Text([string]$Path,[string]$Text){$parent=Split-Path $Path -Parent;if($parent){New-Item -ItemType Directory -Force -Path $parent|Out-Null};[IO.File]::WriteAllText($Path,$Text,[Text.UTF8Encoding]::new($false))}
+try{
+    New-Item -ItemType Directory -Path $gov,$exec|Out-Null
+    & git -C $gov init -b governance|Out-Null;& git -C $gov config user.email governance@example.invalid;& git -C $gov config user.name Governance
+    New-Item -ItemType Directory -Force -Path(Join-Path $gov '.agent-work\tools'),(Join-Path $gov '.agent-work\schemas'),(Join-Path $gov '.githooks'),(Join-Path $gov '.agent-work\tasks')|Out-Null
+    Copy-Item "$sourceRoot\.agent-work\tools\*.ps1"(Join-Path $gov '.agent-work\tools');Copy-Item "$sourceRoot\.agent-work\schemas\*.json"(Join-Path $gov '.agent-work\schemas');Copy-Item(Join-Path $sourceRoot '.githooks\pre-commit')(Join-Path $gov '.githooks\pre-commit')
+    & git -C $gov add -- .;& git -C $gov commit -m 'governance toolset'|Out-Null;$govHead=(& git -C $gov rev-parse HEAD).Trim()
+    & git -C $exec init -b execute|Out-Null;& git -C $exec config user.email executor@example.invalid;& git -C $exec config user.name Executor;& git -C $exec remote add origin https://example.invalid/repo.git
+    New-Item -ItemType Directory -Force -Path(Join-Path $exec '.agent-work')|Out-Null;Write-Text(Join-Path $exec '.agent-work\REPOSITORY_ID')"11111111-1111-4111-8111-111111111111`n";Write-Text(Join-Path $exec 'allowed.txt')"original`n";Write-Text(Join-Path $exec 'protected.md')"<!-- BEGIN OWNER:CODEX TEST -->`nprotected`n<!-- END OWNER:CODEX TEST -->`n";Write-Text(Join-Path $exec '.gitignore')"monitored/hidden.tmp`n";& git -C $exec add -- .;& git -C $exec commit -m baseline|Out-Null;$base=(& git -C $exec rev-parse HEAD).Trim();$common=(& git -C $exec rev-parse --path-format=absolute --git-common-dir).Trim()
+    $toolHashes=[ordered]@{};foreach($name in @('Common.ps1','ANTIGRAVITY_TASK_RUNNER.ps1','PRECOMMIT_SCOPE_CHECK.ps1','SAFE_COMMIT.ps1','VERIFY_ATTESTATION.ps1')){$toolHashes[".agent-work/tools/$name"]=(Get-FileHash(Join-Path $gov ".agent-work\tools\$name")-Algorithm SHA256).Hash}
+    $contract=[ordered]@{schema_version=2;contract_id='TASK-X-001';task_id='TASK-X-001';owner='CODEX';supersedes=$null;previous_contract_bytes_sha256=$null;authorization_reason='r3 red team';repository=[ordered]@{repository_id='11111111-1111-4111-8111-111111111111';expected_root_name='Execution';expected_worktree=($exec-replace'\\','/');expected_common_git_dir=($common-replace'\\','/');expected_remote='https://example.invalid/repo.git';expected_branch='execute';expected_base=$base;allow_detached_head=$false};governance=[ordered]@{root=($gov-replace'\\','/');expected_commit=$govHead;require_clean=$true;bootstrap=$false;tool_sha256=$toolHashes};workspace_policy=[ordered]@{allowed_modified_files=@('allowed.txt','protected.md');allowed_generated_paths=@('.agent-work/evidence/**');forbidden_modified_files=@('forbidden.txt','.gitignore');monitored_roots=@('monitored');conditional_files=@([ordered]@{path='conditional.txt';activation='STOP_AND_REISSUE_CONTRACT';approved_by='CODEX'})};commit_policy=[ordered]@{allowed_staged_files=@('allowed.txt');required_staged_files=@('allowed.txt');forbidden_staged_files=@('forbidden.txt','.gitignore');protected_files=@('protected.md');executor_summary_files=@('allowed.txt');protected_regions=@([ordered]@{path='protected.md';begin_marker='<!-- BEGIN OWNER:CODEX TEST -->';end_marker='<!-- END OWNER:CODEX TEST -->'})};change_budget=[ordered]@{max_files=1;max_insertions=5;max_deletions=5;max_binary_changes=0;forbid_file_rewrite=$true;preserve_encoding=$true;preserve_line_endings=$true};steps=@([ordered]@{id='success';executable='pwsh';arguments=@('-NoProfile','-Command','Start-Sleep -Milliseconds 300; Write-Output OK; Write-Output $env:GOV_TEST_SECRET');cwd='.';timeout_seconds=5;on_nonzero='STOP';requires=@();observation_seconds=0;health_stdout_regex=$null;waiver_id=$null;process_path_patterns=@()},[ordered]@{id='failure';executable='pwsh';arguments=@('-NoProfile','-Command','Start-Sleep -Milliseconds 300; exit 7');cwd='.';timeout_seconds=5;on_nonzero='STOP';requires=@('success');observation_seconds=0;health_stdout_regex=$null;waiver_id=$null;process_path_patterns=@()},[ordered]@{id='blocked';executable='pwsh';arguments=@('-NoProfile','-Command','exit 0');cwd='.';timeout_seconds=5;on_nonzero='STOP';requires=@('failure');observation_seconds=0;health_stdout_regex=$null;waiver_id=$null;process_path_patterns=@()},[ordered]@{id='observed';executable='pwsh';arguments=@('-NoProfile','-Command','Write-Output READY; Start-Sleep -Seconds 5');cwd='.';timeout_seconds=8;on_nonzero='STOP';requires=@('success');observation_seconds=1;health_stdout_regex='READY';waiver_id=$null;process_path_patterns=@()},[ordered]@{id='timeout';executable='pwsh';arguments=@('-NoProfile','-Command','Start-Sleep -Seconds 5');cwd='.';timeout_seconds=1;on_nonzero='STOP';requires=@('success');observation_seconds=0;health_stdout_regex=$null;waiver_id=$null;process_path_patterns=@()});evidence=[ordered]@{root='.agent-work/evidence';environment_allowlist=@('TEMP');sensitive_names=@('GOV_TEST_SECRET');forbid_sensitive_command_line=$true;capture_policy='REDACT_AT_INGRESS';redaction_rules_version=1};locking=[ordered]@{scope='WORKTREE';stale_lock_requires_recovery=$true};forbidden_phrases=@('可以安全合并');waivers=@()}
+    $contractPath=Join-Path $gov '.agent-work\tasks\TASK-X-001.json';Write-Text $contractPath(($contract|ConvertTo-Json -Depth 100)+"`n");$contractHash=(Get-FileHash $contractPath -Algorithm SHA256).Hash
+    Add-Result 'external-contract' (-not$contractPath.StartsWith($exec,[StringComparison]::OrdinalIgnoreCase)) $contractPath
+    $runner=Join-Path $gov '.agent-work\tools\ANTIGRAVITY_TASK_RUNNER.ps1';$runnerArgs=@('-ContractPath',$contractPath,'-ExpectedContractBytesSha256',$contractHash,'-ExpectedRepositoryId',$contract.repository.repository_id,'-ExpectedTaskId',$contract.task_id);[Environment]::SetEnvironmentVariable('GOV_TEST_SECRET','secret-do-not-write','Process');$run=Invoke-Child $exec $runner $runnerArgs;[Environment]::SetEnvironmentVariable('GOV_TEST_SECRET',$null,'Process');if($run.ExitCode-ne0){throw "Runner failed: $($run.Output)"};$summaryPath=($run.Output-split"`n"|Select-Object -Last 1).Trim();$summary=Get-Content $summaryPath -Raw|ConvertFrom-Json -Depth 100;$states=@{};foreach($s in $summary.steps){$states[[string]$s.step_id]=[string]$s.result};Add-Result 'runner-result-model' ($states.success-eq'SUCCEEDED'-and$states.failure-eq'FAILED'-and$states.blocked-eq'BLOCKED_BY_PREVIOUS_STEP'-and$states.observed-eq'OBSERVED_THEN_TERMINATED'-and$states.timeout-eq'TIMED_OUT')($states|ConvertTo-Json -Compress)
+    $captured=(Get-Content(Join-Path(Split-Path(Split-Path $summaryPath -Parent)-Parent)('..\..\captured\TASK-X-001\'+(Split-Path(Split-Path $summaryPath -Parent)-Leaf)+'\success.stdout.txt'))-Raw);Add-Result 'redact-at-ingress' ($captured-notmatch'secret-do-not-write'-and$captured-match'<REDACTED:GOV_TEST_SECRET>') $captured
+    $saved=[IO.File]::ReadAllBytes($contractPath);[IO.File]::AppendAllText($contractPath," `n");$tamper=Invoke-Child $exec $runner $runnerArgs;Add-Result 'contract-byte-tamper' ($tamper.ExitCode-eq20) $tamper.Output;[IO.File]::WriteAllBytes($contractPath,$saved)
+    $repoIdPath=Join-Path $exec '.agent-work\REPOSITORY_ID';$repoIdSaved=[IO.File]::ReadAllBytes($repoIdPath);Write-Text $repoIdPath "22222222-2222-4222-8222-222222222222`n";$wrongRepo=Invoke-Child $exec $runner $runnerArgs;Add-Result 'same-base-wrong-repository-id' ($wrongRepo.ExitCode-eq10) $wrongRepo.Output;[IO.File]::WriteAllBytes($repoIdPath,$repoIdSaved)
+    $commonTool=Join-Path $gov '.agent-work\tools\Common.ps1';$toolSaved=[IO.File]::ReadAllBytes($commonTool);[IO.File]::AppendAllText($commonTool,"# drift`n");$toolDrift=Invoke-Child $exec $runner $runnerArgs;Add-Result 'governance-tool-drift' ($toolDrift.ExitCode-eq28) $toolDrift.Output;[IO.File]::WriteAllBytes($commonTool,$toolSaved)
+    . (Join-Path $gov '.agent-work\tools\Common.ps1');$lock=Acquire-WorktreeLock $common $contract.repository.repository_id $exec $contract.task_id ([guid]::NewGuid().ToString());$locked=Invoke-Child $exec $runner $runnerArgs;Add-Result 'atomic-concurrent-lock' ($locked.ExitCode-eq26) $locked.Output;Release-WorktreeLock $lock $lock.Value.session_id
+    $lockDir=Join-Path $common("codex-agent-locks\"+$contract.repository.repository_id);$lockPath=Join-Path $lockDir((Get-BytesSha256([Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-NormalPath $exec).ToLowerInvariant())))+'.lock');Write-Text $lockPath('{"pid":999999,"creation_time_utc":"2000-01-01T00:00:00Z","session_id":"stale"}');$stale=Invoke-Child $exec $runner $runnerArgs;Add-Result 'stale-lock-needs-recovery' ($stale.ExitCode-eq27) $stale.Output;Remove-Item $lockPath -Force
+    $stateTest=Join-Path $common 'state-test.json';$sid=[guid]::NewGuid().ToString();[void](Set-SessionState $stateTest $contract.task_id $sid 'CREATED' @{});$invalid=$false;try{[void](Set-SessionState $stateTest $contract.task_id $sid 'VERIFIED' @{})}catch{$invalid=$true};Add-Result 'illegal-state-transition' $invalid 'CREATED -> VERIFIED rejected';Remove-Item $stateTest -Force
+    $checker=Join-Path $gov '.agent-work\tools\PRECOMMIT_SCOPE_CHECK.ps1';$checkArgs=@('-ContractPath',$contractPath,'-ExpectedContractBytesSha256',$contractHash,'-ExpectedTaskId',$contract.task_id);Write-Text(Join-Path $exec 'forbidden.txt')"x`n";$x=Invoke-Child $exec $checker $checkArgs;Add-Result 'forbidden-file' ($x.ExitCode-eq11) $x.Output;Remove-Item(Join-Path $exec 'forbidden.txt')
+    Write-Text(Join-Path $exec 'conditional.txt')"x`n";$x=Invoke-Child $exec $checker $checkArgs;Add-Result 'conditional-stop' ($x.ExitCode-eq11) $x.Output;Remove-Item(Join-Path $exec 'conditional.txt')
+    Write-Text(Join-Path $exec 'protected.md')"<!-- BEGIN OWNER:CODEX TEST -->`nchanged`n<!-- END OWNER:CODEX TEST -->`n";Write-Text(Join-Path $exec 'allowed.txt')"supporting change`n";& git -C $exec add -- allowed.txt;$x=Invoke-Child $exec $checker $checkArgs;Add-Result 'protected-region' ($x.ExitCode-eq12) $x.Output;& git -C $exec restore --staged -- allowed.txt;& git -C $exec restore --worktree -- protected.md allowed.txt
+    New-Item -ItemType Directory -Force -Path(Join-Path $exec 'monitored')|Out-Null;Write-Text(Join-Path $exec 'monitored\hidden.tmp')'x';$x=Invoke-Child $exec $checker $checkArgs;Add-Result 'monitored-ignored-file' ($x.ExitCode-eq25) $x.Output;Remove-Item (Join-Path $exec 'monitored') -Recurse -Force
+    $preflight=Join-Path(Split-Path $summaryPath -Parent)'preflight.json';Write-Text(Join-Path $exec 'allowed.txt')([char]0xFEFF+"changed`n");& git -C $exec add -- allowed.txt;$x=Invoke-Child $exec $checker($checkArgs+@('-PreflightManifest',$preflight));Add-Result 'encoding-change' ($x.ExitCode-eq21) $x.Output;& git -C $exec restore --staged -- allowed.txt;Write-Text(Join-Path $exec 'allowed.txt')"changed`n"
+    $sessionDir=Split-Path $summaryPath -Parent;$capturedDir=Join-Path $exec(".agent-work\evidence\captured\TASK-X-001\"+(Split-Path $sessionDir -Leaf));$evidence=Join-Path $sessionDir 'evidence-index.json';$manifestTool=Join-Path $gov '.agent-work\tools\EVIDENCE_MANIFEST.ps1';$manifestArgs=@('-ContractPath',$contractPath,'-ExpectedContractBytesSha256',$contractHash,'-ExpectedTaskId',$contract.task_id,'-TaskEvidenceRoot',($sessionDir+';'+$capturedDir),'-OutputPath',([IO.Path]::GetRelativePath($exec,$evidence)));$manifestRun=Invoke-Child $exec $manifestTool $manifestArgs;if($manifestRun.ExitCode-ne0){throw "Evidence manifest failed: $($manifestRun.Output)"};$raw=Get-ChildItem $capturedDir -File|Select-Object -First 1;& git -C $exec add -- allowed.txt;[IO.File]::AppendAllText($raw.FullName,'tamper');$x=Invoke-Child $exec $checker($checkArgs+@('-EvidenceManifest',$evidence));Add-Result 'captured-evidence-tamper' ($x.ExitCode-eq14) $x.Output;& git -C $exec restore --staged -- allowed.txt;[IO.File]::WriteAllBytes($raw.FullName,[IO.File]::ReadAllBytes($raw.FullName)[0..([IO.File]::ReadAllBytes($raw.FullName).Length-7)]);$manifestRun=Invoke-Child $exec $manifestTool $manifestArgs;if($manifestRun.ExitCode-ne0){throw "Evidence manifest refresh failed: $($manifestRun.Output)"}
+    $timeManifest=Get-Content $evidence -Raw|ConvertFrom-Json -Depth 100;$timeManifest.files[0].producer_ended_at_utc='2030-01-01T00:00:00Z';$timeManifest.files[0].hashed_at_utc='2029-01-01T00:00:00Z';Write-Text $evidence(($timeManifest|ConvertTo-Json -Depth 100)+"`n");& git -C $exec add -- allowed.txt;$x=Invoke-Child $exec $checker($checkArgs+@('-EvidenceManifest',$evidence));Add-Result 'evidence-time-order' ($x.ExitCode-eq17) $x.Output;& git -C $exec restore --staged -- allowed.txt;$manifestRun=Invoke-Child $exec $manifestTool $manifestArgs
+    $waiverContract=$contract.PSObject.Copy();$waiverContract.waivers=@([ordered]@{waiver_id='FMT-001';command_step='fmt';expected_exit_codes=@(1);gate_effect='FAIL';continue_for_diagnostics=$true;baseline_commit=$base;baseline_evidence_sha256=('A'*64);allowed_paths=@('legacy.rs');diagnostic_fingerprints=@('OLD');new_diagnostics_forbidden=$true;modified_paths_must_be_clean=$true;expires_after_task='TASK-X-002'});Write-Text $contractPath(($waiverContract|ConvertTo-Json -Depth 100)+"`n");$waiverHash=(Get-FileHash $contractPath).Hash;$diag=Join-Path $sessionDir 'waiver-diagnostics.json';Write-Text $diag('{"waivers":[{"waiver_id":"FMT-001","current_fingerprints":["OLD","NEW"],"modified_paths":[],"current_paths":[]}]}');& git -C $exec add -- allowed.txt;$x=Invoke-Child $exec $checker @('-ContractPath',$contractPath,'-ExpectedContractBytesSha256',$waiverHash,'-ExpectedTaskId',$contract.task_id,'-WaiverDiagnosticsManifest',$diag);Add-Result 'baseline-waiver-new-diagnostic' ($x.ExitCode-eq23) $x.Output;& git -C $exec restore --staged -- allowed.txt;[IO.File]::WriteAllBytes($contractPath,$saved)
+    $summary=Get-Content $summaryPath -Raw|ConvertFrom-Json -Depth 100;$statePath=[string]$summary.state_path;$sessionId=[string]$summary.session_id;$safe=Join-Path $gov '.agent-work\tools\SAFE_COMMIT.ps1';& git -C $exec config core.hooksPath(Join-Path $gov '.githooks');$safeArgs=@('-ContractPath',$contractPath,'-ExpectedContractBytesSha256',$contractHash,'-ExpectedTaskId',$contract.task_id,'-Message','safe fixture commit','-RunnerSessionId',$sessionId,'-StatePath',$statePath,'-EvidenceManifest',$evidence,'-PreflightManifest',$preflight);Write-Text(Join-Path $exec 'forbidden.txt')"reject`n";$beforeHead=(& git -C $exec rev-parse HEAD).Trim();$rejected=Invoke-Child $exec $safe $safeArgs;$realIndexAfterReject=(& git -C $exec diff --cached --name-only)-join'';Add-Result 'temp-index-rejection-preserves-real-index' ($rejected.ExitCode-eq11-and-not$realIndexAfterReject-and((& git -C $exec rev-parse HEAD).Trim()-eq$beforeHead)) $rejected.Output;Remove-Item(Join-Path $exec 'forbidden.txt');$safeRun=Invoke-Child $exec $safe $safeArgs;Add-Result 'safe-commit-created' ($safeRun.ExitCode-eq0) $safeRun.Output;if($safeRun.ExitCode-ne0){throw "Safe Commit failed: $($safeRun.Output)"}
+    $verify=Join-Path $gov '.agent-work\tools\VERIFY_ATTESTATION.ps1';$verifyArgs=@('-ContractPath',$contractPath,'-ExpectedContractBytesSha256',$contractHash,'-ExpectedTaskId',$contract.task_id,'-EvidenceManifest',$evidence,'-Commit','HEAD');$verified=Invoke-Child $exec $verify $verifyArgs;Add-Result 'attestation-cross-check' ($verified.ExitCode-eq0) $verified.Output
+    $receipt=Join-Path $common("codex-attestations\TASK-X-001\"+((& git -C $exec rev-parse HEAD).Trim())+'.json');Rename-Item $receipt($receipt+'.hold');$missing=Invoke-Child $exec $verify $verifyArgs;Add-Result 'missing-receipt-rejected' ($missing.ExitCode-eq24) $missing.Output;Rename-Item($receipt+'.hold')$receipt
+    Write-Text(Join-Path $exec 'allowed.txt')"direct`n";& git -C $exec add -- allowed.txt;$direct=& git -C $exec commit -m direct 2>&1;$directExit=$LASTEXITCODE;Add-Result 'direct-commit-hook-rejected' ($directExit-ne0-and($direct-join"`n")-match'SAFE_COMMIT_REQUIRED')($direct-join"`n");& git -C $exec restore --staged -- allowed.txt
+    & git -C $exec add -- allowed.txt;& git -C $exec commit --no-verify -m bypass|Out-Null;$bypass=Invoke-Child $exec $verify $verifyArgs;Add-Result 'no-verify-not-attested' ($bypass.ExitCode-eq24) $bypass.Output
+    $report=[ordered]@{schema_version=2;generated_at_utc=[DateTime]::UtcNow.ToString('o');fixture_root=$sandbox;passed=@($results|Where-Object passed).Count;failed=@($results|Where-Object{-not$_.passed}).Count;invariants=[ordered]@{business_repository_untouched=$true;temporary_repositories_only=$true};results=$results};$destination=Join-Path $sourceRoot($OutputPath-replace'/','\');Write-Text $destination(($report|ConvertTo-Json -Depth 100)+"`n");if($report.failed){throw "$($report.failed) r3 red-team tests failed: $destination"};Write-Output $destination
+}finally{$resolved=[IO.Path]::GetFullPath($sandbox);if($env:KEEP_GOV_FIXTURE-ne'1'-and$resolved.StartsWith($tempBase+'\',[StringComparison]::OrdinalIgnoreCase)-and(Split-Path $resolved -Leaf).StartsWith('watchtracker-governance-r3-')-and(Test-Path $resolved)){Remove-Item -LiteralPath $resolved -Recurse -Force}else{Write-Warning "Governance fixture retained: $resolved"}}

@@ -388,3 +388,16 @@
 - Correction: task contract identity now hashes normalized UTF-8/LF content; independent BOM/line-ending policy remains responsible for encoding enforcement.
 - Red team: 13/13 PASS, adding contract line-ending stability while retaining semantic contract-tamper rejection and all previous cases.
 - Integration requirement: verify the r2-attested commit from both Governance and Recovery worktrees before opening TASK-A-002.
+
+### TASK-G-001 Contract Revision r3
+
+- Owner: Codex; implementation worktree: `D:\Project\Projects\WatchTracker-Governance`; implementation BASE: `572c06be1c09f3a96beb7a0f98f966067724d2c3`.
+- Authorization identity: raw `Contract-Bytes-SHA256` is verified before JSON parsing from the same byte snapshot; normalized text Hash is auxiliary only.
+- Control-plane binding: repository/worktree/common-Git identity, Governance commit, tool byte Hashes, contract bytes, Runner session, evidence manifest and implementation BASE are cross-bound through trailers and the external receipt.
+- Concurrency/recovery: atomic worktree lock distinguishes active session (`26`) from stale session requiring explicit recovery (`27`); session states use legal transitions and atomic same-directory writes.
+- Safe Commit: validates a temporary index initialized from `HEAD`, rechecks HEAD/contract/tool/worktree bytes and the empty real index, then compares temporary and real staged file/tree/diff identities. It never resets or restores the user's real index.
+- Evidence safety: environment capture is allowlist-only; sensitive variables record presence only; stdout/stderr are redacted before disk persistence; process identity includes PID, parent, creation time, path and command line.
+- Stable rejection interface: JSON rules `10` through `30`, including protected scope, evidence timing, waiver mismatch, attestation, concurrent/stale sessions, tool drift, sensitive-data risk and illegal state transitions.
+- Red team: `23/23 PASS` in separate disposable Governance and Execution repositories. Covered external contract identity, raw-byte tampering, same-BASE wrong repository ID, tool drift, active/stale locks, illegal state transitions, conditional-file stop, protected/ignored/encoding checks, captured evidence tampering, evidence time ordering, new waiver diagnostics, temporary-index failure invariants, Safe Commit, receipt verification, direct-hook rejection and `--no-verify` ineligibility.
+- Business/data boundary: no WatchTracker source, configuration, dependency, application process or database command was used. Recovery worktree was not modified.
+- Status: r3 implementation complete; awaiting final Safe Commit and independent cross-worktree attestation verification. TASK-A-002 remains unopened.

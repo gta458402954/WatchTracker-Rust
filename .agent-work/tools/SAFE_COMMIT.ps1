@@ -1,79 +1,44 @@
 param(
     [Parameter(Mandatory)][string]$ContractPath,
+    [Parameter(Mandatory)][string]$ExpectedContractBytesSha256,
+    [Parameter(Mandatory)][string]$ExpectedTaskId,
     [Parameter(Mandatory)][string]$Message,
+    [Parameter(Mandatory)][string]$RunnerSessionId,
+    [Parameter(Mandatory)][string]$StatePath,
+    [Parameter(Mandatory)][string]$EvidenceManifest,
     [string]$PreflightManifest,
-    [string]$EvidenceManifest
+    [string]$WaiverDiagnosticsManifest
 )
-
 . (Join-Path $PSScriptRoot 'Common.ps1')
-$contractInfo = Read-TaskContract $ContractPath
-$root = Assert-RepositoryIdentity $contractInfo
-$contract = $contractInfo.Value
-$initialStaged = @(Get-StagedPaths $root)
-if ($initialStaged.Count -ne 0) { throw "SAFE_COMMIT refuses a non-empty initial index: $($initialStaged -join ', ')" }
-
-$changes = @(Get-WorkspaceChangePaths $root)
-$selected = @()
-foreach ($path in $changes) {
-    if (Test-PathMatchesAny $path $contract.commit_policy.allowed_staged_files) { $selected += $path }
-}
-foreach ($required in @($contract.commit_policy.required_staged_files)) {
-    if (-not (@($selected | Where-Object { Test-PathMatchesAny $_ @($required) }).Count)) { throw "Required commit path is absent: $required" }
-}
-if ($selected.Count -eq 0) { throw 'No authorized files are available to commit.' }
-foreach ($path in $selected) { & git -C $root add -- $path; if ($LASTEXITCODE -ne 0) { throw "Unable to stage $path" } }
-
-$checker = Join-Path $PSScriptRoot 'PRECOMMIT_SCOPE_CHECK.ps1'
-$commitCreated = $false
+$governanceRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'));$taskId=$ExpectedTaskId;$realStaged=$false;$commitCreated=$false
+function Fail([int]$Code,[string]$Message,[string]$Path=$null,[hashtable]$More=@{}){Exit-ControlError $Code 'safe-commit' $taskId $Message $Path $More}
 try {
-    $checkerArgs = @('-NoProfile','-File',$checker,'-ContractPath',$contractInfo.Path,'-ExpectedContractSha256',$contractInfo.Sha256)
-    if ($PreflightManifest) { $checkerArgs += @('-PreflightManifest',$PreflightManifest) }
-    if ($EvidenceManifest) { $checkerArgs += @('-EvidenceManifest',$EvidenceManifest) }
-    & pwsh @checkerArgs
-    if ($LASTEXITCODE -ne 0) { throw "Scope checker rejected the commit with exit $LASTEXITCODE" }
-
-    $staged = @(Get-StagedPaths $root)
-    $body = "$Message`n`nContract-SHA256: $($contractInfo.Sha256)`nSafe-Commit-Version: 1`nScope-Check: PASS"
-    $oldContractEnv = [Environment]::GetEnvironmentVariable('CODEX_TASK_CONTRACT','Process')
-    $oldHashEnv = [Environment]::GetEnvironmentVariable('CODEX_CONTRACT_SHA256','Process')
-    try {
-        [Environment]::SetEnvironmentVariable('CODEX_TASK_CONTRACT',$contractInfo.Path,'Process')
-        [Environment]::SetEnvironmentVariable('CODEX_CONTRACT_SHA256',$contractInfo.Sha256,'Process')
-        & git -C $root commit -m $body
-        if ($LASTEXITCODE -ne 0) { throw 'git commit failed.' }
-        $commitCreated = $true
-    } finally {
-        [Environment]::SetEnvironmentVariable('CODEX_TASK_CONTRACT',$oldContractEnv,'Process')
-        [Environment]::SetEnvironmentVariable('CODEX_CONTRACT_SHA256',$oldHashEnv,'Process')
-    }
+    $info=Read-TaskContractSnapshot $ContractPath $ExpectedContractBytesSha256 $ExpectedTaskId $governanceRoot;$root=Assert-RepositoryIdentity $info;$contract=$info.Value;$governanceStart=Get-GovernanceToolSnapshot $info;$cleanIndex=@{GIT_INDEX_FILE=$null}
+    if(@(Get-StagedPaths $root $cleanIndex).Count-ne0){Fail 13 'SAFE_COMMIT requires an empty real index.'}
+    $changes=@(Get-WorkspaceChangePaths $root);$selected=@($changes|Where-Object{Test-PathMatchesAny $_ $contract.commit_policy.allowed_staged_files}|Sort-Object -Unique)
+    foreach($required in @($contract.commit_policy.required_staged_files)){if(-not@($selected|Where-Object{Test-PathMatchesAny $_ @($required)}).Count){Fail 22 "Required commit path is absent: $required" $required}}
+    if(-not$selected.Count){Fail 22 'No authorized files are available to commit.'}
+    $headBefore=Invoke-GitText @('rev-parse','HEAD') $root;$contractBefore=Get-Sha256 $info.Path;$fileHashes=[ordered]@{};foreach($path in $selected){$full=Join-Path $root($path-replace'/','\');$fileHashes[$path]=if(Test-Path -LiteralPath $full){Get-Sha256 $full}else{'<DELETED>'}}
+    $common=Invoke-GitText @('rev-parse','--path-format=absolute','--git-common-dir') $root;$tempDir=Join-Path $common 'codex-temp-index';New-Item -ItemType Directory -Force -Path $tempDir|Out-Null;$tempIndex=Join-Path $tempDir("$RunnerSessionId.index");if(Test-Path -LiteralPath $tempIndex){Fail 27 'Temporary index from an earlier session requires recovery.' $tempIndex};$indexEnv=@{GIT_INDEX_FILE=$tempIndex}
+    Invoke-GitText @('read-tree','HEAD') $root $indexEnv|Out-Null;foreach($path in $selected){Invoke-GitText @('add','--',$path) $root $indexEnv|Out-Null}
+    $checker=Join-Path $PSScriptRoot 'PRECOMMIT_SCOPE_CHECK.ps1';$checkerArgs=@('-NoProfile','-File',$checker,'-ContractPath',$info.Path,'-ExpectedContractBytesSha256',$info.BytesSha256,'-ExpectedTaskId',$taskId);if($PreflightManifest){$checkerArgs+=@('-PreflightManifest',$PreflightManifest)};if($EvidenceManifest){$checkerArgs+=@('-EvidenceManifest',$EvidenceManifest)};if($WaiverDiagnosticsManifest){$checkerArgs+=@('-WaiverDiagnosticsManifest',$WaiverDiagnosticsManifest)}
+    $oldIndex=[Environment]::GetEnvironmentVariable('GIT_INDEX_FILE','Process');try{[Environment]::SetEnvironmentVariable('GIT_INDEX_FILE',$tempIndex,'Process');$checkerOutput=& pwsh @checkerArgs;if($LASTEXITCODE-ne0){throw "TEMP_SCOPE_REJECTED:${LASTEXITCODE}:$checkerOutput"}}finally{[Environment]::SetEnvironmentVariable('GIT_INDEX_FILE',$oldIndex,'Process')}
+    $tempFiles=@(Get-StagedPaths $root $indexEnv);$tempTree=Invoke-GitText @('write-tree') $root $indexEnv;$tempDiff=Invoke-GitText @('diff','--cached','--binary') $root $indexEnv;$tempDiffHash=Get-BytesSha256([Text.UTF8Encoding]::new($false).GetBytes($tempDiff));[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'TEMP_INDEX_VALIDATED' @{tree=$tempTree;diff_sha256=$tempDiffHash})
+    if((Invoke-GitText @('rev-parse','HEAD') $root $cleanIndex)-cne$headBefore){Fail 10 'HEAD changed between temporary validation and real staging.'};if((Get-Sha256 $info.Path)-cne$contractBefore){Fail 20 'Contract bytes changed after temporary validation.' $info.Path};$unexpectedStaged=@(Get-StagedPaths $root $cleanIndex);if($unexpectedStaged.Count-ne0){Fail 13 'Real index changed during temporary validation.' $null @{staged_files=$unexpectedStaged}}
+    foreach($path in $selected){$full=Join-Path $root($path-replace'/','\');$now=if(Test-Path -LiteralPath $full){Get-Sha256 $full}else{'<DELETED>'};if($now-cne$fileHashes[$path]){Fail 19 'Authorized worktree file changed after temporary validation.' $path}}
+    $governanceNow=Get-GovernanceToolSnapshot $info;if($governanceStart.head-cne$governanceNow.head-or(($governanceStart.tool_sha256|ConvertTo-Json -Compress)-cne($governanceNow.tool_sha256|ConvertTo-Json -Compress))){Fail 28 'Governance tools changed after temporary validation.'}
+    foreach($path in $selected){Invoke-GitText @('add','--',$path) $root $cleanIndex|Out-Null};$realStaged=$true;[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'REAL_INDEX_STAGED' @{})
+    $realFiles=@(Get-StagedPaths $root $cleanIndex);$realTree=Invoke-GitText @('write-tree') $root $cleanIndex;$realDiff=Invoke-GitText @('diff','--cached','--binary') $root $cleanIndex;$realDiffHash=Get-BytesSha256([Text.UTF8Encoding]::new($false).GetBytes($realDiff));if(($realFiles-join"`n")-cne($tempFiles-join"`n")-or$realTree-cne$tempTree-or$realDiffHash-cne$tempDiffHash){[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'INTERRUPTED' @{reason='TEMP_REAL_INDEX_MISMATCH'});Fail 13 'Temporary and real staged trees differ; real index preserved.'}
+    $evidenceHash=Get-Sha256 $EvidenceManifest;$toolHashes=[ordered]@{};foreach($name in @('Common.ps1','ANTIGRAVITY_TASK_RUNNER.ps1','PRECOMMIT_SCOPE_CHECK.ps1','SAFE_COMMIT.ps1','VERIFY_ATTESTATION.ps1')){$toolHashes[".agent-work/tools/$name"]=Get-Sha256(Join-Path $PSScriptRoot $name)}
+    $body="$Message`n`nTask-ID: $taskId`nContract-Bytes-SHA256: $($info.BytesSha256)`nContract-Normalized-SHA256: $($info.NormalizedSha256)`nImplementation-Base: $headBefore`nRunner-Session-ID: $RunnerSessionId`nEvidence-Manifest-SHA256: $evidenceHash`nGovernance-Commit: $($governanceStart.head)`nSafe-Commit-Version: 2`nScope-Check: PASS"
+    $old=@{};foreach($name in @('CODEX_TASK_CONTRACT','CODEX_CONTRACT_BYTES_SHA256','CODEX_TASK_ID','CODEX_GOVERNANCE_ROOT','GIT_INDEX_FILE')){$old[$name]=[Environment]::GetEnvironmentVariable($name,'Process')};try{[Environment]::SetEnvironmentVariable('GIT_INDEX_FILE',$null,'Process');[Environment]::SetEnvironmentVariable('CODEX_TASK_CONTRACT',$info.Path,'Process');[Environment]::SetEnvironmentVariable('CODEX_CONTRACT_BYTES_SHA256',$info.BytesSha256,'Process');[Environment]::SetEnvironmentVariable('CODEX_TASK_ID',$taskId,'Process');[Environment]::SetEnvironmentVariable('CODEX_GOVERNANCE_ROOT',$governanceRoot,'Process');Invoke-GitText @('commit','-m',$body) $root @{GIT_INDEX_FILE=$null}|Out-Null;$commitCreated=$true}finally{foreach($name in $old.Keys){[Environment]::SetEnvironmentVariable($name,$old[$name],'Process')}}
+    $commit=Invoke-GitText @('rev-parse','HEAD') $root;[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'COMMIT_CREATED' @{commit=$commit});$parent=Invoke-GitText @('rev-parse','HEAD^') $root;$tree=Invoke-GitText @('rev-parse','HEAD^{tree}') $root;$actual=@((Invoke-GitText @('diff-tree','--no-commit-id','--name-only','-r','HEAD') $root)-split"`n"|Where-Object{$_}|Sort-Object);if(($actual-join"`n")-cne($realFiles-join"`n")){throw 'Committed file set differs from validated staged set.'}
+    $receiptDir=Join-Path $common("codex-attestations\$taskId");$receiptPath=Join-Path $receiptDir("$commit.json");$receipt=[ordered]@{schema_version=2;task_id=$taskId;commit=$commit;parent=$parent;tree=$tree;implementation_base=$headBefore;contract_path=ConvertTo-NormalPath $info.Path;contract_bytes_sha256=$info.BytesSha256;contract_normalized_sha256=$info.NormalizedSha256;evidence_manifest_sha256=$evidenceHash;runner_session_id=$RunnerSessionId;safe_commit_version=2;committed_files=$actual;governance_commit=$governanceStart.head;tool_sha256=$toolHashes;commit_trailers_verified=$true;created_at_utc=[DateTime]::UtcNow.ToString('o')}
+    try{Write-JsonUtf8Atomic $receipt $receiptPath;[void](Get-Content -LiteralPath $receiptPath -Raw|ConvertFrom-Json -Depth 100);[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'RECEIPT_CREATED' @{receipt=$receiptPath});[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'VERIFIED' @{commit=$commit})}catch{[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'COMMIT_CREATED_RECEIPT_FAILED' @{commit=$commit;error=$_.Exception.Message});Fail 24 'Commit exists but receipt creation failed; commit is not eligible for acceptance.' $receiptPath @{commit=$commit}}
+    Remove-Item -LiteralPath $tempIndex -Force -ErrorAction SilentlyContinue;Write-Output($receipt|ConvertTo-Json -Depth 100 -Compress)
 } catch {
-    if (-not $commitCreated) {
-        foreach ($path in $selected) { & git -C $root restore --staged -- $path 2>$null }
-    }
-    throw
+    $message=$_.Exception.Message;if($commitCreated){try{if((Get-Content -LiteralPath $StatePath -Raw|ConvertFrom-Json).state-eq'COMMIT_CREATED'){[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'COMMIT_CREATED_RECEIPT_FAILED' @{error=$message})}}catch{};Fail 24 $message}
+    if($realStaged){try{[void](Set-SessionState $StatePath $taskId $RunnerSessionId 'INTERRUPTED' @{error=$message})}catch{};Fail 13 "$message Real index is preserved."}
+    if($tempIndex-and(Test-Path -LiteralPath $tempIndex)){Remove-Item -LiteralPath $tempIndex -Force -ErrorAction SilentlyContinue}
+    if($message-like'CONTRACT_CHANGED*'){Fail 20 $message $ContractPath};if($message-like'*Governance*'){Fail 28 $message};if($message-like'TEMP_SCOPE_REJECTED:*'){$parts=$message-split':',3;Fail([int]$parts[1])$parts[2]};Fail 99 $message
 }
-$commit = Invoke-GitText @('rev-parse','HEAD') $root
-$parent = Invoke-GitText @('rev-parse','HEAD^') $root
-$tree = Invoke-GitText @('rev-parse','HEAD^{tree}') $root
-$actualText = Invoke-GitText @('diff-tree','--no-commit-id','--name-only','-r','HEAD') $root
-$actual = if ($actualText) { @($actualText -split "`n" | Sort-Object) } else { @() }
-$expected = @($staged | Sort-Object)
-if (($actual -join "`n") -cne ($expected -join "`n")) { throw "Committed file set differs from staged set.`nExpected: $($expected -join ', ')`nActual: $($actual -join ', ')" }
-
-$commonGitDir = Invoke-GitText @('rev-parse','--git-common-dir') $root
-if (-not [IO.Path]::IsPathRooted($commonGitDir)) { $commonGitDir = Join-Path $root $commonGitDir }
-$receiptPath = Join-Path (Join-Path $commonGitDir 'codex-attestations') ("$commit.json")
-$receipt = [ordered]@{
-    schema_version = 1
-    commit = $commit
-    parent = $parent
-    tree = $tree
-    contract_path = ConvertTo-NormalPath ([IO.Path]::GetRelativePath($root, $contractInfo.Path))
-    contract_sha256 = $contractInfo.Sha256
-    scope_check_exit = 0
-    safe_commit_version = 1
-    staged_files = $expected
-    created_at_utc = [DateTime]::UtcNow.ToString('o')
-}
-Write-JsonUtf8 $receipt $receiptPath
-Write-Output $receiptPath

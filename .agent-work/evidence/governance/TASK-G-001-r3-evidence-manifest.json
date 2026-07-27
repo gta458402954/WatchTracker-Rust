@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "task_id": "TASK-G-001",
+  "contract_path": "D:/Project/Projects/WatchTracker-Governance/.agent-work/tasks/TASK-G-001-r3.json",
+  "contract_bytes_sha256": "54965560EA44D49D2077AA134479288E8460CBDBA8C0B0392F38D4224CE0EDF0",
+  "contract_normalized_sha256": "54965560EA44D49D2077AA134479288E8460CBDBA8C0B0392F38D4224CE0EDF0",
+  "generated_at_utc": "2026-07-27T17:24:26.3668208Z",
+  "capture_policy": "REDACT_AT_INGRESS",
+  "files": [
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/ddaaa96e-6b3e-42b0-b625-f732ed04b0a1/postflight.json",
+      "size": 8440,
+      "sha256": "369479E4FA8EC2579D724ECEB773FF07FBCE092E4BC3E5A772A8DBC410604A75",
+      "creation_time_utc": "2026-07-27T17:24:12.0324966Z",
+      "last_write_time_utc": "2026-07-27T17:24:12.0366673Z",
+      "producer_ended_at_utc": null,
+      "hashed_at_utc": "2026-07-27T17:24:26.3524319Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/ddaaa96e-6b3e-42b0-b625-f732ed04b0a1/preflight.json",
+      "size": 7932,
+      "sha256": "F26408DAA48E6D5510CE6C1711825D3C8C8BB95621D40ABA73C7475725EBF6F7",
+      "creation_time_utc": "2026-07-27T17:24:10.9146005Z",
+      "last_write_time_utc": "2026-07-27T17:24:10.9146005Z",
+      "producer_ended_at_utc": null,
+      "hashed_at_utc": "2026-07-27T17:24:26.3619982Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/ddaaa96e-6b3e-42b0-b625-f732ed04b0a1/task-summary.json",
+      "size": 2407,
+      "sha256": "615ECDADD0072B0149C318720CDC64A464FAAB46E55991F8EF112F0A233623BA",
+      "creation_time_utc": "2026-07-27T17:24:12.0482019Z",
+      "last_write_time_utc": "2026-07-27T17:24:12.0492026Z",
+      "producer_ended_at_utc": null,
+      "hashed_at_utc": "2026-07-27T17:24:26.3629760Z"
+    },
+    {
+      "path": ".agent-work/evidence/governance/TASK-G-001-r3-red-team.json",
+      "size": 11568,
+      "sha256": "B4C364ED5AB2A43AC422B0CCF961060AEE29FFC51E47D1D511B49BA5698D43F2",
+      "creation_time_utc": "2026-07-27T17:17:25.1192608Z",
+      "last_write_time_utc": "2026-07-27T17:23:58.6917960Z",
+      "producer_ended_at_utc": null,
+      "hashed_at_utc": "2026-07-27T17:24:26.3650106Z"
+    }
+  ]
+}

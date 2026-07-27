@@ -1,0 +1,128 @@
+{
+  "schema_version": 2,
+  "generated_at_utc": "2026-07-27T17:23:58.6838516Z",
+  "fixture_root": "C:\\Users\\markp\\AppData\\Local\\Temp\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada",
+  "passed": 23,
+  "failed": 0,
+  "invariants": {
+    "business_repository_untouched": true,
+    "temporary_repositories_only": true
+  },
+  "results": [
+    {
+      "name": "external-contract",
+      "passed": true,
+      "details": "C:\\Users\\markp\\AppData\\Local\\Temp\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\Governance\\.agent-work\\tasks\\TASK-X-001.json"
+    },
+    {
+      "name": "runner-result-model",
+      "passed": true,
+      "details": "{\"failure\":\"FAILED\",\"observed\":\"OBSERVED_THEN_TERMINATED\",\"blocked\":\"BLOCKED_BY_PREVIOUS_STEP\",\"timeout\":\"TIMED_OUT\",\"success\":\"SUCCEEDED\"}"
+    },
+    {
+      "name": "redact-at-ingress",
+      "passed": true,
+      "details": "OK\r\n<REDACTED:GOV_TEST_SECRET>\r\n"
+    },
+    {
+      "name": "contract-byte-tamper",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":20,\"rule\":\"CONTRACT_CHANGED\",\"phase\":\"preflight\",\"task_id\":\"TASK-X-001\",\"path\":\"C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tasks\\\\TASK-X-001.json\",\"details\":{\"message\":\"CONTRACT_CHANGED: expected E2B85D25518D8F7502B13101BA4715CEE699B780A74BC30A44F6C3602AEE8983; actual 9F226795EAA76F2FD885C640340BE45B0AFCD405C98838B65A74FA5A605FC0DA\",\"stack\":\"at Read-TaskContractSnapshot, C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tools\\\\Common.ps1: line 62\\r\\nat <ScriptBlock>, C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tools\\\\ANTIGRAVITY_TASK_RUNNER.ps1: line 33\"}}"
+    },
+    {
+      "name": "same-base-wrong-repository-id",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":10,\"rule\":\"BASE_OR_REPOSITORY_MISMATCH\",\"phase\":\"runner\",\"task_id\":\"TASK-X-001\",\"path\":\"\",\"details\":{\"message\":\"Repository ID mismatch.\",\"stack\":\"at Assert-RepositoryIdentity, C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tools\\\\Common.ps1: line 76\\r\\nat <ScriptBlock>, C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tools\\\\ANTIGRAVITY_TASK_RUNNER.ps1: line 35\"}}"
+    },
+    {
+      "name": "governance-tool-drift",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":28,\"rule\":\"GOVERNANCE_TOOL_CHANGED\",\"phase\":\"preflight\",\"task_id\":\"TASK-X-001\",\"path\":\"\",\"details\":{\"message\":\"Governance worktree is not clean.\",\"stack\":\"at Get-GovernanceToolSnapshot, C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tools\\\\Common.ps1: line 86\\r\\nat <ScriptBlock>, C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Governance\\\\.agent-work\\\\tools\\\\ANTIGRAVITY_TASK_RUNNER.ps1: line 35\"}}"
+    },
+    {
+      "name": "atomic-concurrent-lock",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":26,\"rule\":\"CONCURRENT_SESSION\",\"phase\":\"preflight\",\"task_id\":\"TASK-X-001\",\"path\":\"\",\"details\":{\"message\":\"An active Runner already owns this worktree.\"}}"
+    },
+    {
+      "name": "stale-lock-needs-recovery",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":27,\"rule\":\"STALE_SESSION_REQUIRES_RECOVERY\",\"phase\":\"preflight\",\"task_id\":\"TASK-X-001\",\"path\":\"\",\"details\":{\"message\":\"A stale lock requires explicit Codex recovery.\"}}"
+    },
+    {
+      "name": "illegal-state-transition",
+      "passed": true,
+      "details": "CREATED -> VERIFIED rejected"
+    },
+    {
+      "name": "forbidden-file",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":11,\"rule\":\"FORBIDDEN_FILE\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\"forbidden.txt\",\"details\":{\"message\":\"Forbidden workspace file: forbidden.txt\"}}"
+    },
+    {
+      "name": "conditional-stop",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":11,\"rule\":\"FORBIDDEN_FILE\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\"conditional.txt\",\"details\":{\"message\":\"Conditional file requires a Codex-reissued contract: conditional.txt\"}}"
+    },
+    {
+      "name": "protected-region",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":12,\"rule\":\"PROTECTED_REGION_CHANGED\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\"protected.md\",\"details\":{\"message\":\"Reviewer-owned file changed: protected.md\"}}"
+    },
+    {
+      "name": "monitored-ignored-file",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":25,\"rule\":\"MONITORED_IGNORED_FILE\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\"monitored/hidden.tmp\",\"details\":{\"message\":\"Monitored ignored path is not authorized: monitored/hidden.tmp\"}}"
+    },
+    {
+      "name": "encoding-change",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":21,\"rule\":\"ENCODING_OR_EOL_CHANGED\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\"allowed.txt\",\"details\":{\"message\":\"BOM changed.\"}}"
+    },
+    {
+      "name": "captured-evidence-tamper",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":14,\"rule\":\"RAW_EVIDENCE_CHANGED\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\".agent-work/evidence/captured/TASK-X-001/dea29b9e-97fc-42d4-b70e-15bbe6491a0f/failure.stderr.txt\",\"details\":{\"message\":\"Evidence Hash mismatch.\"}}"
+    },
+    {
+      "name": "evidence-time-order",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":17,\"rule\":\"EVIDENCE_TIME_ORDER_INVALID\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\".agent-work/evidence/generated/TASK-X-001/dea29b9e-97fc-42d4-b70e-15bbe6491a0f/postflight.json\",\"details\":{\"message\":\"Evidence Hash predates producer completion.\"}}"
+    },
+    {
+      "name": "baseline-waiver-new-diagnostic",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":23,\"rule\":\"BASELINE_WAIVER_MISMATCH\",\"phase\":\"precommit\",\"task_id\":\"TASK-X-001\",\"path\":\"C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Execution\\\\.agent-work\\\\evidence\\\\generated\\\\TASK-X-001\\\\dea29b9e-97fc-42d4-b70e-15bbe6491a0f\\\\waiver-diagnostics.json\",\"details\":{\"message\":\"New diagnostics are not covered by baseline waiver.\",\"new_diagnostics\":[\"NEW\"],\"waiver_id\":\"FMT-001\"}}"
+    },
+    {
+      "name": "temp-index-rejection-preserves-real-index",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":11,\"rule\":\"FORBIDDEN_FILE\",\"phase\":\"safe-commit\",\"task_id\":\"TASK-X-001\",\"path\":\"\",\"details\":{\"message\":\"{\\\"schema_version\\\":1,\\\"passed\\\":false,\\\"exit_code\\\":11,\\\"rule\\\":\\\"FORBIDDEN_FILE\\\",\\\"phase\\\":\\\"precommit\\\",\\\"task_id\\\":\\\"TASK-X-001\\\",\\\"path\\\":\\\"forbidden.txt\\\",\\\"details\\\":{\\\"message\\\":\\\"Forbidden workspace file: forbidden.txt\\\"}}\"}}"
+    },
+    {
+      "name": "safe-commit-created",
+      "passed": true,
+      "details": "{\"schema_version\":2,\"task_id\":\"TASK-X-001\",\"commit\":\"d8542e6a05cd9df9f06465b8b430e2e1e0ac393d\",\"parent\":\"d3daf4ba40c2eb85b1686fafcf58c37586ff1174\",\"tree\":\"f8f9c6b2b50cd9cd14850e8c1a3f82b3dfb2cd6f\",\"implementation_base\":\"d3daf4ba40c2eb85b1686fafcf58c37586ff1174\",\"contract_path\":\"C:/Users/markp/AppData/Local/Temp/watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada/Governance/.agent-work/tasks/TASK-X-001.json\",\"contract_bytes_sha256\":\"E2B85D25518D8F7502B13101BA4715CEE699B780A74BC30A44F6C3602AEE8983\",\"contract_normalized_sha256\":\"75BD5B2F0939438A0C2272567A50CD518E928B1717D5CA285B01FF7997B0750C\",\"evidence_manifest_sha256\":\"C4BCDA947EB2293ECAD123ABCEF446679AA6DC2797D76DBCADC435479852A43D\",\"runner_session_id\":\"dea29b9e-97fc-42d4-b70e-15bbe6491a0f\",\"safe_commit_version\":2,\"committed_files\":[\"allowed.txt\"],\"governance_commit\":\"fd77615dcb1c0927cad9cc2fbbe58fd4a1598eb5\",\"tool_sha256\":{\".agent-work/tools/Common.ps1\":\"E444BAFC9AFF342BDEABF6D5855FC2154D15F7371600F8EC6AA210B95D29CA80\",\".agent-work/tools/ANTIGRAVITY_TASK_RUNNER.ps1\":\"A386F3467D8F44D05EC337DF8F7635CB1518C83C2A6067AE4BBCFB822E1A2C0E\",\".agent-work/tools/PRECOMMIT_SCOPE_CHECK.ps1\":\"DDF1B7D8C30D54F84D53FC0CA2DC79E0B678F6E117C06D5185967502BAB4C016\",\".agent-work/tools/SAFE_COMMIT.ps1\":\"0650C5467B8256ADDC2DAEEC19AFC61F537229F7C97227FF799006D48035A4AC\",\".agent-work/tools/VERIFY_ATTESTATION.ps1\":\"2AB96CC59C6B834932AB455AB50EC10B54B2D09647998EB5001BF06CC3F46B71\"},\"commit_trailers_verified\":true,\"created_at_utc\":\"2026-07-27T17:23:55.2317297Z\"}"
+    },
+    {
+      "name": "attestation-cross-check",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":true,\"exit_code\":0,\"rule\":\"PASS\",\"phase\":\"attestation\",\"task_id\":\"TASK-X-001\",\"commit\":\"d8542e6a05cd9df9f06465b8b430e2e1e0ac393d\",\"contract_bytes_sha256\":\"E2B85D25518D8F7502B13101BA4715CEE699B780A74BC30A44F6C3602AEE8983\",\"evidence_manifest_sha256\":\"C4BCDA947EB2293ECAD123ABCEF446679AA6DC2797D76DBCADC435479852A43D\",\"receipt\":\"C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Execution\\\\.git\\\\codex-attestations\\\\TASK-X-001\\\\d8542e6a05cd9df9f06465b8b430e2e1e0ac393d.json\"}"
+    },
+    {
+      "name": "missing-receipt-rejected",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":24,\"rule\":\"INVALID_OR_MISSING_ATTESTATION\",\"phase\":\"attestation\",\"task_id\":\"TASK-X-001\",\"path\":\"C:\\\\Users\\\\markp\\\\AppData\\\\Local\\\\Temp\\\\watchtracker-governance-r3-4a15b8e662bf475c8273e6f872b46ada\\\\Execution\\\\.git\\\\codex-attestations\\\\TASK-X-001\\\\d8542e6a05cd9df9f06465b8b430e2e1e0ac393d.json\",\"details\":{\"message\":\"Safe Commit receipt is missing.\"}}"
+    },
+    {
+      "name": "direct-commit-hook-rejected",
+      "passed": true,
+      "details": "SAFE_COMMIT_REQUIRED: direct git commit is forbidden for executor tasks."
+    },
+    {
+      "name": "no-verify-not-attested",
+      "passed": true,
+      "details": "{\"schema_version\":1,\"passed\":false,\"exit_code\":24,\"rule\":\"INVALID_OR_MISSING_ATTESTATION\",\"phase\":\"attestation\",\"task_id\":\"TASK-X-001\",\"path\":\"\",\"details\":{\"message\":\"Missing commit trailer: Task-ID\"}}"
+    }
+  ]
+}
