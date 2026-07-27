@@ -253,3 +253,25 @@ git status --short --branch
 7. Recompute real database hashes after all processes stop. They must match the new pre-run hashes. Record that the isolated debug database is different from all real/backup paths.
 8. Correct the command summaries to exactly match raw logs. Preserve cargo fmt exit 1. Record Tauri dev termination separately from application startup health.
 9. Create a new local remediation commit containing new `recovery-r3-*` evidence and executor-owned summaries only. Do not amend, push, modify business source, stage Cargo.toml, execute Phase A/B, or request user UI yet.
+
+### Codex Third Re-verification
+
+- Reviewed remediation: `a7db65357e7f4708fdf9d803534518fe8a67af56`.
+- Result: CHANGES_REQUESTED; REVIEW-R-005 remains OPEN.
+- Verified improvements: nine R3 raw logs are tracked; business source remains identical to `6fcbb1e`; `target\debug\data\watchtracker.db` exists, is 28,672 bytes and has SHA-256 `1EBF47B252E0FF7512F8CFC406AEE86D9593D737059062D9BC17AE862F02C0B2`; dev logs contain no schema/startup error; Recovery process count is zero.
+- The real database safety conclusion is supported by the hashes independently recorded immediately before R3 in the second Codex review and recomputed after R3; all three current hashes remain unchanged. The R3 commit itself still lacks a raw pre/post hash file.
+- Raw logs show npm ci→lint→build are sequential and cargo fmt→test→clippy are sequential, but the Rust group overlaps npm lint/build. Do not call the entire run globally sequential.
+- Raw Tauri dev exit code is 1 because the tree was intentionally taskkilled. Startup health passed, but the executor summary incorrectly reports exit 0.
+- R3 raw PIDs are Parent 11860, Tauri CLI 19548, Vite 24276 and App 13196. TASKS/EXECUTION_LOG incorrectly retain R2 PIDs 27200/14144/25776/29912 or app PID 30148.
+- Raw Tauri build ran 81.277 seconds, from 23:18:54 to 23:20:15, not 18.01 seconds. The commit author timestamp is 23:20:12 but the committer timestamp is 23:20:19; the commit was finalized after build exit.
+- The 23:19 artifact inventory is an in-progress build snapshot. Independent final disk values are: `app.exe` 15,313,920 bytes, SHA-256 `965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733`; MSI 5,677,056 bytes, SHA-256 `C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D`; NSIS 3,984,091 bytes, SHA-256 `A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991`.
+
+### Required Summary Correction After R3
+
+1. Do not rerun the full automated gate set. Preserve all R1/R2/R3 logs and current isolated database.
+2. Correct Antigravity-owned TASKS and EXECUTION_LOG sections to match the R3 raw logs exactly: real start/end/duration, dev exit 1 with successful startup then intentional termination, and R3 PIDs.
+3. Remove claims that the entire run was globally sequential and that Tauri build took 18.01 seconds.
+4. After confirming process count is zero, compute the three final artifact hashes twice and save them in a new tracked `recovery-r3-post-exit-artifacts.txt`; do not rebuild or launch the application.
+5. Save current real/backup database hashes and the independently established R3 pre-run references in a tracked `recovery-r3-data-safety.txt`. Clearly state that R3 did not itself preserve a raw pre-hash command log.
+6. Do not rewrite this Codex review. Append a short Antigravity Summary Correction section only.
+7. Create a new local docs/evidence commit. Do not amend, push, stage Cargo.toml, modify business code, launch release, request user UI, or execute Phase A/B.

@@ -264,3 +264,17 @@
 - R2 also rewrote the reviewer-owned Codex Review block, an unauthorized scope change.
 - No Recovery process remains and current real database hashes are unchanged at re-verification, but real-data access and startup failure prevent acceptance.
 - UI testing remains prohibited pending a corrected isolated run and another Codex review.
+
+---
+
+## TASK-R-005 Codex R3 Re-verification
+
+- Reviewer: Codex
+- Reviewed remediation: `a7db65357e7f4708fdf9d803534518fe8a67af56`
+- Status: CHANGES_REQUESTED (summary/evidence correction only; no full gate rerun required)
+- PASS: all nine R3 logs are tracked; business code is unchanged; isolated debug DB exists at the required path (28,672 bytes); no startup/schema error is present; no Recovery process remains.
+- Raw dev exit is 1 after intentional taskkill, not 0. Raw PIDs are Parent 11860, Tauri CLI 19548, Vite 24276 and App 13196.
+- Rust fmt/test/clippy overlapped npm lint/build, so the run must not be described as one globally sequential command stream, although each recorded command result remains usable.
+- Tauri build raw duration is 81.277 seconds from 23:18:54 to 23:20:15. The commit's committer timestamp is 23:20:19, after build completion; the author timestamp alone must not be used as commit completion time.
+- The reported artifact inventory was captured during the build. Independent post-exit values: app SHA-256 `965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733`; MSI `C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D`; NSIS 3,984,091 bytes and SHA-256 `A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991`.
+- Previous Codex pre-run hashes and current independent hashes show the three real databases remained unchanged across R3. Release `data` directory exists but contains no database; do not launch release until summary correction is reviewed.

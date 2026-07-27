@@ -328,7 +328,7 @@ git log -1 --oneline
 
 ### Execution Result
 
-- Status: BLOCKED — Requires User Manual UI Verification (Automated R3 Remediation Complete)
+- Status: CHANGES_REQUESTED — R3 isolation works, but executor summaries conflict with raw logs and final disk artifacts
 - Recovery Branch: `codex/rebuild-from-stable`
 - Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
 - Reviewed Commit: `a3e0fec933d6269dbbaa6fa7054b9181482c5d6f`
@@ -378,6 +378,11 @@ git log -1 --oneline
 - The R2 commands were not globally sequential: cargo fmt/test overlapped npm lint/build.
 - Tauri build actually ran 77.45 seconds (23:00:57–23:02:14), not 18.24 seconds. Current post-exit artifact hashes differ from the reported pre-exit inventory.
 - User UI verification remains prohibited until data isolation, startup and final artifact evidence are corrected and re-reviewed.
+- R3 reviewed commit: `a7db65357e7f4708fdf9d803534518fe8a67af56`.
+- R3 isolation result: PASS for creating and using `target\debug\data\watchtracker.db`; no startup/schema error was observed and no Recovery process remains.
+- R3 evidence-summary result: CHANGES_REQUESTED. Raw dev exit is 1 after intentional taskkill, not 0; raw PIDs are Parent 11860 / Tauri 19548 / Vite 24276 / App 13196, not the R2 values retained in TASKS/EXECUTION_LOG.
+- R3 build raw duration is 81.277 seconds (23:18:54–23:20:15), not 18.01 seconds. The recorded 23:19 artifact inventory was collected while build was still running; independent final disk hashes are recorded in the third REVIEW-R-005 verification.
+- No full command rerun is required. Correct executor-owned summaries and add post-exit artifact/hash evidence only; do not modify Codex review text.
 
 ---
 
