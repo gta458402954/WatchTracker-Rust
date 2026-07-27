@@ -334,3 +334,22 @@ git status --short --branch
 4. Correct the Tauri dev status and cargo-fmt task mapping in `TASK-A-001-failure-matrix.txt`.
 5. Correct only executor-owned TASK-A-001 summaries in TASKS/EXECUTION_LOG. Do not edit this review, ACCEPTANCE_CRITERIA, RECOVERY_DECISION, business code, configuration, dependencies or tests.
 6. Create a new local remediation commit without amend or push. Keep TASK-A-001 as IMPLEMENTED in the executor result, then stop for Codex review; only Codex may restore ACCEPTED/PASS.
+
+### Codex Second Verification
+
+- Reviewed remediation: `7836ca2c79425d8b27fb04562ef5865624da6535`
+- Result: CHANGES_REQUESTED; REVIEW-A-001 remains OPEN.
+- PASS: exactly five allowed files changed; forbidden/reviewer-owned files and business/configuration code are unchanged; the process log contains command, cwd, timestamps, exit code and raw output; no Recovery-related process appears; Tauri dev exit 1 and startup-health PASS are now separated; cargo fmt maps to A-003/A-007/A-010.
+- BASE finding: the executor replaced the original TASK-A-001 BASE (`11e5492...`) with remediation BASE `ba8bf2d...`, while `TASK-A-001-worktree.txt` still correctly records HEAD `11e5492...`. Record both `Original Task BASE` and `Remediation BASE`; do not claim the old worktree log matches `ba8bf2d`.
+- Test-framework finding: `16c8922` does not contain `vitest.config.ts`; its tracked files are package manifests, `playwright.config.ts`, Playwright test/fixture and generated report/result files. Test-framework implementation belongs to A-007 (and final A-010), not A-002, whose scope is dependency and dev startup verification.
+- Schema finding: `29ea3a4` contains no schema migration or `db.rs` change. It maps `createdAt` to `created_at` in atomic command/update code. The snake_case schema/migration history is in `ed3ff3b`, `8130100` and the `bffd6cc` snapshot. R2 proves a schema incompatibility error when the stable app accidentally opened the real AppData DB; it does not prove a startup panic, corruption, or that `29ea3a4` caused the migration.
+- Zustand finding: `29ea3a4` does not change `src/shared/types/index.ts`; remove that path from its source list unless a different verified commit is cited.
+- Task-routing finding: network/path work in `net.rs` primarily relates to A-004 and offline verification A-006, not source implementation in A-005. Generic UI refactors must be assigned per owning behavior rather than wholesale to A-003. Current WebDAV safety belongs to A-006; advanced sync/conflict/credential work is DEFERRED TASK-D-R0, not Phase B.
+- Matrix-routing finding: Tauri dev startup is first reverified by A-002, then end-to-end by A-006/A-010. Playwright framework/regression work belongs to A-007/A-010, not A-002.
+
+### Final Required Correction
+
+1. Do not rerun any command, including the process query. Preserve `TASK-A-001-processes.txt` unchanged.
+2. Make only the exact factual/mapping corrections listed above in the migration audit, failure matrix and executor-owned summaries.
+3. Keep formal TASK status CHANGES_REQUESTED and do not edit Codex Review, this review, ACCEPTANCE_CRITERIA or RECOVERY_DECISION.
+4. Create one new local docs-only commit without amend/push, then stop.

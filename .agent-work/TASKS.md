@@ -461,6 +461,7 @@ cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
 - Required process evidence is missing from the submitted files. The executor summaries say process count 0, but no command, execution time or raw empty result was saved.
 - The migration audit contains incorrect source commit/path and target-task mappings. These must be corrected from Git history without changing the previously accepted recovery decision.
 - The Tauri dev matrix must preserve raw command exit 1 as terminated/non-passing while recording startup health as a separate PASS observation.
+- Remediation commit `7836ca2c79425d8b27fb04562ef5865624da6535`: process evidence, scope and command-status correction PASS; migration/task mapping and BASE labelling remain CHANGES_REQUESTED. See REVIEW-A-001 second verification.
 
 ## TASK-A-002：恢复依赖安装与开发启动
 

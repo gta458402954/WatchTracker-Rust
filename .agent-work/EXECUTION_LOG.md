@@ -334,3 +334,14 @@
 - PASS: exact allowed-file scope, clean business/config diff, preserved dirty-worktree evidence, empty synthetic test root, environment capture and current process cleanup.
 - FAIL: required process command/time/raw-empty evidence was not saved; multiple migration-audit source commits, paths and target-task mappings are factually inaccurate; Tauri dev raw exit 1 is incorrectly summarized as overall PASS.
 - Required action: documentation/evidence-only correction. No command-suite rerun, application launch, database access or business-code change is authorized. See `REVIEW-A-001`.
+
+---
+
+## TASK-A-001 Codex Second Review
+
+- Reviewer: Codex
+- Reviewed remediation: `7836ca2c79425d8b27fb04562ef5865624da6535`
+- Status: CHANGES_REQUESTED (final factual correction only)
+- PASS: allowed-file scope, preserved forbidden files, raw process evidence, current process cleanup, Tauri dev exit/startup distinction and cargo-fmt mapping.
+- Remaining failures: original/remediation BASE labels are conflated; `16c8922` and `29ea3a4` are still assigned files they did not change; schema-causation language exceeds the evidence; test framework, Tauri startup, Playwright, network path, UI and deferred WebDAV work remain mapped to incorrect owning tasks.
+- Required action: correct the named lines only; do not rerun commands or modify accepted evidence/reviewer-owned content. See REVIEW-A-001 second verification.
