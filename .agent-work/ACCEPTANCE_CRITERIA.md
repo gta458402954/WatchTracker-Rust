@@ -124,8 +124,8 @@
   3. 检查 Phase A 只在 Gate R 后实施，并检查 Phase B 任务状态变更历史。
 - Expected Result: Gate R 前没有实施 Phase A；阶段 A 报告为 PASS（或用户书面接受指定条件的 CONDITIONAL PASS）前，没有 Phase B 任务进入 READY/IN_PROGRESS/IMPLEMENTED。
 - Required Evidence: baseline 报告、TASKS 状态、用户确认（如适用）。
-- Result: FAIL
-- Evidence: Initial commit `7ab03f1b3f95d888dbe474814390277553103919` and remediation `7836ca2c79425d8b27fb04562ef5865624da6535` preserve the worktree and user-data boundary. The remediation adds acceptable process evidence and correctly separates Tauri dev exit 1 from startup-health PASS. AC remains FAIL because the migration audit still cites files not changed by the named commits, assigns schema migration to the atomic commit without Git support, misroutes several items to tasks that do not own them, and overwrites the original task BASE label with the remediation BASE while referring to the original worktree log. See `REVIEW-A-001` second verification.
+- Result: PASS
+- Evidence: Final correction `b0b68b9365b01a647d47455007ba5db03239890f` preserves the exact four-file correction scope and all protected files. The accepted evidence records the original and remediation BASE separately, raw process output, environment/worktree baselines, an empty synthetic test root, verified migration sources/dispositions and a failure matrix that preserves cargo-fmt FAIL and Tauri-dev raw exit 1. No business/configuration/database change occurred. See closed `REVIEW-A-001`.
 
 ## 阶段 A：恢复运行和稳定基线
 

@@ -345,3 +345,15 @@
 - PASS: allowed-file scope, preserved forbidden files, raw process evidence, current process cleanup, Tauri dev exit/startup distinction and cargo-fmt mapping.
 - Remaining failures: original/remediation BASE labels are conflated; `16c8922` and `29ea3a4` are still assigned files they did not change; schema-causation language exceeds the evidence; test framework, Tauri startup, Playwright, network path, UI and deferred WebDAV work remain mapped to incorrect owning tasks.
 - Required action: correct the named lines only; do not rerun commands or modify accepted evidence/reviewer-owned content. See REVIEW-A-001 second verification.
+
+---
+
+## TASK-A-001 Codex Final Acceptance
+
+- Reviewer: Codex
+- Reviewed final correction: `b0b68b9365b01a647d47455007ba5db03239890f`
+- Scope/process/data safety: PASS.
+- Git-source attribution and migration/task disposition: PASS.
+- Failure matrix and dual-BASE labelling: PASS.
+- Final status: TASK-A-001 ACCEPTED; REVIEW-A-001 CLOSED; AC-A-001 PASS.
+- Next control: TASK-A-002 remains unopened until independent TASK-G-001 governance tooling and red-team verification are complete.

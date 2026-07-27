@@ -399,7 +399,7 @@ git log -1 --oneline
 
 - Phase: A
 - Owner: Antigravity
-- Status: CHANGES_REQUESTED
+- Status: ACCEPTED
 - Priority: P0 / Critical
 - Dependencies: TASK-R-005, AC-GATE-R
 - Acceptance Criteria: AC-GATE-R, AC-A-001
@@ -463,6 +463,7 @@ cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
 - The migration audit contains incorrect source commit/path and target-task mappings. These must be corrected from Git history without changing the previously accepted recovery decision.
 - The Tauri dev matrix must preserve raw command exit 1 as terminated/non-passing while recording startup health as a separate PASS observation.
 - Remediation commit `7836ca2c79425d8b27fb04562ef5865624da6535`: process evidence, scope and command-status correction PASS; migration/task mapping and BASE labelling remain CHANGES_REQUESTED. See REVIEW-A-001 second verification.
+- Final correction `b0b68b9365b01a647d47455007ba5db03239890f`: PASS. Scope, process evidence, dual-BASE labelling, Git-source attribution, migration disposition and failure-matrix task routing are accepted. TASK-A-001 is ACCEPTED; AC-A-001 PASS.
 
 ## TASK-A-002：恢复依赖安装与开发启动
 
