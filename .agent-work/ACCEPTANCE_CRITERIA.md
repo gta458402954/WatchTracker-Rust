@@ -92,8 +92,8 @@
   3. 核对 Phase A/B/DEFERRED 已重新映射且没有提前实施。
 - Expected Result: 恢复分支是可复现的绿色起点，Phase A 可以安全开放。
 - Required Evidence: 分支/提交图、重复验证日志、任务映射。
-- Result: FAIL
-- Evidence: R3 commit `a7db65357e7f4708fdf9d803534518fe8a67af56` successfully created and used the isolated debug database, with no startup/schema error and no remaining process. However executor summaries contradict raw evidence: dev was intentionally terminated with exit 1, PIDs in TASKS/EXECUTION_LOG are stale R2 values, Rust checks overlapped npm lint/build, and Tauri build took 81.277 seconds. The recorded 23:19 artifacts were captured before the 23:20:15 build exit; current final hashes differ. Summary/evidence correction and user UI verification remain required. See `REVIEW-R-005` third re-verification.
+- Result: BLOCKED
+- Evidence: Codex independently verified summary-correction commit `a5aa8da1664981d07805f16d1e11e611b2d4bed6`. Scope is limited to expected docs/evidence; raw command facts are accurately represented; isolated debug startup and database creation pass; final post-exit EXE/MSI/NSIS hashes match disk; real databases remain unchanged; no Recovery process remains; release `data` directory exists and contains no database. Automated evidence is accepted. User release UI CRUD/restart/offline verification remains required before PASS.
 
 ### AC-GATE-R：Gate R 通过后才可开放 Phase A
 

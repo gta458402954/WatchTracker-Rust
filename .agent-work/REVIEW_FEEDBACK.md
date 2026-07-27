@@ -275,3 +275,13 @@ git status --short --branch
 5. Save current real/backup database hashes and the independently established R3 pre-run references in a tracked `recovery-r3-data-safety.txt`. Clearly state that R3 did not itself preserve a raw pre-hash command log.
 6. Do not rewrite this Codex review. Append a short Antigravity Summary Correction section only.
 7. Create a new local docs/evidence commit. Do not amend, push, stage Cargo.toml, modify business code, launch release, request user UI, or execute Phase A/B.
+
+### Codex Fourth Re-verification
+
+- Reviewed summary correction: `a5aa8da1664981d07805f16d1e11e611b2d4bed6`.
+- Scope: PASS. Only TASKS, EXECUTION_LOG and the two requested evidence files changed; REVIEW_FEEDBACK, ACCEPTANCE_CRITERIA, business source, configuration and tests were untouched by the executor.
+- Evidence accuracy: PASS. Raw timings, overlap disclosure, dev exit/termination distinction, R3 PIDs and 81.277-second Tauri build are correctly recorded.
+- Artifact evidence: PASS. Both hash passes match Codex's independent current-disk values.
+- Data isolation: PASS. Debug isolated DB exists and is distinct from all real paths; all real hashes remain at their independently recorded values; release data directory exists and contains no database before user launch.
+- Process cleanup: PASS; no Recovery process remains.
+- Disposition: automated R-005 evidence accepted. REVIEW-R-005 remains OPEN only for user release UI CRUD/restart/offline verification. TASK-R-005 and AC-R-005 are BLOCKED, not failed; Gate R remains BLOCKED.

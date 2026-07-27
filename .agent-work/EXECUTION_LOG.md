@@ -278,3 +278,18 @@
 - Tauri build raw duration is 81.277 seconds from 23:18:54 to 23:20:15. The commit's committer timestamp is 23:20:19, after build completion; the author timestamp alone must not be used as commit completion time.
 - The reported artifact inventory was captured during the build. Independent post-exit values: app SHA-256 `965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733`; MSI `C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D`; NSIS 3,984,091 bytes and SHA-256 `A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991`.
 - Previous Codex pre-run hashes and current independent hashes show the three real databases remained unchanged across R3. Release `data` directory exists but contains no database; do not launch release until summary correction is reviewed.
+
+---
+
+## TASK-R-005 Codex R3 Summary-Correction Review
+
+- Reviewer: Codex
+- Reviewed commit: `a5aa8da1664981d07805f16d1e11e611b2d4bed6`
+- Status: BLOCKED pending user UI only
+- Allowed-file scope: PASS; reviewer-owned files and business source unchanged.
+- Raw-log summary accuracy: PASS.
+- Isolated debug startup/database: PASS.
+- Post-exit artifact double-hash and independent disk match: PASS.
+- Real database hash stability and path isolation: PASS.
+- Recovery residual process count: 0.
+- Release data directory exists and currently contains no `watchtracker.db`; it is ready for isolated user UI verification.

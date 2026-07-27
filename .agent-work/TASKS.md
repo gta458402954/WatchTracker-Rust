@@ -289,7 +289,7 @@ git diff --stat origin/main..29ea3a4
 
 - Phase: Recovery
 - Owner: Antigravity
-- Status: CHANGES_REQUESTED
+- Status: BLOCKED
 - Priority: P0 / Critical
 - Dependencies: TASK-R-004
 - Acceptance Criteria: AC-R-005, AC-GATE-R
@@ -328,7 +328,7 @@ git log -1 --oneline
 
 ### Execution Result
 
-- Status: CHANGES_REQUESTED — R3 summary corrected per raw logs and disk verification
+- Status: BLOCKED — Automated evidence accepted by Codex; waiting for user UI verification
 - Recovery Branch: `codex/rebuild-from-stable`
 - Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
 - Reviewed Commit: `63ced15a6b003a57c08598ff43d7c318e08342b5` (Codex Second Re-verification)
@@ -385,6 +385,9 @@ git log -1 --oneline
 - R3 evidence-summary result: CHANGES_REQUESTED. Raw dev exit is 1 after intentional taskkill, not 0; raw PIDs are Parent 11860 / Tauri 19548 / Vite 24276 / App 13196, not the R2 values retained in TASKS/EXECUTION_LOG.
 - R3 build raw duration is 81.277 seconds (23:18:54–23:20:15), not 18.01 seconds. The recorded 23:19 artifact inventory was collected while build was still running; independent final disk hashes are recorded in the third REVIEW-R-005 verification.
 - No full command rerun is required. Correct executor-owned summaries and add post-exit artifact/hash evidence only; do not modify Codex review text.
+- R3 summary-correction commit: `a5aa8da1664981d07805f16d1e11e611b2d4bed6`.
+- Fourth Codex review: PASS for scope, tracked raw logs, isolated debug startup, post-exit artifacts, data-safety evidence and process cleanup.
+- Remaining blocker: user must run the Recovery release `app.exe` against the pre-created `target\release\data` directory and verify CRUD, restart persistence, delete persistence, classification and offline local usability.
 
 ---
 
