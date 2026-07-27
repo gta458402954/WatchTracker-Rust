@@ -92,8 +92,8 @@
   3. 核对 Phase A/B/DEFERRED 已重新映射且没有提前实施。
 - Expected Result: 恢复分支是可复现的绿色起点，Phase A 可以安全开放。
 - Required Evidence: 分支/提交图、重复验证日志、任务映射。
-- Result: BLOCKED
-- Evidence: Codex independently verified summary-correction commit `a5aa8da1664981d07805f16d1e11e611b2d4bed6`. Scope is limited to expected docs/evidence; raw command facts are accurately represented; isolated debug startup and database creation pass; final post-exit EXE/MSI/NSIS hashes match disk; real databases remain unchanged; no Recovery process remains; release `data` directory exists and contains no database. Automated evidence is accepted. User release UI CRUD/restart/offline verification remains required before PASS.
+- Result: PASS
+- Evidence: Codex independently verified summary-correction commit `a5aa8da1664981d07805f16d1e11e611b2d4bed6`, isolated debug startup, post-exit artifacts and process cleanup. The user then ran only the Recovery release binary against the pre-created release `data` directory and reported PASS for startup, create/read/update/delete, media-type classification, restart persistence, delete persistence and credential-free local use, with no exception. Final Codex inspection found 0 Recovery-related processes and an isolated release DB at `target\release\data\watchtracker.db` (28,672 bytes, SHA-256 `13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9`). Read-only SHA-256 checks of the three real databases match their pre-UI references; no disk-content change was detected. The inherited `6fcbb1e` `cargo fmt -- --check` exit 1 remains recorded as baseline formatting debt and was not silently treated as a passing command.
 
 ### AC-GATE-R：Gate R 通过后才可开放 Phase A
 
@@ -107,8 +107,8 @@
   3. 检查 Phase A 状态变更历史。
 - Expected Result: Gate R PASS 前没有 Phase A/B 任务进入实施状态。
 - Required Evidence: RECOVERY_DECISION、TASKS 状态、Codex 审查记录。
-- Result: BLOCKED
-- Evidence: Gate R remains BLOCKED pending Codex re-verification of automated R2 evidence and user manual UI verification. Phase A tasks remain strictly BLOCKED.
+- Result: PASS
+- Evidence: AC-R-001 through AC-R-005 are complete; TASK-R-005 is ACCEPTED after independent automated-evidence review and user-isolated release UI verification. No Phase A/B implementation occurred before this gate. TASK-A-001 is now READY; all later tasks remain governed by their declared dependencies and acceptance gates.
 
 ## Gate A
 

@@ -6,15 +6,15 @@
 
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
-- `TASK-R-001`~`TASK-R-004` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；`TASK-R-005` 已开放用于建立和复验恢复分支。Recovery 任务按依赖顺序执行。
-- Gate R PASS 前，Phase A 任务不得进入 READY/IN_PROGRESS/IMPLEMENTED。
+- `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
+- Gate R 已 PASS；仅 `TASK-A-001` 开放为 READY，其他 Phase A 任务继续按依赖关系保持 BLOCKED。
 - Antigravity 完成实现只能标 IMPLEMENTED；只有 Codex 独立验收后可标 ACCEPTED。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
 ## 任务总览与依赖图
 
-- Recovery：5 个任务；`TASK-R-001`~`TASK-R-004` 已验收，`TASK-R-005` 为 CHANGES_REQUESTED，等待证据整改后再进行用户 UI 验证。
-- Phase A：10 个任务；全部受 Gate R 阻塞，`TASK-A-004` 另受 CONFIRM-001 阻塞。
+- Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
+- Phase A：10 个任务；`TASK-A-001` 已开放为 READY，其余任务按依赖关系保持 BLOCKED，`TASK-A-004` 另受 CONFIRM-001 阻塞。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
 - DEFERRED：4 个路线图包；本轮禁止实施，不计入 A/B 数量。
 
@@ -289,7 +289,7 @@ git diff --stat origin/main..29ea3a4
 
 - Phase: Recovery
 - Owner: Antigravity
-- Status: BLOCKED
+- Status: ACCEPTED
 - Priority: P0 / Critical
 - Dependencies: TASK-R-004
 - Acceptance Criteria: AC-R-005, AC-GATE-R
@@ -328,7 +328,7 @@ git log -1 --oneline
 
 ### Execution Result
 
-- Status: BLOCKED — Automated evidence accepted by Codex; waiting for user UI verification
+- Status: ACCEPTED — Automated evidence and user-isolated release UI verification accepted by Codex
 - Recovery Branch: `codex/rebuild-from-stable`
 - Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
 - Reviewed Commit: `63ced15a6b003a57c08598ff43d7c318e08342b5` (Codex Second Re-verification)
@@ -386,8 +386,10 @@ git log -1 --oneline
 - R3 build raw duration is 81.277 seconds (23:18:54–23:20:15), not 18.01 seconds. The recorded 23:19 artifact inventory was collected while build was still running; independent final disk hashes are recorded in the third REVIEW-R-005 verification.
 - No full command rerun is required. Correct executor-owned summaries and add post-exit artifact/hash evidence only; do not modify Codex review text.
 - R3 summary-correction commit: `a5aa8da1664981d07805f16d1e11e611b2d4bed6`.
-- Fourth Codex review: PASS for scope, tracked raw logs, isolated debug startup, post-exit artifacts, data-safety evidence and process cleanup.
-- Remaining blocker: user must run the Recovery release `app.exe` against the pre-created `target\release\data` directory and verify CRUD, restart persistence, delete persistence, classification and offline local usability.
+  - Fourth Codex review: PASS for scope, tracked raw logs, isolated debug startup, post-exit artifacts, data-safety evidence and process cleanup.
+  - User UI verification: PASS for startup, create/read/update/delete, media-type classification, restart persistence, delete persistence and credential-free local use; no exception was reported.
+  - Final independent check: Recovery-related process count is 0; release isolated DB exists at `target\release\data\watchtracker.db` (28,672 bytes, SHA-256 `13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9`). Current hashes of the three real databases match their pre-UI reference hashes, so no disk-content change was detected by read-only hashing.
+  - Final result: TASK-R-005 ACCEPTED; AC-R-005 and AC-GATE-R PASS. TASK-A-001 may enter READY.
 
 ---
 
@@ -397,7 +399,7 @@ git log -1 --oneline
 
 - Phase: A
 - Owner: Antigravity
-- Status: BLOCKED
+- Status: READY
 - Priority: P0 / Critical
 - Dependencies: TASK-R-005, AC-GATE-R
 - Acceptance Criteria: AC-GATE-R, AC-A-001

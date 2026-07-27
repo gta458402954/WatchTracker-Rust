@@ -3,7 +3,7 @@
 > 结论日期：2026-07-27（Australia/Perth）
 > 决策人：Codex
 > TASK-R-004：`ACCEPTED`
-> 注意：本记录通过 AC-R-004，但 Gate R 仍需 TASK-R-005 建立并复验最终恢复分支后才能开放。
+> 更新：TASK-R-005 已完成恢复分支复验及隔离 Release UI 验证，Codex 已将 AC-GATE-R 标记为 PASS，并仅开放 TASK-A-001。
 
 ## 1. 当前现场快照
 
@@ -102,5 +102,5 @@
 - TASK-R-004：`ACCEPTED`。
 - 故障层级：17 个已提交改动；build 首坏提交为 `29ea3a4`，当前未提交层仍未修复完成。
 - 最终恢复基线：`6fcbb1e`。
-- TASK-R-005：可进入 `READY`，由 Antigravity 建立 `codex/rebuild-from-stable` 和独立恢复 worktree，并重复基线验证。
-- AC-GATE-R：仍为 `BLOCKED`。只有 Codex 独立验收 TASK-R-005 后才能 PASS，Phase A 在此之前不得开放。
+- TASK-R-005：`ACCEPTED`。恢复分支、独立 worktree、自动证据、隔离数据路径和用户 Release UI 验证均已完成复核。
+- AC-GATE-R：`PASS`。`TASK-A-001` 已开放为 `READY`；后续 Phase A/B 任务仍须遵守各自依赖和验收门禁。

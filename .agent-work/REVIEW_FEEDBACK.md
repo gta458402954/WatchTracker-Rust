@@ -197,7 +197,7 @@ git status --short --branch
 - Related Task: TASK-R-005
 - Related Criteria: AC-R-005, AC-GATE-R
 - Severity: Critical
-- Status: OPEN
+- Status: CLOSED
 - Reviewed Commit: `1623ae53c9f2be97e1ee2e643fe0fd9836247d7c`
 - Worktree: `D:\Project\Projects\WatchTracker-Recovery`
 
@@ -285,3 +285,11 @@ git status --short --branch
 - Data isolation: PASS. Debug isolated DB exists and is distinct from all real paths; all real hashes remain at their independently recorded values; release data directory exists and contains no database before user launch.
 - Process cleanup: PASS; no Recovery process remains.
 - Disposition: automated R-005 evidence accepted. REVIEW-R-005 remains OPEN only for user release UI CRUD/restart/offline verification. TASK-R-005 and AC-R-005 are BLOCKED, not failed; Gate R remains BLOCKED.
+
+### Codex Final User-UI Verification
+
+- User result: PASS for startup, create/read/update/delete, media-type classification, restart persistence, delete persistence and credential-free local use; no exception was reported.
+- Final process check: PASS; the Recovery-related process query returned no rows.
+- Release isolation: PASS; `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data\watchtracker.db` exists, is 28,672 bytes and has SHA-256 `13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9`.
+- Real-data check: read-only SHA-256 values match the pre-UI references for AppData (`BF96F204...`), portable (`9A42C90E...`) and public release (`D466C664...`); no disk-content change was detected. This does not claim that hashing performed no read access.
+- Final disposition: REVIEW-R-005 CLOSED; TASK-R-005 ACCEPTED; AC-R-005 PASS; AC-GATE-R PASS; TASK-A-001 READY.

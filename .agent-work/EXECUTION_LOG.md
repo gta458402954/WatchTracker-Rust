@@ -293,3 +293,15 @@
 - Real database hash stability and path isolation: PASS.
 - Recovery residual process count: 0.
 - Release data directory exists and currently contains no `watchtracker.db`; it is ready for isolated user UI verification.
+
+---
+
+## TASK-R-005 Final User UI and Gate R Acceptance
+
+- Reviewer: Codex
+- BASE: `af4fb9ee6cce6d8de1be3549d681986fa6c0b1ca`
+- User UI result: PASS for startup, create/read/update/delete, media-type classification, restart persistence, delete persistence and credential-free local use; exception report: none.
+- Final Recovery-related process query: 0 rows.
+- Release isolated database: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data\watchtracker.db`; 28,672 bytes; SHA-256 `13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9`.
+- Read-only final hashes: AppData `BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7`; portable `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50`; public release `D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE`. All match their pre-UI references; no disk-content change was detected.
+- Final status: TASK-R-005 ACCEPTED; REVIEW-R-005 CLOSED; AC-R-005 PASS; AC-GATE-R PASS; TASK-A-001 READY.
