@@ -92,8 +92,8 @@
   3. 核对 Phase A/B/DEFERRED 已重新映射且没有提前实施。
 - Expected Result: 恢复分支是可复现的绿色起点，Phase A 可以安全开放。
 - Required Evidence: 分支/提交图、重复验证日志、任务映射。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: FAIL
+- Evidence: Branch ancestry and business-source identity are correct, but commit `1623ae53c9f2be97e1ee2e643fe0fd9836247d7c` was created before three background checks completed. Only three referenced raw logs exist and none is tracked; other referenced logs are absent. Reported durations/timestamps and the Phase A wave mapping are inaccurate. UI verification is not yet ready. See `REVIEW-R-005`.
 
 ### AC-GATE-R：Gate R 通过后才可开放 Phase A
 

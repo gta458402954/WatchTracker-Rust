@@ -173,3 +173,17 @@
 - Selected recovery baseline: `6fcbb1e0ae851c554c905676ee9164bfb3ea303e`, the only candidate with source build, Tauri release, user-verified desktop CRUD/restart and protected-data evidence. Historical Rust fmt exit 1 remains a declared exception.
 - No business code changed; no desktop app launched; no real database accessed; no push, PR or release performed.
 - `TASK-R-004`: ACCEPTED. `AC-R-004`: PASS. `TASK-R-005`: READY. Gate R remains blocked pending R-005 and Codex review.
+
+---
+
+## TASK-R-005 Codex Initial Review
+
+- Reviewer: Codex
+- Reviewed commit: `1623ae53c9f2be97e1ee2e643fe0fd9836247d7c`
+- Status: CHANGES_REQUESTED
+- Branch ancestry and business-source identity with `6fcbb1e` are verified.
+- The result commit predates completion of cargo test, clippy and Tauri build; three resulting raw logs remain untracked and six referenced logs are absent.
+- Reported command durations, artifact times and migration-wave mapping are inaccurate.
+- Recovery-related residual process count at Codex review: 0.
+- Protected-data nuance: the portable active database already differs from its R-001 backup; the R-005 report must distinguish current-run pre/post equality from backup equality.
+- UI verification must wait until REVIEW-R-005 automated-evidence remediation is independently re-verified.

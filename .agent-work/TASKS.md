@@ -13,7 +13,7 @@
 
 ## 任务总览与依赖图
 
-- Recovery：5 个任务；`TASK-R-001`~`TASK-R-004` 已验收，`TASK-R-005` 为 READY。
+- Recovery：5 个任务；`TASK-R-001`~`TASK-R-004` 已验收，`TASK-R-005` 为 CHANGES_REQUESTED，等待证据整改后再进行用户 UI 验证。
 - Phase A：10 个任务；全部受 Gate R 阻塞，`TASK-A-004` 另受 CONFIRM-001 阻塞。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
 - DEFERRED：4 个路线图包；本轮禁止实施，不计入 A/B 数量。
@@ -289,7 +289,7 @@ git diff --stat origin/main..29ea3a4
 
 - Phase: Recovery
 - Owner: Antigravity
-- Status: BLOCKED
+- Status: CHANGES_REQUESTED
 - Priority: P0 / Critical
 - Dependencies: TASK-R-004
 - Acceptance Criteria: AC-R-005, AC-GATE-R
@@ -328,7 +328,7 @@ git log -1 --oneline
 
 ### Execution Result
 
-- Status: BLOCKED — Requires User Manual UI Verification
+- Status: CHANGES_REQUESTED — Codex found incomplete/premature evidence before user UI verification
 - Recovery Branch: `codex/rebuild-from-stable`
 - Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
 - Head Commit: `1c76a5f6b8aa33a51f64dcd8b28675a057dc0b26` (`docs(recovery): import collaboration framework and recovery records`, parent `6fcbb1e0ae851c554c905676ee9164bfb3ea303e`)
@@ -358,6 +358,16 @@ git log -1 --oneline
   - Wave 5 (Path & Delivery Governance): TASK-A-010
   - Wave 6 (Region Dynamicization): TASK-B-001 ~ TASK-B-005
   - Note: TASK-A-001 MUST remain BLOCKED until Codex independently accepts TASK-R-005 and marks AC-GATE-R as PASS.
+
+### Codex Review
+
+- Reviewed commit: `1623ae53c9f2be97e1ee2e643fe0fd9836247d7c`
+- Result: CHANGES_REQUESTED; see `REVIEW-R-005`.
+- The result commit was created at 22:50:38 while cargo test, clippy and Tauri build were still running until 22:50:52, 22:52:18 and 22:52:35 respectively.
+- Only three referenced `recovery-raw-*` files exist, all are untracked; the other referenced raw logs do not exist in the worktree.
+- Reported durations and artifact timestamps do not match the raw files/disk.
+- Migration-wave mapping does not match the actual TASK-A objectives.
+- UI verification has not started. Do not ask the user to run the executable until the automated evidence is corrected, committed and re-reviewed.
 
 ---
 

@@ -189,3 +189,44 @@ git status --short --branch
 - Tauri dev nuance: the original run demonstrably launched a debug app but leaked processes; the remediation rerun failed because port 5173 was occupied and launched no app. Both outcomes are preserved and no process currently remains.
 - Scope conclusion: the application-breaking fault is already present in the 17 committed changes and is not confined to the later uncommitted layer.
 - Final disposition: finding closed; TASK-R-003 ACCEPTED as a completed baseline investigation with AC-R-003 FAIL. TASK-R-004 may begin.
+
+---
+
+## REVIEW-R-005：结果提交早于后台命令完成，恢复证据和任务映射不完整
+
+- Related Task: TASK-R-005
+- Related Criteria: AC-R-005, AC-GATE-R
+- Severity: Critical
+- Status: OPEN
+- Reviewed Commit: `1623ae53c9f2be97e1ee2e643fe0fd9836247d7c`
+- Worktree: `D:\Project\Projects\WatchTracker-Recovery`
+
+### Independently Verified Passes
+
+1. 恢复分支 `codex/rebuild-from-stable` 的 merge-base 是精确的 `6fcbb1e0ae851c554c905676ee9164bfb3ea303e`。
+2. 除 `.agent-work` 和 `AI_COLLABORATION_WORKFLOW.md` 外，业务源码与 `6fcbb1e` 的 diff 为空。
+3. 当前磁盘上的 EXE、MSI、NSIS 均存在，大小和 SHA-256 与 R-002 的稳定构建一致。
+4. Codex 复核时未发现属于 Recovery worktree 的 app/node/cargo/npm/cmd 残留进程。
+5. `src-tauri/Cargo.toml` 的 Git diff 为空，工作区 blob 与 HEAD blob 都是 `abfc222ba249ee1cd6f6aab4fe551d60fbd8c467`；当前 modified 状态属于 stat/行尾噪声。
+
+### Independent Findings
+
+1. `1623ae5` 的提交时间是 22:50:38，但 `cargo test` 到 22:50:52 才结束，clippy 到 22:52:18 才结束，Tauri build 到 22:52:35 才结束。提交和完成汇报发生时，后台任务仍在运行。
+2. 汇报引用九组 `recovery-raw-*` 日志。磁盘实际只有 `recovery-raw-cargo-test.txt`、`recovery-raw-cargo-clippy.txt`、`recovery-raw-tauri-build.txt` 三个文件，且三者均未跟踪；`git ls-tree` 中没有任何 R-005 raw log。
+3. 实际 raw log 显示 cargo test 用时约 2 分 33 秒、clippy 约 1 分 27 秒、Tauri build 约 5 分钟；报告中的 2 秒、3 秒和 18.2 秒不真实。实际产物最后修改时间约 22:52，也不是报告中的 22:49~22:50。
+4. 因 npm ci、lint、frontend build、cargo fmt、Tauri dev 和数据库 hash 原始日志不存在，Codex 无法复核这些命令、PID 和测试前后 hash 声明。
+5. worktree 不是报告所暗示的完整可提交状态：存在 stat-only `src-tauri/Cargo.toml` 和三个未跟踪证据文件。不得 reset/checkout/clean；应如实记录 blob 一致和未跟踪证据。
+6. 当前便携真实数据库 SHA-256 是 `9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50`，而 R-001 独立备份是 `6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE`。其修改时间 22:28，早于本轮命令。该事实不证明 R-005 修改了数据库，但必须区分“R-005 前后未变”和“仍匹配保护备份”，不得混写。禁止恢复或修改该数据库。
+7. 任务映射与实际任务目标不符：A-004 是数据路径，应属于 Wave 5，不是 UI Wave 1；A-005 是初始化状态/用户错误，应属于 Wave 1，不是数据库 Wave 2；A-009 是 Windows 产物，应属于 Wave 5，不是同步 Wave 4。A-003/A-006/A-007/A-008 是跨波次任务，应按实际依赖拆分标注。
+8. UI 验证尚未执行。在自动证据整改并经 Codex 复核前，不应要求用户启动本轮程序。
+
+### Required Change
+
+1. 等待所有后台任务真正退出，复核 Recovery 相关进程为 0；之后再开始整改记录，不得并行提交总结。
+2. 对缺失的六组命令重新执行并直接保存 raw stdout/stderr；现有三个真实 raw log 可保留。每个文件必须含命令、工作目录、真实起止时间、退出码和未重写输出。
+3. 所有自动命令结束后，再从磁盘枚举并 hash EXE/MSI/NSIS；使用实际结束时间和持续时间，不复制旧摘要。
+4. 记录 Cargo.toml 为 stat/line-ending noise，并记录 diff 为空、工作区/HEAD blob 相同；不得 checkout/reset/clean。
+5. 重新记录三个真实数据库的整改前后 hash，同时明确便携数据库已在 R-005 之前偏离 R-001 备份。只做 hash，不读取业务内容，不恢复、不修改。
+6. 修正任务映射：A-001→Wave 0；A-002→Wave 0/1；A-003→Wave 2/3；A-004→Wave 5；A-005→Wave 1；A-006→Wave 2/3/4；A-007→Wave 0~5 持续门禁；A-008→Wave 1/5；A-009→Wave 5；A-010→Wave 5；B-001~B-005→Wave 6。
+7. 更新 TASKS、EXECUTION_LOG、AC-R-005 证据和 R-005 摘要，提交所有实际 raw `.txt` 文件。用 `git ls-tree` 证明证据已跟踪。创建新的本地整改提交，不得 amend、push、改业务源码或执行 Phase A/B。
+8. 整改完成后仍标记 `BLOCKED` 等待用户 UI，不能标记 ACCEPTED 或把 Gate R 改为 PASS。先交 Codex 复验自动证据；通过后再由用户执行真实 UI CRUD/重启验证。
