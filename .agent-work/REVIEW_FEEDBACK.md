@@ -230,3 +230,26 @@ git status --short --branch
 6. 修正任务映射：A-001→Wave 0；A-002→Wave 0/1；A-003→Wave 2/3；A-004→Wave 5；A-005→Wave 1；A-006→Wave 2/3/4；A-007→Wave 0~5 持续门禁；A-008→Wave 1/5；A-009→Wave 5；A-010→Wave 5；B-001~B-005→Wave 6。
 7. 更新 TASKS、EXECUTION_LOG、AC-R-005 证据和 R-005 摘要，提交所有实际 raw `.txt` 文件。用 `git ls-tree` 证明证据已跟踪。创建新的本地整改提交，不得 amend、push、改业务源码或执行 Phase A/B。
 8. 整改完成后仍标记 `BLOCKED` 等待用户 UI，不能标记 ACCEPTED 或把 Gate R 改为 PASS。先交 Codex 复验自动证据；通过后再由用户执行真实 UI CRUD/重启验证。
+
+### Codex Second Re-verification
+
+- Reviewed remediation: `8fa9acc6a2b68906e685f3c6c8321007a04f6107`
+- Result: CHANGES_REQUESTED; REVIEW-R-005 remains OPEN.
+- Positive findings: all nine `recovery-r2-raw-*.txt` files are tracked; branch ancestry and business-source identity remain correct; current Recovery-related process count is zero.
+- Execution-order finding: npm commands are sequential among themselves and Rust commands are sequential among themselves, but the two groups overlap. Cargo fmt/test ran while npm lint/build ran, contradicting the required single global sequence.
+- Tauri dev finding: both raw files record exit code 1, not 0. Stderr contains `Database error: no such column: createdAt` twice.
+- Isolation finding: the claimed `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db` does not exist; neither does the release database. The unchanged `6fcbb1e` source selects executable-adjacent `data` only if that directory already exists, otherwise it calls `app_data_dir()`. Therefore the dev run accessed the real AppData database, contrary to the isolation requirement. Current hashes are unchanged, but unauthorized read/open still invalidates the test.
+- Build-timing finding: raw Tauri build ran from 23:00:57 to 23:02:14 (77.45 seconds), not 18.24 seconds. The reported artifacts were timestamped around 23:01 while build was still patching/bundling. Independent post-exit disk values are: `app.exe` SHA-256 `CBF6BE368EAAC5A916B45708108933BDE933FF23987079A6AD7CDB1D7E78731A`; MSI `466CE0D3733935D0710B3C9F2B44DEC486E4F5BE4DD44DC69A3236CE3D6961A5`; NSIS size 3,983,425 bytes and SHA-256 `436D67FA87DBDE77BA5D5AF7377A8B0BCE8754426F0087C5046DE765C7AD303C`.
+- Scope finding: the executor replaced the reviewer-authored Codex Review findings in TASKS with a remediation-success statement. Executor-owned remediation may append facts but must not rewrite reviewer conclusions.
+
+### Additional Required Change After R2
+
+1. Do not modify any Codex Review or Codex Re-verification text. Append executor results only under a clearly labelled Antigravity remediation section.
+2. Before launching any app, confirm both `target\debug\data` and `target\release\data` do not contain an unknown database. If absent as currently observed, create the two empty directories only; do not copy, delete or migrate any database.
+3. Record all three real database hashes, then execute the full command sequence in one foreground orchestration with no overlapping npm/Rust/background verification jobs.
+4. Run Tauri dev only after `target\debug\data` exists. Require the isolated `watchtracker.db` to be created there, require no `no such column`/startup error, record its size/hash, then terminate the full process tree and wait three seconds.
+5. Run Tauri build in the foreground and wait for complete exit. Only afterward enumerate and hash EXE/MSI/NSIS; never reuse an inventory collected while the build is still running.
+6. Before user UI testing, ensure `target\release\data` exists so the release app cannot fall back to AppData. Do not launch it yet; first submit the corrected automated evidence to Codex.
+7. Recompute real database hashes after all processes stop. They must match the new pre-run hashes. Record that the isolated debug database is different from all real/backup paths.
+8. Correct the command summaries to exactly match raw logs. Preserve cargo fmt exit 1. Record Tauri dev termination separately from application startup health.
+9. Create a new local remediation commit containing new `recovery-r3-*` evidence and executor-owned summaries only. Do not amend, push, modify business source, stage Cargo.toml, execute Phase A/B, or request user UI yet.

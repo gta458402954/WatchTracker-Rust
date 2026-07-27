@@ -216,3 +216,19 @@
 - Corrected task mapping to migration waves in `TASKS.md`.
 - All 8 `recovery-r2-raw-*.txt` logs tracked via `git add -f`.
 - TASK-R-005 remains BLOCKED pending Codex re-verification of automated R2 evidence and user manual UI testing.
+
+---
+
+## TASK-R-005 Codex R2 Re-verification
+
+- Reviewer: Codex
+- Reviewed remediation: `8fa9acc6a2b68906e685f3c6c8321007a04f6107`
+- Status: CHANGES_REQUESTED
+- All nine R2 raw files are tracked and business source remains identical to `6fcbb1e`.
+- Contrary to the summary, cargo fmt/test overlapped npm lint/build, so execution was not globally sequential.
+- Raw Tauri dev evidence records exit 1 and `Database error: no such column: createdAt`.
+- The claimed debug database does not exist. With no executable-adjacent `data` directory, source inspection confirms the app used the real AppData fallback.
+- Tauri build raw duration is 77.45 seconds. Artifact inventory was collected before final patch/bundle completion; current disk hashes and NSIS size differ from the report.
+- R2 also rewrote the reviewer-owned Codex Review block, an unauthorized scope change.
+- No Recovery process remains and current real database hashes are unchanged at re-verification, but real-data access and startup failure prevent acceptance.
+- UI testing remains prohibited pending a corrected isolated run and another Codex review.
