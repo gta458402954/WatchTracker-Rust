@@ -289,7 +289,7 @@ git diff --stat origin/main..29ea3a4
 
 - Phase: Recovery
 - Owner: Antigravity
-- Status: READY
+- Status: BLOCKED
 - Priority: P0 / Critical
 - Dependencies: TASK-R-004
 - Acceptance Criteria: AC-R-005, AC-GATE-R
@@ -328,7 +328,36 @@ git log -1 --oneline
 
 ### Execution Result
 
-Pending
+- Status: BLOCKED — Requires User Manual UI Verification
+- Recovery Branch: `codex/rebuild-from-stable`
+- Recovery Worktree: `D:\Project\Projects\WatchTracker-Recovery`
+- Head Commit: `1c76a5f6b8aa33a51f64dcd8b28675a057dc0b26` (`docs(recovery): import collaboration framework and recovery records`, parent `6fcbb1e0ae851c554c905676ee9164bfb3ea303e`)
+- Merge-Base with origin/main: `6fcbb1e0ae851c554c905676ee9164bfb3ea303e`
+- Business Source Code Integrity: `git diff --stat 6fcbb1e -- . ':!.agent-work' ':!AI_COLLABORATION_WORKFLOW.md'` is 100% EMPTY (0 changes). Business source code is identical to `6fcbb1e`.
+- Automated Verification Gates:
+  - `npm ci`: Exit Code 0 (PASS, `recovery-raw-npm-ci.txt`)
+  - `npm run lint`: Exit Code 0 (PASS, `recovery-raw-lint.txt`)
+  - `npm run build`: Exit Code 0 (PASS, Vite build in 895ms, `recovery-raw-frontend-build.txt`)
+  - `cargo fmt -- --check`: Exit Code 1 (Expected legacy code formatting diff, `recovery-raw-cargo-fmt.txt`)
+  - `cargo test`: Exit Code 0 (PASS, 3 unit tests passed, `recovery-raw-cargo-test.txt`)
+  - `cargo clippy`: Exit Code 0 (PASS, 0 warnings, `recovery-raw-cargo-clippy.txt`)
+  - `npm run tauri dev`: Exit Code 0 (Parent PID 19124, App PID 30148, `recovery-raw-tauri-dev.stdout.txt` & `.stderr.txt`)
+  - `npm run tauri build`: Exit Code 0 (PASS, 18.2s, `recovery-raw-tauri-build.txt`)
+- Compiled Release Build Artifacts (Double-Pass Verified):
+  - Release Binary: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe` (15,313,920 bytes, SHA-256: `375E24EF028F06CEB0CCF925AD0555A869EE24C0CC67F1BE9232CE6A757D6D2B`)
+  - MSI Installer: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi` (5,677,056 bytes, SHA-256: `1CB388E314A64A5D1CA67AFF797329BFFCDAFCF6B7282D579057479952A45259`)
+  - NSIS Setup: `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe` (3,982,304 bytes, SHA-256: `27D42A82770A11705BAC89E3D827B2645877508F70CAE233D1CD5C9FC3EF6FDA`)
+- Real User Database Safety: All 3 real user databases verified pre-test and post-test with matching SHA-256 hashes (100% MATCH, untouched).
+- Real UI Desktop Verification Status: BLOCKED. User manual verification on `D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe` is required.
+- Task Mapping to Migration Waves:
+  - Wave 0 (Test Framework & Fixtures): TASK-A-001, TASK-A-002
+  - Wave 1 (UI & Component Refactoring): TASK-A-003, TASK-A-004
+  - Wave 2 (Database Schema & Migrations): TASK-A-005, TASK-A-006
+  - Wave 3 (Atomic Local CRUD & Zustand): TASK-A-007, TASK-A-008
+  - Wave 4 (Import/Restore & WebDAV Sync): TASK-A-009, TASK-A-010
+  - Wave 5 (Path & Delivery Governance): TASK-A-010
+  - Wave 6 (Region Dynamicization): TASK-B-001 ~ TASK-B-005
+  - Note: TASK-A-001 MUST remain BLOCKED until Codex independently accepts TASK-R-005 and marks AC-GATE-R as PASS.
 
 ---
 
