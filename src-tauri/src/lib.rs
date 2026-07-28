@@ -1,9 +1,14 @@
 mod auth;
 mod commands;
 mod db;
+mod db_atomic_helpers;
+mod db_atomic_update;
 mod error;
 mod models;
 mod net;
+
+#[cfg(test)]
+mod db_atomic_tests;
 
 use std::path::{Component, Path, PathBuf};
 use tauri::Manager;
@@ -97,13 +102,11 @@ pub fn run() {
                 let content = std::fs::read(&full_path).unwrap_or_default();
                 let mime_type = infer::get(&content)
                     .map(|t| t.mime_type())
-                    .unwrap_or_else(|| {
-                        match full_path.extension().and_then(|e| e.to_str()) {
-                            Some("png") | Some("PNG") => "image/png",
-                            Some("webp") | Some("WEBP") => "image/webp",
-                            Some("gif") | Some("GIF") => "image/gif",
-                            _ => "image/jpeg",
-                        }
+                    .unwrap_or_else(|| match full_path.extension().and_then(|e| e.to_str()) {
+                        Some("png") | Some("PNG") => "image/png",
+                        Some("webp") | Some("WEBP") => "image/webp",
+                        Some("gif") | Some("GIF") => "image/gif",
+                        _ => "image/jpeg",
                     });
 
                 tauri::http::Response::builder()

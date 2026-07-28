@@ -1,5 +1,5 @@
 use crate::models::WatchRecord;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use std::collections::HashSet;
 use std::fs;
 use tauri::AppHandle;
@@ -52,7 +52,7 @@ struct Migration {
     up: fn(&Connection) -> Result<()>,
 }
 
-fn setup_db(conn: &Connection) -> Result<()> {
+pub(crate) fn setup_db(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);",
         [],
@@ -90,13 +90,19 @@ fn setup_db(conn: &Connection) -> Result<()> {
                 for (name, col_type) in cols {
                     let exists: bool = conn
                         .query_row(
-                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+                            &format!(
+                                "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
+                                name
+                            ),
                             [],
                             |row| row.get(0),
                         )
                         .unwrap_or(false);
                     if !exists {
-                        conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+                        conn.execute(
+                            &format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type),
+                            [],
+                        )?;
                     }
                 }
                 Ok(())
@@ -129,7 +135,10 @@ fn setup_db(conn: &Connection) -> Result<()> {
                     )
                     .unwrap_or(false);
                 if !exists {
-                    conn.execute("ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0", [])?;
+                    conn.execute(
+                        "ALTER TABLE records ADD COLUMN isLocked INTEGER DEFAULT 0",
+                        [],
+                    )?;
                 }
                 Ok(())
             },
@@ -147,13 +156,19 @@ fn setup_db(conn: &Connection) -> Result<()> {
                 for (name, col_type) in cols {
                     let exists: bool = conn
                         .query_row(
-                            &format!("SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'", name),
+                            &format!(
+                                "SELECT count(*) FROM pragma_table_info('records') WHERE name='{}'",
+                                name
+                            ),
                             [],
                             |row| row.get(0),
                         )
                         .unwrap_or(false);
                     if !exists {
-                        conn.execute(&format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type), [])?;
+                        conn.execute(
+                            &format!("ALTER TABLE records ADD COLUMN {} {}", name, col_type),
+                            [],
+                        )?;
                     }
                 }
                 Ok(())
@@ -185,8 +200,10 @@ fn setup_db(conn: &Connection) -> Result<()> {
         Migration {
             version: 10,
             up: |conn| {
-                conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", []).ok();
-                conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", []).ok();
+                conn.execute("ALTER TABLE records ADD COLUMN mediaType TEXT", [])
+                    .ok();
+                conn.execute("ALTER TABLE records ADD COLUMN contentTags TEXT", [])
+                    .ok();
                 conn.execute("UPDATE records SET mediaType = CASE WHEN category IN ('电影', '纪录片') THEN '电影' WHEN category = '综艺' THEN '综艺' WHEN category = '动画' THEN '动画' ELSE '剧集' END WHERE mediaType IS NULL OR mediaType = ''", [])?;
                 conn.execute("UPDATE records SET contentTags = CASE WHEN contentTags IS NULL OR contentTags = '' THEN CASE WHEN category = '纪录片' THEN '纪录片' ELSE '' END ELSE contentTags END", [])?;
                 Ok(())
@@ -202,7 +219,10 @@ fn setup_db(conn: &Connection) -> Result<()> {
         Migration {
             version: 12,
             up: |conn| {
-                conn.execute("UPDATE records SET mediaType = '纪录片' WHERE category = '纪录片'", [])?;
+                conn.execute(
+                    "UPDATE records SET mediaType = '纪录片' WHERE category = '纪录片'",
+                    [],
+                )?;
                 Ok(())
             },
         },
@@ -222,7 +242,6 @@ fn setup_db(conn: &Connection) -> Result<()> {
             version: 14,
             up: |conn| {
                 conn.execute_batch("
-                    BEGIN IMMEDIATE;
                     CREATE TABLE records_v14 (
                         id TEXT PRIMARY KEY,
                         originalName TEXT NOT NULL DEFAULT '',
@@ -268,7 +287,6 @@ fn setup_db(conn: &Connection) -> Result<()> {
                     FROM records;
                     DROP TABLE records;
                     ALTER TABLE records_v14 RENAME TO records;
-                    COMMIT;
                 ")
             },
         },
@@ -284,15 +302,66 @@ fn setup_db(conn: &Connection) -> Result<()> {
                 )
             },
         },
+        Migration {
+            version: 16,
+            up: |conn| {
+                conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_records_createdAt ON records(createdAt);
+                     CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+                     CREATE INDEX IF NOT EXISTS idx_records_mediaType ON records(mediaType);",
+                )
+            },
+        },
+        Migration {
+            version: 17,
+            up: |conn| {
+                let exists: bool = conn.query_row(
+                    "SELECT count(*) FROM pragma_table_info('records') WHERE name = 'rev'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    conn.execute(
+                        "ALTER TABLE records ADD COLUMN rev INTEGER NOT NULL DEFAULT 0",
+                        [],
+                    )?;
+                }
+                Ok(())
+            },
+        },
+        Migration {
+            version: 18,
+            up: |conn| {
+                let exists: bool = conn.query_row(
+                    "SELECT count(*) FROM pragma_table_info('records') WHERE name = 'revActor'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    conn.execute(
+                        "ALTER TABLE records ADD COLUMN revActor TEXT NOT NULL DEFAULT ''",
+                        [],
+                    )?;
+                }
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('records_generation', '0') \
+                     ON CONFLICT(key) DO NOTHING",
+                    [],
+                )?;
+                Ok(())
+            },
+        },
     ];
 
     for m in migrations {
         if current_version < m.version {
-            (m.up)(conn)?;
-            conn.execute(
+            let transaction = conn.unchecked_transaction()?;
+            (m.up)(&transaction)?;
+            transaction.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
                 params![m.version.to_string()],
             )?;
+            transaction.commit()?;
         }
     }
 
@@ -300,52 +369,55 @@ fn setup_db(conn: &Connection) -> Result<()> {
 }
 
 // 命令实现
+fn map_row_to_record(row: &Row<'_>) -> Result<WatchRecord> {
+    Ok(WatchRecord {
+        id: row.get("id")?,
+        original_name: row.get("originalName")?,
+        chinese_name: row.get("chineseName")?,
+        progress: row.get("progress")?,
+        total_episodes: row.get("totalEpisodes")?,
+        status: row.get("status")?,
+        platform: row.get("platform")?,
+        rating: row.get("rating").unwrap_or(None),
+        start_date: row.get("startDate")?,
+        end_date: row.get("endDate")?,
+        notes: row.get("notes")?,
+        created_at: row.get("createdAt")?,
+        movie_progress: row.get("movieProgress").unwrap_or(None),
+        movie_duration: row.get("movieDuration").unwrap_or(None),
+        release_year: row
+            .get::<_, String>("releaseYear")
+            .map(Some)
+            .or_else(|_| {
+                row.get::<_, i32>("releaseYear")
+                    .map(|value| Some(value.to_string()))
+            })
+            .unwrap_or(None),
+        poster_path: row.get("posterPath").unwrap_or(None),
+        updated_at: row.get("updatedAt").unwrap_or(None),
+        imdb_id: row.get("imdbId").unwrap_or(None),
+        is_locked: row
+            .get::<_, Option<i32>>("isLocked")
+            .unwrap_or(None)
+            .map(|value| value != 0),
+        genres: row.get("genres").unwrap_or(None),
+        origin_country: row.get("originCountry").unwrap_or(None),
+        imdb_rating: row.get("imdbRating").unwrap_or(None),
+        tmdb_status: row.get("tmdbStatus").unwrap_or(None),
+        interest_level: row.get("interestLevel").unwrap_or(None),
+        episode_runtime: row.get("episodeRuntime").unwrap_or(None),
+        media_type: row.get("mediaType").unwrap_or_else(|_| "电影".to_string()),
+        content_tags: row.get("contentTags").unwrap_or(None),
+        rev: row.get("rev").unwrap_or(0),
+        rev_actor: row.get("revActor").unwrap_or_default(),
+    })
+}
+
 pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
     let mut stmt = conn.prepare("SELECT * FROM records ORDER BY createdAt DESC")?;
 
     // 使用列名映射，避免索引错误
-    let rows = stmt.query_map([], |row| {
-        Ok(WatchRecord {
-            id: row.get("id")?,
-            original_name: row.get("originalName")?,
-            chinese_name: row.get("chineseName")?,
-            progress: row.get("progress")?,
-            total_episodes: row.get("totalEpisodes")?,
-            status: row.get("status")?,
-            platform: row.get("platform")?,
-            rating: row.get("rating").unwrap_or(None),
-            start_date: row.get("startDate")?,
-            end_date: row.get("endDate")?,
-            notes: row.get("notes")?,
-            created_at: row.get("createdAt")?,
-            movie_progress: row.get("movieProgress").unwrap_or(None),
-            movie_duration: row.get("movieDuration").unwrap_or(None),
-            release_year: {
-                if let Ok(val) = row.get::<_, String>("releaseYear") {
-                    Some(val)
-                } else if let Ok(val) = row.get::<_, i32>("releaseYear") {
-                    Some(val.to_string())
-                } else {
-                    None
-                }
-            },
-            poster_path: row.get("posterPath").unwrap_or(None),
-            updated_at: row.get("updatedAt").unwrap_or(None),
-            imdb_id: row.get("imdbId").unwrap_or(None),
-            is_locked: row
-                .get::<_, Option<i32>>("isLocked")
-                .unwrap_or(None)
-                .map(|v| v != 0),
-            genres: row.get("genres").unwrap_or(None),
-            origin_country: row.get("originCountry").unwrap_or(None),
-            imdb_rating: row.get("imdbRating").unwrap_or(None),
-            tmdb_status: row.get("tmdbStatus").unwrap_or(None),
-            interest_level: row.get("interestLevel").unwrap_or(None),
-            episode_runtime: row.get("episodeRuntime").unwrap_or(None),
-            media_type: row.get("mediaType").unwrap_or_else(|_| "电影".to_string()),
-            content_tags: row.get("contentTags").unwrap_or(None),
-        })
-    })?;
+    let rows = stmt.query_map([], map_row_to_record)?;
 
     let mut results = Vec::new();
     for row in rows {
@@ -357,6 +429,15 @@ pub fn get_all_records(conn: &Connection) -> Result<Vec<WatchRecord>> {
     Ok(results)
 }
 
+pub fn get_record(conn: &Connection, id: &str) -> Result<Option<WatchRecord>> {
+    conn.query_row(
+        "SELECT * FROM records WHERE id = ?1",
+        [id],
+        map_row_to_record,
+    )
+    .optional()
+}
+
 pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
     log::info!(
         "[DB] Inserting/Updating record: {} ({})",
@@ -365,13 +446,14 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
     );
     let is_locked_int = r.is_locked.map(|b| if b { 1 } else { 0 });
     conn.execute(
-        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags, rev, revActor) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         params![
             r.id, r.original_name, r.chinese_name, r.progress, r.total_episodes,
             r.status, r.platform, r.rating, r.start_date, r.end_date,
             r.notes, r.created_at, r.movie_progress, r.movie_duration,
             r.release_year, r.poster_path, r.updated_at, r.imdb_id, is_locked_int,
-            r.genres, r.origin_country, r.imdb_rating, r.tmdb_status, r.interest_level, r.episode_runtime, r.media_type, r.content_tags
+            r.genres, r.origin_country, r.imdb_rating, r.tmdb_status, r.interest_level, r.episode_runtime, r.media_type, r.content_tags,
+            r.rev, r.rev_actor
         ],
     )?;
     Ok(())
@@ -430,9 +512,12 @@ pub fn vacuum_db(conn: &Connection) -> Result<()> {
 }
 
 pub fn get_setting(conn: &Connection, key: String) -> Result<Option<String>> {
-    let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?")?;
-    let res = stmt.query_row(params![key], |row| row.get(0)).ok();
-    Ok(res)
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
 #[cfg(test)]
@@ -468,6 +553,8 @@ mod tests {
             episode_runtime: Some(120),
             media_type: "电影".to_string(),
             content_tags: Some("美国".to_string()),
+            rev: 0,
+            rev_actor: String::new(),
         }
     }
 
@@ -476,9 +563,10 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open database");
         setup_db(&conn).expect("migrate database");
 
-        let version: String =
-            get_setting(&conn, "db_version".to_string()).unwrap().unwrap();
-        assert_eq!(version, "15");
+        let version: String = get_setting(&conn, "db_version".to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(version, "18");
 
         let legacy_tables: i32 = conn
             .query_row(

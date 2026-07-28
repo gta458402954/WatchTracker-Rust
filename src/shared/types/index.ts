@@ -30,4 +30,34 @@ export interface WatchRecord {
   episodeRuntime?: number | null;
   mediaType: MediaType;
   contentTags?: string | null;
+  rev?: number;
+  revActor?: string;
 }
+
+export type UpdateWatchRecord = Partial<Pick<WatchRecord,
+  | 'originalName'
+  | 'chineseName'
+  | 'progress'
+  | 'status'
+  | 'platform'
+  | 'notes'
+  | 'mediaType'
+>> & {
+  totalEpisodes?: number | null;
+  movieProgress?: number | null;
+  movieDuration?: number | null;
+  releaseYear?: string | null;
+  posterPath?: string | null;
+  rating?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  imdbId?: string | null;
+  isLocked?: boolean | null;
+  genres?: string | null;
+  originCountry?: string | null;
+  imdbRating?: number | null;
+  tmdbStatus?: string | null;
+  interestLevel?: number | null;
+  episodeRuntime?: number | null;
+  contentTags?: string | null;
+};

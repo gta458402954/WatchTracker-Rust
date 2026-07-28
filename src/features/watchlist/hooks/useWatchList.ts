@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { WatchRecord } from '../../../shared/types';
+import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
   getAllRecordsAsync,
   insertRecord,
@@ -103,12 +103,10 @@ export function useWatchList(syncInterval = 30) {
     autoSyncDebounced();
   }, [autoSyncDebounced]);
 
-  const updateRecord = useCallback(async (id: string, updates: Partial<WatchRecord>) => {
-    const syncedUpdates = { ...updates, updatedAt: new Date().toISOString() };
-    await clearRecordDeletion(id);
-    await dbUpdateRecord(id, syncedUpdates);
+  const updateRecord = useCallback(async (id: string, updates: UpdateWatchRecord) => {
+    const persisted = await dbUpdateRecord(id, updates);
     revisionRef.current++;
-    const updated = recordsRef.current.map(record => record.id === id ? { ...record, ...syncedUpdates } : record);
+    const updated = recordsRef.current.map(record => record.id === id ? persisted : record);
     recordsRef.current = updated;
     setRecords(updated);
     autoSyncDebounced();

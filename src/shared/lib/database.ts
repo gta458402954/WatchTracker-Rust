@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { WatchRecord } from '../types';
+import { UpdateWatchRecord, WatchRecord } from '../types';
 import { errorMessage, TmdbMedia, TmdbSearchResponse } from './classification';
 
 export async function getAllRecordsAsync(): Promise<WatchRecord[]> {
@@ -15,9 +15,14 @@ export async function insertRecord(record: WatchRecord): Promise<void> {
   }
 }
 
-export async function updateRecord(id: string, updates: Partial<WatchRecord>): Promise<void> {
+export async function updateRecord(id: string, updates: UpdateWatchRecord): Promise<WatchRecord> {
+  for (const [field, value] of Object.entries(updates)) {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new Error(`Invalid non-finite number provided for field: ${field}`);
+    }
+  }
   try {
-    await invoke('update_record', { id, updates });
+    return await invoke<WatchRecord>('update_record', { id, updates });
   } catch (error) {
     console.error('[DB] Update record failed:', error);
     throw error;
