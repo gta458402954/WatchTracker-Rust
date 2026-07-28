@@ -26,6 +26,11 @@
 
 ## Executor-owned
 
+> 2026-07-28 temporary mode: Antigravity is paused. “Executor” currently means the
+> Codex Implementation Pass operating under a Codex-owned contract. The subsequent
+> Verification Pass must use a fresh review context/worktree and may not rely on the
+> implementation summary as acceptance evidence.
+
 - 合同授权的业务源码和测试区域
 - `.agent-work/evidence/raw/<task-id>/`（只允许 Runner 创建，执行者不得手改）
 - `.agent-work/evidence/generated/<task-id>/`（只允许工具生成）
@@ -34,7 +39,7 @@
 ## Shared, append-only
 
 - `.agent-work/TASKS.md` 的 `Execution Result` 执行者区域
-- `.agent-work/EXECUTION_LOG.md` 的 `Antigravity Execution` 区域
+- `.agent-work/EXECUTION_LOG.md` 的 contract-defined execution area
 
 共享文件必须使用合同中的唯一锚点限制可编辑区域。Expected File 不代表允许整文件
 重写；BOM、行尾、文件模式和非目标区域仍受保护。

@@ -7,14 +7,14 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 已 PASS；`TASK-A-001` 已验收，`TASK-A-002` 仅按 Codex 签发的只读观察合同开放为 READY；其他 Phase A 任务继续按依赖关系保持 BLOCKED。
-- Antigravity 完成实现只能标 IMPLEMENTED；只有 Codex 独立验收后可标 ACCEPTED。
+- Gate R 已 PASS；`TASK-A-001`、`TASK-A-002` 已验收；其他 Phase A 任务继续按依赖关系保持 DRAFT/BLOCKED。
+- Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
 ## 任务总览与依赖图
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
-- Phase A：10 个任务；`TASK-A-001` 已验收，`TASK-A-002` 仅开放证据诊断，其余任务按依赖关系保持 BLOCKED，`TASK-A-004` 另受 CONFIRM-001 阻塞。
+- Phase A：10 个任务；`TASK-A-001`、`TASK-A-002` 已验收，其余任务尚未开放，`TASK-A-004` 另受 CONFIRM-001 阻塞。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
 - DEFERRED：4 个路线图包；本轮禁止实施，不计入 A/B 数量。
 
@@ -506,12 +506,12 @@ cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
 ## TASK-A-002：恢复依赖安装与开发启动
 
 - Phase: A
-- Owner: Antigravity
-- Status: READY
+- Owner: Codex
+- Status: ACCEPTED
 - Priority: P0 / Critical
 - Dependencies: TASK-A-001
 - Acceptance Criteria: AC-A-002, AC-A-003, AC-A-004（启动部分）
-- Active Contract: `TASK-A-002-observe-r1`（只允许诊断和隔离证据；不授权修改或提交业务、配置、依赖、锁文件及任务状态）
+- Contract Chain: `TASK-A-002-observe-r1` ~ `r6`、`TASK-A-002-scope-r7`（均已归档；本任务不再开放执行）
 - Expected Files:
   - `package.json` / `package-lock.json`（仅确认必要时最小修改）
   - `src-tauri/Cargo.toml` / `Cargo.lock`（仅确认必要时最小修改）
@@ -546,7 +546,21 @@ npm run tauri dev
 
 ### Execution Result
 
-Pending
+- BASE / accepted HEAD: `201e9e46a12ac2e13115881731fa77ad38985357` on `codex/task-a-002`.
+- `npm ci`, locked Cargo metadata, `cargo build --locked`, Vite startup and port observation: PASS; `package-lock.json` / `Cargo.lock` diff is empty.
+- Empty/current/synthetic-v12 database startup: PASS. The isolated database is `src-tauri/target/debug/data/watchtracker.db`; the synthetic v12 record survived migration to v15 and legacy columns were removed.
+- UI: user observed the first isolated startup entering the complete WatchTracker main interface with no error or white screen.
+- Data safety: AppData, portable and public-release database SHA-256 values matched within the accepted r6 run; the portable database's earlier concurrent change was identified by the user as their own edit and was not restored or overwritten.
+- Scope: 0 tracked-file changes, 0 staged files, no push; final r7 Scope Checker PASS; no related process or port 5173 listener remains.
+- Governance finding: PowerShell 7.6.3 was already used. Runner defects involving Windows PowerShell 5.1 compatibility, inherited output pipes, re-parented Vite children and sub-60ms processes are recorded as governance debt and do not change the application result.
+
+### Codex Review
+
+<!-- BEGIN OWNER:CODEX TASK-A-002 REVIEW -->
+- Result: ACCEPTED for AC-A-002, AC-A-003 and the startup subset of AC-A-004.
+- Full AC-A-004 remains assigned to the later database/CRUD integration task; this acceptance does not claim all three scenarios received separate manual screenshots.
+- Evidence: `.agent-work/evidence/review/TASK-A-002-CODEX-REVIEW.md` and immutable Runner sessions under `.agent-work/evidence/{captured,generated}/TASK-A-002/`.
+<!-- END OWNER:CODEX TASK-A-002 REVIEW -->
 
 ## TASK-A-003：收口原子更新、migration 与 setting 契约
 

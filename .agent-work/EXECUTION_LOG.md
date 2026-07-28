@@ -411,3 +411,17 @@
 - Recovery red team: `23/23 PASS` in disposable Governance/Execution repositories, including the temporary-index rejection invariant and complete Safe Commit/Receipt verification.
 - Recovery Runner session: `b146f2e5-aaef-4b6a-8d75-d7170ab6f33b`; recovery contract and evidence manifest use raw byte SHA-256 authorization. The initial recovery session was superseded after Codex corrected the contract-only insertion budget from 180 to 400 without changing its five-file authorization scope.
 - Current status: recovery correction ready for Safe Commit; TASK-A-002 remains unopened.
+
+---
+
+## TASK-A-002 Codex Execution and Acceptance
+
+- Date: 2026-07-28
+- BASE / reviewed HEAD: `201e9e46a12ac2e13115881731fa77ad38985357`
+- Worktree: `D:\Project\Projects\WatchTracker-A002`
+- Result: ACCEPTED for AC-A-002, AC-A-003 and AC-A-004 startup subset.
+- Commands: clean `npm ci`, locked Cargo metadata, `cargo build --locked`, Vite observation, isolated empty/current/legacy startup and schema assertions.
+- User UI evidence: first isolated launch entered the complete WatchTracker main interface without error or white screen.
+- Scope/data: no tracked or staged change; real database before/after hashes matched within the accepted run; no residual task process or port 5173 listener.
+- Evidence review: `.agent-work/evidence/review/TASK-A-002-CODEX-REVIEW.md`.
+- Governance debt: Runner must be hardened for PowerShell host binding, inherited output pipes, re-parented descendants and fast-exit process identity. Antigravity is paused; future tasks require Codex Implementation/Verification separation.

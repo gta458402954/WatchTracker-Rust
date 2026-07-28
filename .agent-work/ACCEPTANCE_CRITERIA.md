@@ -141,8 +141,8 @@
   3. 如使用真实库副本，核对备份、测试副本和恢复方法；否则确认仅使用临时库/夹具。
 - Expected Result: 既有修改未被覆盖/清除；没有测试直接打开或改写活动用户数据库；证据无凭据和非必要个人数据。
 - Required Evidence: `TASK-A-001-*` 状态与数据安全清单。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: TASK-A-001 final correction `b0b68b9365b01a647d47455007ba5db03239890f`; accepted worktree, process, environment, migration-audit, synthetic-data and failure-matrix evidence under `.agent-work/evidence/{logs,tests}/TASK-A-001-*`. The accepted scope contains no application source, configuration or database change; see closed `REVIEW-A-001`.
 
 ### AC-A-002：Windows 工具链与锁文件安装可重复
 
@@ -156,8 +156,8 @@
   3. 执行 Cargo dependency resolution/build-related check，并核对 Tauri Windows 前置条件。
 - Expected Result: 锁文件安装和 Rust 依赖解析成功，不依赖未记录全局包/私有文件；最低版本文档准确。
 - Required Evidence: 环境与安装日志、lock diff 为零。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: TASK-A-002 reviewed at `201e9e46a12ac2e13115881731fa77ad38985357`: Node `v24.18.0`, npm `11.16.0`, rustc/cargo `1.97.1`; `npm ci`, locked Cargo metadata and `cargo build --locked` succeeded. `package-lock.json` and `Cargo.lock` have no tracked diff. See `.agent-work/evidence/review/TASK-A-002-CODEX-REVIEW.md`.
 
 ### AC-A-003：前端开发服务器可启动
 
@@ -171,8 +171,8 @@
   3. 正常停止服务器。
 - Expected Result: 固定端口监听成功，页面可渲染，无阻塞致命错误。
 - Required Evidence: 启停日志、页面截图。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Vite reported ready on `http://127.0.0.1:5173`; the Runner observed the health marker and the task listener was subsequently removed. The same frontend rendered in the isolated Tauri main interface, which the user confirmed was the complete main screen without an error or white screen. No port 5173 listener remains.
 
 ### AC-A-004：Tauri dev 与三类数据库启动场景通过
 
@@ -187,7 +187,7 @@
 - Expected Result: 三种场景均稳定进入主界面，旧记录可读且无丢失；可恢复错误有 UI 提示和日志。
 - Required Evidence: 三组启动日志、截图、升级前后数据/schema 摘要。
 - Result: NOT RUN
-- Evidence: Pending
+- Evidence: TASK-A-002 startup subset PASS only: isolated empty/current/synthetic-v12 startup and v12→v15 migration were exercised; the synthetic record was preserved and legacy columns were removed. The user confirmed one complete main-interface launch. Full AC-A-004 remains NOT RUN until the later integration task supplies the complete three-scenario UI/data evidence; TASK-A-002 does not lower that requirement.
 
 ### AC-A-005：初始化三态、重试和统一错误反馈
 

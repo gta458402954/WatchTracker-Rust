@@ -1,6 +1,13 @@
-# WatchTracker：Codex 与 Antigravity 完整协作流程
+# WatchTracker：AI 协作流程
 
-本文是本项目的 AI 协作操作手册。目标是让 Codex 负责分析、方案、任务拆解和独立验收，让 Antigravity 负责具体实施、测试和整改，并通过 `.agent-work/` 留下完整、可复核的交接记录。
+本文是本项目的 AI 协作操作手册，通过 `.agent-work/` 留下完整、可复核的授权、实施和验收记录。
+
+## 0. 当前执行模式（2026-07-28 起）
+
+- Antigravity 因服务地区限制和执行环境不稳定暂时 `PAUSED / OPTIONAL`，不得执行任何现有任务。
+- Codex 当前同时承担规划和实施，但必须把工作拆成两个隔离阶段：Implementation Pass 只实施和提交；Verification Pass 从提交和干净 worktree 重新检查 diff、测试、进程、数据和产物后才能验收。
+- 原文后续 Antigravity 指令保留为历史/可选流程，在用户明确恢复 Antigravity 前不生效。
+- 治理 Runner 继续作为工程护栏；已发现的进程生命周期缺陷记录为治理债务，不阻塞已由独立证据完成的业务验收。
 
 ## 1. 推荐配置
 
@@ -18,9 +25,8 @@
 
 ### Antigravity
 
-- 模型：Gemini 3.6 Flash
-- 默认 Thinking：Medium
-- 复杂跨模块修改、数据库问题、安全问题或连续失败时使用 High。
+- 当前状态：`PAUSED / OPTIONAL`。
+- 恢复前必须由用户明确确认服务可用，并由 Codex 重新签发具体任务合同。
 
 ## 2. 角色边界
 
@@ -35,13 +41,15 @@
 
 - 检查实际代码库和现有未提交修改；
 - 生成项目分析、实施方案、验收标准和任务；
-- 独立运行测试并审查 Antigravity 的实现；
+- 在 Implementation Pass 中按合同实施，在独立 Verification Pass 中重新运行测试并审查提交；
 - 提出具体整改意见；
 - 生成阶段验收报告和最终综合验收报告。
 
-Codex 不负责本流程中的业务代码实施，也不能仅凭 Antigravity 的执行日志宣布验收通过。
+Codex 可以实施业务代码，但不能在 Implementation Pass 中自行宣布验收通过，也不能仅凭任何执行摘要宣布通过。
 
 ### Antigravity
+
+当前暂停。以下边界仅在用户恢复 Antigravity 后适用：
 
 - 只执行分配给自己的 `READY` 或 `CHANGES_REQUESTED` 任务；
 - 修改代码、运行命令、保存证据；
@@ -59,12 +67,12 @@ Antigravity 不得改变原始需求、降低验收标准或自行把任务标�
 | `.agent-work/SOLUTION.md` | Codex | 完整技术方案 |
 | `.agent-work/ACCEPTANCE_CRITERIA.md` | Codex | 可执行、可判断的验收标准 |
 | `.agent-work/TASKS.md` | Codex 主导 | 任务定义、依赖和状态交接 |
-| `.agent-work/EXECUTION_LOG.md` | Antigravity | 修改文件、执行命令、退出码和结果 |
+| `.agent-work/EXECUTION_LOG.md` | 当前执行者 / Runner | 修改文件、执行命令、退出码和结果 |
 | `.agent-work/REVIEW_FEEDBACK.md` | Codex | 审查问题和整改要求 |
 | `.agent-work/ACCEPTANCE_REPORT_BASELINE.md` | Codex | 阶段 A：稳定基线验收报告 |
 | `.agent-work/ACCEPTANCE_REPORT_REGION.md` | Codex | 阶段 B：地区专项验收报告 |
 | `.agent-work/ACCEPTANCE_REPORT.md` | Codex | 最终综合验收报告 |
-| `.agent-work/evidence/` | Antigravity | 构建、测试、日志和截图证据 |
+| `.agent-work/evidence/` | Runner / 当前执行者 | 构建、测试、日志和截图证据 |
 
 ## 4. 开始前检查
 
