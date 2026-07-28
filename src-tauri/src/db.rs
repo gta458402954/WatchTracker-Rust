@@ -1,43 +1,19 @@
+use crate::app_paths::AppPaths;
 use crate::models::WatchRecord;
 use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use std::collections::HashSet;
-use std::fs;
-use tauri::AppHandle;
-use tauri::Manager;
 
 pub struct DbState {
     pub conn: std::sync::Mutex<Connection>,
 }
 
-pub fn init(app_handle: &AppHandle) -> Result<DbState, String> {
-    // 优先检查可执行文件同级目录下的 data 文件夹（实现便携化）
-    let app_dir = if let Ok(exe_path) = std::env::current_exe() {
-        let exe_dir = exe_path
-            .parent()
-            .unwrap_or(&std::path::PathBuf::new())
-            .to_path_buf();
-        let portable_dir = exe_dir.join("data");
-        if portable_dir.exists() {
-            portable_dir
-        } else {
-            app_handle
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-        }
-    } else {
-        app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-    };
-
-    if !app_dir.exists() {
-        fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
-    }
-
-    let db_path = app_dir.join("watchtracker.db");
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+pub fn init(paths: &AppPaths) -> Result<DbState, String> {
+    let conn = Connection::open(paths.database()).map_err(|e| {
+        format!(
+            "Could not open the database at {}: {e}",
+            paths.database().display()
+        )
+    })?;
 
     // 初始化表逻辑
     setup_db(&conn).map_err(|e| e.to_string())?;

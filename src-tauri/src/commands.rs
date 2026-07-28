@@ -1,3 +1,4 @@
+use crate::app_paths::AppPaths;
 use crate::db::{self, DbState};
 use crate::models::{UpdateWatchRecord, WatchRecord};
 use crate::{auth, net};
@@ -146,11 +147,11 @@ pub async fn get_tmdb_detail(
 
 #[tauri::command]
 pub async fn download_poster(
-    app: tauri::AppHandle,
+    paths: State<'_, AppPaths>,
     path: String,
     proxy: Option<String>,
 ) -> Result<bool, crate::error::AppError> {
-    net::download_poster(&app, path, proxy)
+    net::download_poster(&paths, path, proxy)
         .await
         .map_err(crate::error::AppError::General)
 }
