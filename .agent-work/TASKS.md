@@ -7,14 +7,14 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 已 PASS；仅 `TASK-A-001` 开放为 READY，其他 Phase A 任务继续按依赖关系保持 BLOCKED。
+- Gate R 已 PASS；`TASK-A-001` 已验收，`TASK-A-002` 仅按 Codex 签发的只读观察合同开放为 READY；其他 Phase A 任务继续按依赖关系保持 BLOCKED。
 - Antigravity 完成实现只能标 IMPLEMENTED；只有 Codex 独立验收后可标 ACCEPTED。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
 ## 任务总览与依赖图
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
-- Phase A：10 个任务；`TASK-A-001` 已开放为 READY，其余任务按依赖关系保持 BLOCKED，`TASK-A-004` 另受 CONFIRM-001 阻塞。
+- Phase A：10 个任务；`TASK-A-001` 已验收，`TASK-A-002` 仅开放证据诊断，其余任务按依赖关系保持 BLOCKED，`TASK-A-004` 另受 CONFIRM-001 阻塞。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
 - DEFERRED：4 个路线图包；本轮禁止实施，不计入 A/B 数量。
 
@@ -507,10 +507,11 @@ cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
 
 - Phase: A
 - Owner: Antigravity
-- Status: DRAFT
+- Status: READY
 - Priority: P0 / Critical
 - Dependencies: TASK-A-001
 - Acceptance Criteria: AC-A-002, AC-A-003, AC-A-004（启动部分）
+- Active Contract: `TASK-A-002-observe-r1`（只允许诊断和隔离证据；不授权修改或提交业务、配置、依赖、锁文件及任务状态）
 - Expected Files:
   - `package.json` / `package-lock.json`（仅确认必要时最小修改）
   - `src-tauri/Cargo.toml` / `Cargo.lock`（仅确认必要时最小修改）
