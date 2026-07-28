@@ -565,10 +565,10 @@ npm run tauri dev
 ## TASK-A-003：收口原子更新、migration 与 setting 契约
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: ACCEPTED
 - Priority: P0 / Critical
-- Dependencies: TASK-A-001
+- Dependencies: TASK-A-001, TASK-A-002
 - Acceptance Criteria: AC-A-008, AC-A-009, AC-A-010
 - Expected Files:
   - `src-tauri/src/models.rs`
@@ -579,7 +579,10 @@ npm run tauri dev
   - `src-tauri/src/commands.rs`
   - `src/shared/types/index.ts`
   - `src/shared/lib/database.ts`
-  - `src/store/useWatchListStore.ts`
+  - `src/features/watchlist/hooks/useWatchList.ts`（当前稳定基线的实际状态层）
+  - `src/shared/lib/updateValidation.ts`
+  - `src/shared/lib/__tests__/updateValidation.test.mjs`
+  - `src-tauri/src/lib.rs`（模块注册所需条件文件）
 
 ### Objective
 
@@ -597,12 +600,14 @@ npm run tauri dev
 ### Verification
 
 ```powershell
-npm run typecheck
-npm run test -- --run src/shared/lib/__tests__
+npx tsc -b --noEmit
+node --test src/shared/lib/__tests__/updateValidation.test.mjs
+npm run lint
+npm run build
 Set-Location src-tauri
 cargo fmt -- --check
-cargo test db_atomic_tests
-cargo test db::tests
+cargo test --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
 ```
 
 ### Required Evidence
@@ -613,7 +618,25 @@ cargo test db::tests
 
 ### Execution Result
 
-Pending
+- BASE: `ddc977992f43278490fd524db1c5adb254d88323`.
+- Implementation commit: `b571d3b67da7fbe3d1614ad8118569e8ca78ec24`; frontend behavioral-test follow-up: `85eeba21aaffc254b2decb869b6023977b26ed56`.
+- Contract chain: `TASK-A-003-implementation-r1` ~ `r4`. r1 stopped before Cargo because the contracted executable path did not exist; r2 verified all gates but Safe Commit rejected an unlisted ignored directory node; r3 produced the attested implementation commit; r4 added the direct frontend non-finite-number test and produced the attested follow-up commit.
+- Typed update: Rust `UpdateWatchRecord` denies unknown/system fields and preserves missing/null semantics. The frontend no longer sends `updatedAt`; SQLite returns the Rust-timestamped persisted record to the existing stable `useWatchList` state layer.
+- Atomicity: record change, own-tombstone removal, revision actor/counter and `records_generation` update share one SQLite transaction. SQL failure, later setting failure, empty update and missing-record paths have direct rollback assertions.
+- Migration: every migration and its `db_version` write share one transaction; migration 14 no longer nests `BEGIN/COMMIT`. v12 success plus injected v14/v17/v18 failure-and-retry paths are covered.
+- Setting: only `QueryReturnedNoRows` maps to `None`; missing schema/query errors propagate.
+- Automated evidence: Runner r3/r4 sessions `4ae84be0-f4ef-489f-a979-4fb4bd86417f` and `48d5ba30-62e6-49c2-8f06-48e9e20fc900`; frontend typecheck/lint/build PASS, Node tests 2/2 PASS, Rust tests 13/13 PASS and strict Clippy PASS.
+- `cargo fmt -- --check` remains exit 1 only for untouched baseline files `auth.rs` and `error.rs`; A-003 introduced zero new formatting-diagnostic files and resolved the touched-file diagnostics.
+- Three real database size/mtime/SHA-256 tuples matched before and after both accepted Runner sessions; tests used only in-memory SQLite and no application process was launched.
+
+### Codex Review
+
+<!-- BEGIN OWNER:CODEX TASK-A-003 REVIEW -->
+- Result: ACCEPTED. AC-A-008, AC-A-009 and AC-A-010 PASS.
+- Independent verification worktree: `D:\Project\Projects\WatchTracker-A003-Verify`, detached at `85eeba21aaffc254b2decb869b6023977b26ed56`.
+- Both Safe Commit receipts and commit trailers passed independent attestation verification. No package/lock/config/WebDAV/application-data file entered either commit.
+- Full details: `.agent-work/evidence/review/TASK-A-003-CODEX-REVIEW.md`.
+<!-- END OWNER:CODEX TASK-A-003 REVIEW -->
 
 ## TASK-A-004：统一应用数据目录与路径消费者
 

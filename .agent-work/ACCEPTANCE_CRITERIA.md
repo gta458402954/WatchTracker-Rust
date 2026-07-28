@@ -250,8 +250,8 @@
   5. 更新不存在记录，核对预存 Tombstone 不变。
 - Expected Result: 所有契约与原子不变量均有直接断言并通过。
 - Required Evidence: 指定 Rust/TS 测试日志和测试名称清单。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Attested commits `b571d3b67da7fbe3d1614ad8118569e8ca78ec24` and `85eeba21aaffc254b2decb869b6023977b26ed56`; Rust contract tests cover system/unknown fields, wrong value types, empty updates, Rust time, SQL/setting rollback and missing-record Tombstone preservation (13/13 full Rust tests PASS). Node 24 native tests directly cover finite values plus `NaN`/positive and negative infinity (2/2 PASS). See `.agent-work/evidence/review/TASK-A-003-CODEX-REVIEW.md`.
 
 ### AC-A-009：每个 migration 原子回滚并可重试
 
@@ -266,8 +266,8 @@
   4. 覆盖空库和至少 v12/v17/v18 到当前版本路径。
 - Expected Result: 不存在半迁移状态，重启可安全重试。
 - Required Evidence: Rust 测试日志、迁移前后 schema/version 快照。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Each migration now runs with its `db_version` write in one SQLite transaction; migration 14's embedded transaction was removed. In-memory tests cover empty/current creation, v12 migration preservation, injected v14 version-write rollback/retry, and independent v17/v18 schema rollback/retry. Full Rust suite: 13/13 PASS in both execution and detached verification worktrees.
 
 ### AC-A-010：setting 不存在与查询失败严格区分
 
@@ -281,8 +281,8 @@
   3. 验证调用方不把错误转换为默认值。
 - Expected Result: 只有 `QueryReturnedNoRows` 映射为空，其余错误可诊断。
 - Required Evidence: Rust/IPC 测试日志。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: `get_setting` uses `OptionalExtension`; the direct test proves a missing key returns `None` while querying a database without the `settings` schema returns an error. IPC preserves the Rust error through `AppError`; typecheck, frontend build and strict Clippy pass.
 
 ### AC-A-011：统一应用数据目录规则
 

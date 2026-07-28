@@ -425,3 +425,18 @@
 - Scope/data: no tracked or staged change; real database before/after hashes matched within the accepted run; no residual task process or port 5173 listener.
 - Evidence review: `.agent-work/evidence/review/TASK-A-002-CODEX-REVIEW.md`.
 - Governance debt: Runner must be hardened for PowerShell host binding, inherited output pipes, re-parented descendants and fast-exit process identity. Antigravity is paused; future tasks require Codex Implementation/Verification separation.
+
+---
+
+## TASK-A-003 Codex Execution and Acceptance
+
+- Date: 2026-07-29
+- BASE: `ddc977992f43278490fd524db1c5adb254d88323`; worktree: `D:\Project\Projects\WatchTracker-A003`; branch: `codex/task-a-003`.
+- Implementation: `b571d3b67da7fbe3d1614ad8118569e8ca78ec24`; frontend test follow-up: `85eeba21aaffc254b2decb869b6023977b26ed56`.
+- Scope: 10-file typed atomic/migration implementation followed by a 3-file pure frontend validation test; no dependency, lock, Tauri configuration, WebDAV, credential or user-data change.
+- Runner: r3 session `4ae84be0-f4ef-489f-a979-4fb4bd86417f`; r4 session `48d5ba30-62e6-49c2-8f06-48e9e20fc900`. All declared steps naturally exited 0.
+- Automated result: typecheck/lint/frontend build PASS; Rust 13/13 PASS; strict Clippy PASS; frontend update validation 2/2 PASS.
+- Formatting: overall command retains inherited failures only in untouched `auth.rs` and `error.rs`; no new diagnostic file was introduced.
+- Data/process boundary: tests use in-memory SQLite; three real database size/mtime/SHA-256 tuples matched before/after; no desktop application was launched and no related process remained.
+- Independent verification: clean detached worktree `D:\Project\Projects\WatchTracker-A003-Verify`; implementation and follow-up attestation checks PASS.
+- Final status: TASK-A-003 ACCEPTED; AC-A-008, AC-A-009 and AC-A-010 PASS. Antigravity remains paused.
