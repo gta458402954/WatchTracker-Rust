@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "contract_id": "TASK-G-001-r3-recovery",
+  "task_id": "TASK-G-001",
+  "owner": "CODEX",
+  "supersedes": "TASK-G-001-r3",
+  "previous_contract_bytes_sha256": "54965560EA44D49D2077AA134479288E8460CBDBA8C0B0392F38D4224CE0EDF0",
+  "authorization_reason": "Correct the post-commit file-set ordering false negative and preserve its independently recovered receipt.",
+  "repository": {
+    "repository_id": "eb0c26e7-a964-48df-8729-def18675d6e7",
+    "expected_root_name": "WatchTracker-Governance",
+    "expected_worktree": "D:/Project/Projects/WatchTracker-Governance",
+    "expected_common_git_dir": "D:/Project/Projects/WatchTracker-GitHub-Source/.git",
+    "expected_remote": "https://github.com/gta458402954/WatchTracker-Rust.git",
+    "expected_branch": "codex/governance-tools",
+    "expected_base": "5a4d5f00215165cd72c2cad9a783b4d227165f7b",
+    "allow_detached_head": false
+  },
+  "governance": { "root": "D:/Project/Projects/WatchTracker-Governance", "expected_commit": "5a4d5f00215165cd72c2cad9a783b4d227165f7b", "require_clean": true, "bootstrap": true, "tool_sha256": {} },
+  "workspace_policy": {
+    "allowed_modified_files": [".agent-work/tasks/TASK-G-001-r3-recovery.json", ".agent-work/tools/SAFE_COMMIT.ps1", ".agent-work/evidence/governance/TASK-G-001-r3-recovery-*.json", ".agent-work/EXECUTION_LOG.md"],
+    "allowed_generated_paths": [".agent-work/evidence/generated/TASK-G-001/**", ".agent-work/evidence/captured/TASK-G-001/**"],
+    "forbidden_modified_files": ["src/**", "src-tauri/**", "package.json", "package-lock.json", ".agent-work/TASKS.md", ".agent-work/ACCEPTANCE_CRITERIA.md", ".agent-work/REVIEW_FEEDBACK.md", ".agent-work/RECOVERY_DECISION.md"],
+    "monitored_roots": [".agent-work", "src", "src-tauri"],
+    "conditional_files": []
+  },
+  "commit_policy": {
+    "allowed_staged_files": [".agent-work/tasks/TASK-G-001-r3-recovery.json", ".agent-work/tools/SAFE_COMMIT.ps1", ".agent-work/evidence/governance/TASK-G-001-r3-recovery-*.json", ".agent-work/EXECUTION_LOG.md"],
+    "required_staged_files": [".agent-work/tasks/TASK-G-001-r3-recovery.json", ".agent-work/tools/SAFE_COMMIT.ps1", ".agent-work/evidence/governance/TASK-G-001-r3-recovery-red-team.json", ".agent-work/evidence/governance/TASK-G-001-r3-recovery-evidence-manifest.json", ".agent-work/EXECUTION_LOG.md"],
+    "forbidden_staged_files": ["src/**", "src-tauri/**", "package.json", "package-lock.json"],
+    "protected_files": [".agent-work/TASKS.md", ".agent-work/ACCEPTANCE_CRITERIA.md", ".agent-work/REVIEW_FEEDBACK.md", ".agent-work/RECOVERY_DECISION.md", ".agent-work/tasks/TASK-G-001-r3.json"],
+    "executor_summary_files": [".agent-work/EXECUTION_LOG.md"],
+    "protected_regions": []
+  },
+  "change_budget": { "max_files": 5, "max_insertions": 400, "max_deletions": 30, "max_binary_changes": 0, "forbid_file_rewrite": false, "preserve_encoding": true, "preserve_line_endings": true },
+  "steps": [],
+  "evidence": { "root": ".agent-work/evidence", "environment_allowlist": ["TEMP"], "sensitive_names": ["TMDB_API_KEY", "WEBDAV_PASSWORD", "ACCESS_TOKEN"], "forbid_sensitive_command_line": true, "capture_policy": "REDACT_AT_INGRESS", "redaction_rules_version": 1 },
+  "locking": { "scope": "WORKTREE", "stale_lock_requires_recovery": true },
+  "forbidden_phrases": ["已完整实现", "所有功能正常", "测试全部通过", "可以安全合并", "已验收"],
+  "waivers": []
+}

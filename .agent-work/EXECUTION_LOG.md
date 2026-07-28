@@ -401,3 +401,13 @@
 - Red team: `23/23 PASS` in separate disposable Governance and Execution repositories. Covered external contract identity, raw-byte tampering, same-BASE wrong repository ID, tool drift, active/stale locks, illegal state transitions, conditional-file stop, protected/ignored/encoding checks, captured evidence tampering, evidence time ordering, new waiver diagnostics, temporary-index failure invariants, Safe Commit, receipt verification, direct-hook rejection and `--no-verify` ineligibility.
 - Business/data boundary: no WatchTracker source, configuration, dependency, application process or database command was used. Recovery worktree was not modified.
 - Status: r3 implementation complete; awaiting final Safe Commit and independent cross-worktree attestation verification. TASK-A-002 remains unopened.
+
+#### TASK-G-001 r3 Safe Commit recovery
+
+- Initial r3 implementation commit: `5a4d5f00215165cd72c2cad9a783b4d227165f7b`.
+- Post-commit interruption: the validated and committed file sets contained the same 16 paths, but Git byte ordering and PowerShell culture ordering produced different sequences. Receipt creation was correctly withheld and the session entered `COMMIT_CREATED_RECEIPT_FAILED`.
+- Codex recovery decision: preserve the commit without amend/reset; independently verify commit parent, tree, trailers, evidence Hash and exact file set; create an explicitly marked external recovery Receipt. `VERIFY_ATTESTATION.ps1` then returned PASS for `5a4d5f0`.
+- Minimal correction: normalize temporary, real and committed path collections before comparison and use set comparison for the post-commit check. No scope, authorization, evidence or business behavior was changed.
+- Recovery red team: `23/23 PASS` in disposable Governance/Execution repositories, including the temporary-index rejection invariant and complete Safe Commit/Receipt verification.
+- Recovery Runner session: `b146f2e5-aaef-4b6a-8d75-d7170ab6f33b`; recovery contract and evidence manifest use raw byte SHA-256 authorization. The initial recovery session was superseded after Codex corrected the contract-only insertion budget from 180 to 400 without changing its five-file authorization scope.
+- Current status: recovery correction ready for Safe Commit; TASK-A-002 remains unopened.
