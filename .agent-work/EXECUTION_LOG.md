@@ -440,3 +440,13 @@
 - Data/process boundary: tests use in-memory SQLite; three real database size/mtime/SHA-256 tuples matched before/after; no desktop application was launched and no related process remained.
 - Independent verification: clean detached worktree `D:\Project\Projects\WatchTracker-A003-Verify`; implementation and follow-up attestation checks PASS.
 - Final status: TASK-A-003 ACCEPTED; AC-A-008, AC-A-009 and AC-A-010 PASS. Antigravity remains paused.
+
+---
+
+## CONFIRM-001 User Decision
+
+- Date: 2026-07-29.
+- Decision: rule 1 / original option A.
+- Product semantics: portable mode is enabled only when a `data/` directory already exists beside the executable; otherwise WatchTracker uses Windows app-data.
+- Effect: the product-semantics blocker for TASK-A-004 and the corresponding TASK-A-009 packaging expectation are resolved.
+- Task control: TASK-A-004 is reassigned to Codex and marked READY; implementation and verification have not started.

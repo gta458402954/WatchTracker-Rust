@@ -14,7 +14,7 @@
 ## 任务总览与依赖图
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
-- Phase A：10 个任务；`TASK-A-001`、`TASK-A-002` 已验收，其余任务尚未开放，`TASK-A-004` 另受 CONFIRM-001 阻塞。
+- Phase A：10 个任务；`TASK-A-001`、`TASK-A-002`、`TASK-A-003` 已验收；`CONFIRM-001` 已由用户确认，`TASK-A-004` 现为 READY。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
 - DEFERRED：4 个路线图包；本轮禁止实施，不计入 A/B 数量。
 
@@ -641,8 +641,8 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 ## TASK-A-004：统一应用数据目录与路径消费者
 
 - Phase: A
-- Owner: Antigravity
-- Status: BLOCKED
+- Owner: Codex
+- Status: READY
 - Priority: P0 / Critical
 - Dependencies: TASK-A-001, CONFIRM-001
 - Acceptance Criteria: AC-A-011
@@ -654,9 +654,9 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
   - `src-tauri/src/commands.rs`
   - `README.md`
 
-### Blocker
+### CONFIRM-001 Resolution
 
-等待用户确认便携目录是“仅预存在 `data/` 时启用”还是“始终创建并优先使用”。
+用户于 2026-07-29 确认采用规则 1（原方案 A）：只有可执行文件同级 `data/` 已存在时进入便携模式；否则使用 Windows app-data。该确认解除产品语义阻塞，但不代表实现或验收已经开始。
 
 ### Objective
 
@@ -687,7 +687,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### Execution Result
 
-Blocked by CONFIRM-001
+READY — CONFIRM-001 resolved by the user on 2026-07-29; implementation not started.
 
 ## TASK-A-005：实现明确初始化状态与统一用户错误反馈
 

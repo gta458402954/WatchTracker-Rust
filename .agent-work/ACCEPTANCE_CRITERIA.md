@@ -289,7 +289,7 @@
 - Requirement: BR-04.5~6、测试要求 7.1.10、完成定义 A.7/11。
 - Priority: Must
 - Verification Type: Automated / Manual
-- Preconditions: CONFIRM-001 已决定；可写/不可写便携目录与 app-data 测试矩阵。
+- Preconditions: CONFIRM-001 已决定采用规则 1：仅当可执行文件同级 `data/` 已存在时进入便携模式，否则使用 Windows app-data；可写/不可写便携目录与 app-data 测试矩阵。
 - Verification Steps:
   1. 验证数据库、日志、posters、backups 和 `poster://` 使用同一根目录对象。
   2. 验证便携模式触发、系统 app-data 回退和路径错误语义。
@@ -297,8 +297,8 @@
   4. 对照 README。
 - Expected Result: 所有消费者路径一致、可测试、无空路径静默回退，README 与实际一致。
 - Required Evidence: 路径单测、运行日志、README 对照表。
-- Result: BLOCKED
-- Evidence: Waiting for CONFIRM-001
+- Result: NOT RUN
+- Evidence: CONFIRM-001 resolved by the user on 2026-07-29; implementation and verification have not started.
 
 ### AC-A-012：原子 API 文档与真实实现一致
 
