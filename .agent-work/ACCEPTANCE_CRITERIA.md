@@ -297,8 +297,8 @@
   4. 对照 README。
 - Expected Result: 所有消费者路径一致、可测试、无空路径静默回退，README 与实际一致。
 - Required Evidence: 路径单测、运行日志、README 对照表。
-- Result: NOT RUN
-- Evidence: CONFIRM-001 resolved by the user on 2026-07-29; implementation and verification have not started.
+- Result: PASS
+- Evidence: CONFIRM-001 rule 1 is implemented by the shared `AppPaths` object. Eight direct path tests cover portable/app-data selection, error and poster-safety/read-write paths; debug and release isolated runtime smokes generated their database, log, posters and backups under pre-created adjacent `data/`. README matches this behavior. Runner and detached verification passed 21 Rust tests and strict Clippy; three real database tuples matched before/after. See `.agent-work/evidence/review/TASK-A-004-CODEX-REVIEW.md`.
 
 ### AC-A-012：原子 API 文档与真实实现一致
 

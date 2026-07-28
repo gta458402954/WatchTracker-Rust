@@ -642,7 +642,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 - Phase: A
 - Owner: Codex
-- Status: READY
+- Status: ACCEPTED
 - Priority: P0 / Critical
 - Dependencies: TASK-A-001, CONFIRM-001
 - Acceptance Criteria: AC-A-011
@@ -687,7 +687,22 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### Execution Result
 
-READY — CONFIRM-001 resolved by the user on 2026-07-29; implementation not started.
+- CONFIRM-001 decision commit: `7dc443fd83d64aa8417226d75d2159b864003338`; implementation commit: `3f5a73cd06548cc5b5cfcd95f6e2c9eaca6ffc63`.
+- `AppPaths` is resolved once at startup and shared by SQLite, logging, poster download and `poster://`; it also owns the local backup directory.
+- Rule 1 is preserved: an existing executable-adjacent `data/` directory selects portable mode; an absent directory selects Windows app-data. A conflicting `data` file or an unusable selected root returns a diagnostic error instead of switching databases.
+- Path tests cover portable/app-data selection, unavailable executable resolution, file collisions, child-directory errors, simulated non-writable portable storage, shared consumer paths, poster read/write and traversal rejection (8 path tests; 21 total Rust tests).
+- Runner session `83253ee8-0459-4b46-af85-ea3458255f74`: dependency install, typecheck, lint, frontend build, Rust tests, strict Clippy, formatting baseline-delta, Tauri release build and real-database before/after checks all exited 0.
+- Isolated runtime smoke: debug and release `app.exe` each used their pre-created adjacent `data/`, generated a 32,768-byte database plus `app.log`, `posters/` and `backups/`, then were terminated by verified PID/path. No related process remained.
+- Three real user database size/mtime/SHA-256 tuples matched before and after; no disk-content change was detected.
+
+### Codex Review
+
+<!-- BEGIN OWNER:CODEX TASK-A-004 REVIEW -->
+- Result: ACCEPTED. AC-A-011 PASS.
+- Independent verification worktree: `D:\Project\Projects\WatchTracker-A004-Verify`, detached at `3f5a73cd06548cc5b5cfcd95f6e2c9eaca6ffc63`.
+- Frontend typecheck/lint/build, Rust 21/21 and strict Clippy independently passed. The implementation attestation and exact six-file scope passed verification.
+- Full details: `.agent-work/evidence/review/TASK-A-004-CODEX-REVIEW.md`.
+<!-- END OWNER:CODEX TASK-A-004 REVIEW -->
 
 ## TASK-A-005：实现明确初始化状态与统一用户错误反馈
 

@@ -450,3 +450,18 @@
 - Product semantics: portable mode is enabled only when a `data/` directory already exists beside the executable; otherwise WatchTracker uses Windows app-data.
 - Effect: the product-semantics blocker for TASK-A-004 and the corresponding TASK-A-009 packaging expectation are resolved.
 - Task control: TASK-A-004 is reassigned to Codex and marked READY; implementation and verification have not started.
+
+---
+
+## TASK-A-004 Codex Execution and Acceptance
+
+- Date: 2026-07-29.
+- BASE after decision record: `7dc443fd83d64aa8417226d75d2159b864003338`; implementation: `3f5a73cd06548cc5b5cfcd95f6e2c9eaca6ffc63`.
+- Scope: `app_paths.rs`, four Rust consumers and README only; no dependency, lock, schema, WebDAV, credential or frontend behavior change.
+- Accepted Runner: session `83253ee8-0459-4b46-af85-ea3458255f74`; all ten declared steps naturally exited 0.
+- Automated result: typecheck/lint/frontend build PASS; Rust 21/21 PASS; strict Clippy PASS; Tauri release build PASS.
+- Formatting: inherited diagnostics remain only in untouched `auth.rs` and `error.rs`; no new formatting-diagnostic file.
+- Runtime: hidden debug PID 18236 and release PID 25320 each resolved portable paths under their pre-created target-adjacent `data/`, generated database/log/posters/backups and were terminated; final related-process count 0.
+- Data boundary: three real database size/mtime/SHA-256 tuples matched before/after the accepted run and after runtime smoke.
+- Independent verification: clean detached `D:\Project\Projects\WatchTracker-A004-Verify`; implementation attestation, frontend gates, Rust 21/21 and strict Clippy PASS.
+- Final status: TASK-A-004 ACCEPTED; AC-A-011 PASS. Work pauses here as requested; TASK-A-005 is not opened.
