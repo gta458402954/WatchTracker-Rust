@@ -1,0 +1,29 @@
+[
+  {
+    "Name": "empty",
+    "ExeSHA256": "4ECB57C12A4109008BA34F5CB72C27DF090583AC1028C9F3EDB356CF98D5492F",
+    "DatabaseExists": false,
+    "DatabaseLength": 0,
+    "DatabaseSHA256": null,
+    "DatabaseVersion": null,
+    "RecordCount": 0
+  },
+  {
+    "Name": "current",
+    "ExeSHA256": "4ECB57C12A4109008BA34F5CB72C27DF090583AC1028C9F3EDB356CF98D5492F",
+    "DatabaseExists": true,
+    "DatabaseLength": 32768,
+    "DatabaseSHA256": "502798DB4F81F9D74DB223E42652744B3548B8BC672433E8034B5488C45FBFA7",
+    "DatabaseVersion": "18",
+    "RecordCount": 2
+  },
+  {
+    "Name": "upgrade",
+    "ExeSHA256": "4ECB57C12A4109008BA34F5CB72C27DF090583AC1028C9F3EDB356CF98D5492F",
+    "DatabaseExists": true,
+    "DatabaseLength": 32768,
+    "DatabaseSHA256": "26D3ED1E1A6B80DEEBF5198EE359CD2AB87D2FC8ACEC0CCBC9D4E5F6E2B216F8",
+    "DatabaseVersion": "12",
+    "RecordCount": 2
+  }
+]

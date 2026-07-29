@@ -565,3 +565,17 @@
 - Evidence review: all seven screenshots were visually inspected as actual WatchTracker windows; JPEG signatures match `.jpg` extensions. Implementation screenshots prove Create, Update/reclassification, restart persistence, confirmed Delete and delete-after-restart.
 - Final boundary: all three real database SHA-256/length/UTC-mtime tuples still match the task pre-test snapshot; final related process count 0; Cargo.toml content Hash equals HEAD despite stat noise.
 - Final status: TASK-A-009 ACCEPTED; AC-A-015 PASS. Unsigned output and existing npm audit inventory remain explicit caveats. TASK-A-010 remains unopened.
+
+---
+
+## TASK-A-010 Codex Implementation Pass
+
+- Date: 2026-07-30
+- Branch/worktree: `codex/task-a-010` at `D:\Project\Projects\WatchTracker-A010`; authorization commit `5d72034`.
+- Automated gates: `npm run build`, `npm run typecheck`, `npm run lint`, `npm run test` (14/14), `npx playwright test` (3/3), `npm run tauri build`, `cargo fmt -- --check`, strict `cargo clippy`, and `cargo test` (29/29) all exited `0`.
+- Clippy evidence note: the first orchestration attempt ended without a trustworthy final exit; its partial raw log is preserved. A clean second attempt completed naturally with exit `0` and is the authoritative result.
+- Build outputs: Release EXE `15,351,296` bytes, MSI `5,693,440` bytes, NSIS `3,994,856` bytes. All are unsigned; hashes and post-exit timestamps are recorded in the artifact manifest.
+- Real desktop: task-only empty/current/upgrade portable roots passed startup. Current fixture passed create, read, rename, movie-to-series reclassification, restart persistence, user-confirmed delete and delete-after-restart. Offline local operation required no TMDB/WebDAV credential.
+- SQLite final state: version `18`; empty/current/upgrade record counts `0/2/2`; upgrade retained both records and removed the synthetic legacy `category`/`sortOrder` columns.
+- Boundary: exact executable path was verified for each launch; final related-process count `0`; three real user database SHA-256/length/UTC-mtime tuples exactly match pre-test values. `src-tauri/Cargo.toml` remains Git stat/EOL noise only, with worktree blob equal to HEAD, and is excluded from the task commit.
+- Status: TASK-A-010 IMPLEMENTED. Independent clean detached Verification Pass is required before writing the baseline report, AC-A-017, or Gate A conclusion.

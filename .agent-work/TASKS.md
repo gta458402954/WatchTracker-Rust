@@ -7,14 +7,14 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 已 PASS；`TASK-A-001`~`TASK-A-009` 已验收；`TASK-A-010` 尚未开放。
+- Gate R 已 PASS；`TASK-A-001`~`TASK-A-009` 已验收；`TASK-A-010` 已完成 Implementation Pass，等待独立 Verification Pass。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
 ## 任务总览与依赖图
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
-- Phase A：10 个任务；`TASK-A-001`~`TASK-A-009` 已验收；`TASK-A-010` 尚未开放。
+- Phase A：10 个任务；`TASK-A-001`~`TASK-A-009` 已验收；`TASK-A-010` 状态为 IMPLEMENTED，Gate A 尚未通过。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
@@ -993,7 +993,7 @@ ACCEPTED — implementation `b44d6db` and clean detached Verification Pass both 
 
 - Phase: A
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: P0 / Critical
 - Dependencies: TASK-A-007, TASK-A-008, TASK-A-009
 - Acceptance Criteria: AC-A-001~017, AC-GATE-001
@@ -1040,7 +1040,11 @@ cargo test
 
 ### Execution Result
 
-Pending
+IMPLEMENTED — all nine commands completed sequentially with recorded exit code `0`: frontend build/typecheck/lint/Node 14/14/Playwright 3/3, Tauri build, rustfmt, strict Clippy, and Rust 29/29. The first Clippy orchestration attempt lost its controlling session before a trustworthy exit code was captured; its raw partial log is retained, and a separate second attempt completed naturally with exit `0`.
+
+The A-010 Release executable was copied into three task-only portable roots. Empty/current/upgrade startup passed. The current fixture passed Create/Read, rename, movie-to-series reclassification, restart persistence, user-confirmed Delete and delete-after-restart. SQLite final checks show `db_version=18`, record counts `0/2/2`, and no legacy `category`/`sortOrder` columns. All three real user database SHA-256/length/UTC-mtime tuples match the pre-test snapshot, and the final related-process count is zero.
+
+Evidence is under `.agent-work/evidence/{builds,logs,screenshots,tests}/TASK-A-010/`. This is an Implementation result only; AC-A-017, AC-GATE-001 and the baseline report remain pending independent detached verification.
 
 ---
 

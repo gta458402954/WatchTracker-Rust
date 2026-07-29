@@ -1,0 +1,15 @@
+
+> watch-tracker@1.10.0 build
+> tsc -b && vite build
+
+vite v8.0.13 building client environment for production...
+[2K
+transforming...✓ 606 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.48 kB │ gzip:   0.32 kB
+dist/assets/index-FLO5u6y_.css      32.64 kB │ gzip:   6.46 kB
+dist/assets/index-C-OgrMsr.js      290.26 kB │ gzip:  87.07 kB
+dist/assets/Dashboard-Ck5wVyDP.js  358.34 kB │ gzip: 103.95 kB
+
+✓ built in 848ms

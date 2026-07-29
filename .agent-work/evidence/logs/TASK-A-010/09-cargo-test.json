@@ -1,0 +1,8 @@
+{
+  "Step": 9,
+  "Command": "cargo test",
+  "StartedAtUtc": "2026-07-29T16:22:01.6889564Z",
+  "EndedAtUtc": "2026-07-29T16:23:23.9217511Z",
+  "DurationMs": 82233.0,
+  "ExitCode": 0
+}

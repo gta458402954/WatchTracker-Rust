@@ -1,0 +1,7 @@
+{
+  "Command": "npm run lint",
+  "StartedAtUtc": "2026-07-29T16:16:53.5642197Z",
+  "EndedAtUtc": "2026-07-29T16:16:59.2669116Z",
+  "DurationMs": 5703.0,
+  "ExitCode": 0
+}

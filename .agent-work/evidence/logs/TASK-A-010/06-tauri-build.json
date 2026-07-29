@@ -1,0 +1,8 @@
+{
+  "Step": 6,
+  "Command": "npm run tauri build",
+  "StartedAtUtc": "2026-07-29T16:17:38.6817428Z",
+  "EndedAtUtc": "2026-07-29T16:20:18.6912034Z",
+  "DurationMs": 160009.0,
+  "ExitCode": 0
+}

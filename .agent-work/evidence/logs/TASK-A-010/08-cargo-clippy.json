@@ -1,0 +1,10 @@
+{
+  "Step": 8,
+  "Attempt": 2,
+  "Command": "cargo clippy --all-targets --all-features -- -D warnings",
+  "StartedAtUtc": "2026-07-29T16:21:50.1237070Z",
+  "EndedAtUtc": "2026-07-29T16:21:51.6622694Z",
+  "DurationMs": 1539.0,
+  "ExitCode": 0,
+  "PriorAttempt": "INTERRUPTED_UNKNOWN"
+}

@@ -1,0 +1,246 @@
+{
+  "Task": "TASK-A-010",
+  "GeneratedAtUtc": "2026-07-29T16:36:55.3842432Z",
+  "Files": [
+    {
+      "Path": ".agent-work/evidence/builds/TASK-A-010/artifacts.json",
+      "Length": 1000,
+      "LastWriteTimeUtc": "2026-07-29T16:25:41.0584209Z",
+      "Sha256": "88B3E691F53AD662B980524ED2C214EC82EA68E07C43FBFB0D2E0DAE9B0EF4A8"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/00-npm-ci.json",
+      "Length": 172,
+      "LastWriteTimeUtc": "2026-07-29T16:16:25.3814049Z",
+      "Sha256": "C2CBEBA7495039A74E4DB94A9ADCC07070BB328017D135D02D74F3C40FD0F5BE"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/00-npm-ci.log",
+      "Length": 240,
+      "LastWriteTimeUtc": "2026-07-29T16:16:25.3249477Z",
+      "Sha256": "AC2B9522DBD3790AF1390E49467693CC506DBA2AD331964D28688BF228E2746E"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/01-npm-build.json",
+      "Length": 193,
+      "LastWriteTimeUtc": "2026-07-29T16:16:41.9563466Z",
+      "Sha256": "4212F0F0FA5B0D2F7F1F6547815DC6AA8776B401A0C8B46D6FD023B74A966E1F"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/01-npm-build.log",
+      "Length": 500,
+      "LastWriteTimeUtc": "2026-07-29T16:16:41.1096422Z",
+      "Sha256": "28FB6D4CF3F3DA26C285208218BF24A42F203EA6F0F25151C59D94B9E0202DBC"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/02-typecheck.json",
+      "Length": 183,
+      "LastWriteTimeUtc": "2026-07-29T16:16:53.1367310Z",
+      "Sha256": "1C6A4BC048DD3F80BA4EC1A1E11C5F3B1615338C9E0A714F66CB2FE642DF633D"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/02-typecheck.log",
+      "Length": 57,
+      "LastWriteTimeUtc": "2026-07-29T16:16:51.0967465Z",
+      "Sha256": "4445C2E88C52013A5E5C2CCBD37E86238F338AB010B6316A1F81AAEC22C3375B"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/03-lint.json",
+      "Length": 178,
+      "LastWriteTimeUtc": "2026-07-29T16:16:59.2896131Z",
+      "Sha256": "FA55514DDEA27E169985526C66CE01C2AA8C972ED9D07A7DFC13E1FF1EF58F35"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/03-lint.log",
+      "Length": 45,
+      "LastWriteTimeUtc": "2026-07-29T16:16:53.8746885Z",
+      "Sha256": "060A3589B5614C6F66DEA7BF5843D2FD128B7D53A9EABE3102718C25D8273FC6"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/04-node-test.json",
+      "Length": 177,
+      "LastWriteTimeUtc": "2026-07-29T16:17:00.3833919Z",
+      "Sha256": "2E2D0F9AED419840CBF2F40F15B6A3DB57C0A36BEE60705C344550ECC9949187"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/04-node-test.log",
+      "Length": 1183,
+      "LastWriteTimeUtc": "2026-07-29T16:17:00.3369119Z",
+      "Sha256": "C6365A70204C2B5543EAD33803FBC99612BB07EE8C9E1E24793B2B0E2581FEED"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/05-playwright.json",
+      "Length": 199,
+      "LastWriteTimeUtc": "2026-07-29T16:17:14.8705277Z",
+      "Sha256": "33738C09015A88778C4867D539DE2CA39899AEC06620D2661325D77802383221"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/05-playwright.log",
+      "Length": 1287,
+      "LastWriteTimeUtc": "2026-07-29T16:17:14.8089755Z",
+      "Sha256": "E966EF1A6D6EEFD088EE3CB63FCAF7A7D372A58A05D3291DE3EAC8269BA3929D"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/06-tauri-build.json",
+      "Length": 201,
+      "LastWriteTimeUtc": "2026-07-29T16:20:18.7275508Z",
+      "Sha256": "9C0CA7149255ADB3C7425EC93BC8210B5AF9F50888E400FE3FC2ACCD5D091BCE"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/06-tauri-build.log",
+      "Length": 12388,
+      "LastWriteTimeUtc": "2026-07-29T16:20:18.6585566Z",
+      "Sha256": "2CF7EC09E6585A04C8493D26FE8C84A92E1A2C0258688C44FB14D6379E855A7E"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/07-cargo-fmt.json",
+      "Length": 185,
+      "LastWriteTimeUtc": "2026-07-29T16:20:28.3098203Z",
+      "Sha256": "3CF44CA83FD161DC2D489D1734B4ACB77280A2DDCE76152881944FC6860DA433"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/08-cargo-clippy-attempt1.log",
+      "Length": 10325,
+      "LastWriteTimeUtc": "2026-07-29T16:21:32.9809048Z",
+      "Sha256": "6AE14B1B46145D0A7E7E17C2A796A1EFA2591378BE607A9BFB66F51F4BF1B07D"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/08-cargo-clippy.json",
+      "Length": 295,
+      "LastWriteTimeUtc": "2026-07-29T16:21:51.6886643Z",
+      "Sha256": "F70C73A884F84473B821C2DD49BC9F53138BEECD4C77D272EC4D18E376EAC735"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/08-cargo-clippy.log",
+      "Length": 149,
+      "LastWriteTimeUtc": "2026-07-29T16:21:51.6165471Z",
+      "Sha256": "962C6A85948ADB92B1E975FDF7592B6980575C2D69A2F4C4170AB9E9A66C2555"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/09-cargo-test.json",
+      "Length": 191,
+      "LastWriteTimeUtc": "2026-07-29T16:23:23.9625439Z",
+      "Sha256": "85118E91B69C8132DE3547F7A47D9B5E28DD92AA667BFB22CF5B687A4FEC950A"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/09-cargo-test.log",
+      "Length": 11594,
+      "LastWriteTimeUtc": "2026-07-29T16:23:23.9015776Z",
+      "Sha256": "8FECA585B8E245D3C647E875C4C7C6544C2E0269F70C40952E7AFF1E2F8D73CB"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/environment.json",
+      "Length": 336,
+      "LastWriteTimeUtc": "2026-07-29T16:16:04.7760868Z",
+      "Sha256": "85746E44002C8C3D81EE0AB570352487699568B6831BD5C5126FDEA50C7040EF"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/processes-before.json",
+      "Length": 92,
+      "LastWriteTimeUtc": "2026-07-29T16:16:04.2667696Z",
+      "Sha256": "CCAF4B45241549AD9CDC096F300860BF83A9B3D8A5A37E69CFF46DCAD9F1CF3F"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/runtime-current-app.log",
+      "Length": 1522,
+      "LastWriteTimeUtc": "2026-07-29T16:32:19.3735419Z",
+      "Sha256": "50D8E8FC1B89759C6D9552006A5F17CB9D0950480A8AECDAD5AF9D9F1C0421DA"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/runtime-empty-app.log",
+      "Length": 412,
+      "LastWriteTimeUtc": "2026-07-29T16:25:51.9746045Z",
+      "Sha256": "6A744C73D430DC9DC8462F2D9B42A8D187328AF1C4306816A97F3AB8811D6F00"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/runtime-smoke.md",
+      "Length": 1415,
+      "LastWriteTimeUtc": "2026-07-29T16:35:06.6096298Z",
+      "Sha256": "099D83B58676E2FF0F2D26D3222D17E433C3A4C53B6D5174D197AA8BA8A695D5"
+    },
+    {
+      "Path": ".agent-work/evidence/logs/TASK-A-010/runtime-upgrade-app.log",
+      "Length": 420,
+      "LastWriteTimeUtc": "2026-07-29T16:32:42.9678817Z",
+      "Sha256": "D94EC6E76F4FA4F438002A59997D521B9BA3CD645417B38480B66B7BA1DEF0DB"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/01-empty-startup.jpg",
+      "Length": 51437,
+      "LastWriteTimeUtc": "2026-07-29T16:26:12.3016499Z",
+      "Sha256": "36A99CBDF61F96ECA13EAE18BE0F309F656A6DE17AA08DA344DBD84DEEA10C17"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/02-current-startup.jpg",
+      "Length": 51395,
+      "LastWriteTimeUtc": "2026-07-29T16:28:32.3076861Z",
+      "Sha256": "146BAD379A94613B4F249F058F8B4D70A9527E3811FC132FBA9193237E08EF03"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/03-created.jpg",
+      "Length": 55886,
+      "LastWriteTimeUtc": "2026-07-29T16:29:38.6035347Z",
+      "Sha256": "4678ECD1856C9214BB4B8A0587B1B5F02C0D30665C6C0C901C6BB783E9BF65F2"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/04-modified-reclassified.jpg",
+      "Length": 56405,
+      "LastWriteTimeUtc": "2026-07-29T16:30:11.1903845Z",
+      "Sha256": "D247753F5A7231E3090A21C7CCB755053A0DCA14719904E0AD0B06A9CF26CD0B"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/05-restart-persistence.jpg",
+      "Length": 56163,
+      "LastWriteTimeUtc": "2026-07-29T16:30:42.0069353Z",
+      "Sha256": "70EB47B4CE6A35775970E6159DF5829B7A8A32B96D88CD4CAB05365E67480890"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/06-deleted.jpg",
+      "Length": 51933,
+      "LastWriteTimeUtc": "2026-07-29T16:32:09.8117557Z",
+      "Sha256": "A033A9656CC9200873CDD7F2B08481639C4545BECEF7059B6E4534972DC20B23"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/07-delete-restart.jpg",
+      "Length": 50485,
+      "LastWriteTimeUtc": "2026-07-29T16:32:33.4071772Z",
+      "Sha256": "F5BF346A4DB56BA282D99239CD3003296AF12D27CC9A316A30C5028DD32004D6"
+    },
+    {
+      "Path": ".agent-work/evidence/screenshots/TASK-A-010/08-upgrade-startup.jpg",
+      "Length": 50780,
+      "LastWriteTimeUtc": "2026-07-29T16:32:56.2990061Z",
+      "Sha256": "0C3CDED0614F7EE46CC6DC1B0E84782FD3620B05075D77697E78D38528054656"
+    },
+    {
+      "Path": ".agent-work/evidence/tests/TASK-A-010/implementation-summary.md",
+      "Length": 2158,
+      "LastWriteTimeUtc": "2026-07-29T16:36:42.1269966Z",
+      "Sha256": "506C73B05BFF788F0CB60E3ADF4C7D391CAE81A7AC9333C917A85DE43B177BB7"
+    },
+    {
+      "Path": ".agent-work/evidence/tests/TASK-A-010/real-databases-before.json",
+      "Length": 797,
+      "LastWriteTimeUtc": "2026-07-29T16:16:04.1076947Z",
+      "Sha256": "597071D139024FEB9F710077B8423132A30ED6AA4E78A8850D74A613EBD0D8DB"
+    },
+    {
+      "Path": ".agent-work/evidence/tests/TASK-A-010/real-databases-final.json",
+      "Length": 858,
+      "LastWriteTimeUtc": "2026-07-29T16:35:06.6124225Z",
+      "Sha256": "819317DCDF3081F45DC17949602EF27A2E0B84419B716083896C12BBB6DE57BE"
+    },
+    {
+      "Path": ".agent-work/evidence/tests/TASK-A-010/runtime-final.json",
+      "Length": 1087,
+      "LastWriteTimeUtc": "2026-07-29T16:35:06.6118574Z",
+      "Sha256": "B8BE6271EDE32F671E7E4AA1489DCE6C422CF334DEDE9FB1704DC057919EB74D"
+    },
+    {
+      "Path": ".agent-work/evidence/tests/TASK-A-010/runtime-fixtures-before.json",
+      "Length": 907,
+      "LastWriteTimeUtc": "2026-07-29T16:25:41.2612497Z",
+      "Sha256": "27BD870A124646182B2109550CDBB5991DDAAF817615F539CF3DAA266F5EB410"
+    }
+  ]
+}

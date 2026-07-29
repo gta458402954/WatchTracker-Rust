@@ -1,0 +1,8 @@
+{
+  "Step": 1,
+  "Command": "npm run build",
+  "StartedAtUtc": "2026-07-29T16:16:37.6783528Z",
+  "EndedAtUtc": "2026-07-29T16:16:41.9321935Z",
+  "DurationMs": 4254.0,
+  "ExitCode": 0
+}
