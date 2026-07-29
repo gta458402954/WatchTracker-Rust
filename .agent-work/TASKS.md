@@ -780,6 +780,7 @@ ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c`
 - Expected Files:
   - `src/features/watchlist/hooks/useWatchList.ts`
   - `src/shared/lib/database.ts`
+  - `src/shared/lib/importValidation.ts`
   - `src/shared/lib/webdav.ts`
   - `src/features/settings/components/SettingsModal.tsx`
   - `src/shared/lib/__tests__/*.test.mjs`
