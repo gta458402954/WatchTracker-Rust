@@ -1,11 +1,12 @@
 import { useCallback, useState, useEffect } from 'react';
-import { MediaType, Status, WatchRecord } from '../../../shared/types';
+import { WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync, updateRecord as updateRecordDb } from '../../../shared/lib/database';
 import { classifyTmdb, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
 import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
+import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -19,50 +20,6 @@ interface SettingsModalProps {
   onNotify?: (tone: NoticeTone, message: string) => void;
 }
 
-const VALID_STATUSES: readonly Status[] = ['在看', '未看', '已看'];
-
-function normalizeImportedRecord(value: unknown, index: number): WatchRecord {
-  if (!value || typeof value !== 'object') throw new Error('第 ' + (index + 1) + ' 条记录格式无效');
-  const source = value as Record<string, unknown>;
-  const text = (key: string, fallback = '') => typeof source[key] === 'string' ? source[key] as string : fallback;
-  const nullableText = (key: string) => typeof source[key] === 'string' && source[key] !== '' ? source[key] as string : null;
-  const nullableNumber = (key: string) => typeof source[key] === 'number' && Number.isFinite(source[key]) ? source[key] as number : null;
-  const requestedType = nullableText('mediaType');
-  const mediaType = requestedType && MEDIA_TYPES.includes(requestedType as MediaType)
-    ? requestedType as MediaType
-    : '电影';
-  const requestedStatus = text('status', '已看');
-  const status = VALID_STATUSES.includes(requestedStatus as Status) ? requestedStatus as Status : '已看';
-  return {
-    id: text('id', 'imported-' + Date.now() + '-' + index),
-    originalName: text('originalName'),
-    chineseName: text('chineseName'),
-    progress: text('progress'),
-    totalEpisodes: nullableNumber('totalEpisodes'),
-    movieProgress: nullableNumber('movieProgress'),
-    movieDuration: nullableNumber('movieDuration'),
-    releaseYear: source.releaseYear == null ? null : String(source.releaseYear),
-    posterPath: nullableText('posterPath'),
-    status,
-    platform: text('platform'),
-    rating: nullableNumber('rating'),
-    startDate: text('startDate'),
-    endDate: text('endDate'),
-    notes: text('notes'),
-    createdAt: text('createdAt', new Date().toISOString()),
-    updatedAt: nullableText('updatedAt'),
-    imdbId: nullableText('imdbId'),
-    isLocked: source.isLocked === true,
-    genres: nullableText('genres'),
-    originCountry: nullableText('originCountry'),
-    imdbRating: nullableNumber('imdbRating'),
-    tmdbStatus: nullableText('tmdbStatus'),
-    interestLevel: nullableNumber('interestLevel'),
-    episodeRuntime: nullableNumber('episodeRuntime'),
-    mediaType,
-    contentTags: nullableText('contentTags'),
-  };
-}
 export default function SettingsModal({
   onClose, records, onImport, onSync, onRestoreConflict, onRefresh,
   syncInterval, onSyncIntervalChange, onNotify
@@ -325,8 +282,7 @@ export default function SettingsModal({
         try {
           if (typeof reader.result !== 'string') throw new Error('无法读取文件内容');
           const parsed: unknown = JSON.parse(reader.result);
-          if (!Array.isArray(parsed)) throw new Error('无效的 JSON 格式');
-          const completeData = parsed.map(normalizeImportedRecord);
+          const completeData = normalizeImportedRecords(parsed);
           await onImport(completeData);
           showSuccess(`已导入 ${completeData.length} 条本地记录。`);
         } catch (error) {

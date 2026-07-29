@@ -10,8 +10,6 @@ import {
 import {
   syncToWebDAV,
   hasCreds,
-  markRecordDeleted,
-  clearRecordDeletion,
   type SyncResult,
 } from '../../../shared/lib/webdav';
 import { publicFailureMessage, reportOperationFailure } from '../../../shared/lib/feedback';
@@ -118,7 +116,6 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
   }, [autoSyncDebounced]);
 
   const deleteRecord = useCallback(async (id: string) => {
-    await markRecordDeleted(id);
     await dbDeleteRecord(id);
     revisionRef.current++;
     const updated = recordsRef.current.filter(record => record.id !== id);
@@ -141,7 +138,6 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
 
   const restoreRecord = useCallback(async (record: WatchRecord) => {
     const restored = { ...record, updatedAt: new Date().toISOString() };
-    await clearRecordDeletion(restored.id);
     await insertRecord(restored);
     revisionRef.current++;
     const updated = recordsRef.current.some(item => item.id === restored.id)

@@ -435,43 +435,26 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
     Ok(())
 }
 
-pub fn delete_record(conn: &Connection, id: String) -> Result<()> {
-    log::info!("[DB] Deleting record: {}", id);
-    conn.execute("DELETE FROM records WHERE id = ?", params![id])?;
-    Ok(())
-}
+pub(crate) fn replace_all_records_tx(conn: &Connection, records: Vec<WatchRecord>) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT id FROM records WHERE isLocked = 1")?;
+    let locked_ids: HashSet<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(Result::ok)
+        .collect();
 
-pub fn replace_all_records(conn: &Connection, records: Vec<WatchRecord>) -> Result<()> {
-    conn.execute("BEGIN TRANSACTION", [])?;
-    let res = (|| {
-        // 先获取所有被锁定的记录 ID
-        let mut stmt = conn.prepare("SELECT id FROM records WHERE isLocked = 1")?;
-        let locked_ids: HashSet<String> = stmt
-            .query_map([], |row| row.get(0))?
-            .filter_map(Result::ok)
-            .collect();
+    conn.execute(
+        "DELETE FROM records WHERE isLocked IS NULL OR isLocked = 0",
+        [],
+    )?;
 
-        // 删除所有未锁定的记录
-        conn.execute(
-            "DELETE FROM records WHERE isLocked IS NULL OR isLocked = 0",
-            [],
-        )?;
-
-        for r in records {
-            // 如果云端下发的数据对应的本地记录已锁定，直接跳过不覆盖
-            if locked_ids.contains(&r.id) {
-                log::info!("[DB] Sync skipping locked record: {}", r.id);
-                continue;
-            }
-            insert_record(conn, r)?;
+    for record in records {
+        if locked_ids.contains(&record.id) {
+            log::info!("[DB] Sync skipping locked record: {}", record.id);
+            continue;
         }
-        conn.execute("COMMIT", [])?;
-        Ok(())
-    })();
-    if res.is_err() {
-        let _ = conn.execute("ROLLBACK", []);
+        insert_record(conn, record)?;
     }
-    res
+    Ok(())
 }
 
 pub fn set_setting(conn: &Connection, key: String, value: String) -> Result<()> {
@@ -570,14 +553,58 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_records_preserves_locked_local_record() {
+    fn one_incompatible_row_does_not_prevent_loading_valid_records() {
         let conn = Connection::open_in_memory().expect("open database");
+        setup_db(&conn).expect("migrate database");
+        insert_record(&conn, record("valid", "正常记录", false)).expect("insert valid record");
+        insert_record(&conn, record("dirty", "兼容脏记录", false)).expect("insert dirty record");
+        conn.execute(
+            "UPDATE records SET status = 'legacy-invalid' WHERE id = 'dirty'",
+            [],
+        )
+        .expect("make one row incompatible");
+
+        let records = get_all_records(&conn).expect("load compatible records");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "valid");
+    }
+
+    #[test]
+    fn settings_round_trip_survives_reopen_on_file_database() {
+        let directory =
+            std::env::temp_dir().join(format!("watchtracker-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create temporary directory");
+        let path = directory.join("settings.db");
+        {
+            let conn = Connection::open(&path).expect("open database");
+            setup_db(&conn).expect("migrate database");
+            set_setting(&conn, "sync_interval".to_string(), "45".to_string())
+                .expect("save setting");
+        }
+        {
+            let conn = Connection::open(&path).expect("reopen database");
+            setup_db(&conn).expect("verify current database");
+            assert_eq!(
+                get_setting(&conn, "sync_interval".to_string())
+                    .unwrap()
+                    .as_deref(),
+                Some("45")
+            );
+        }
+        std::fs::remove_file(&path).expect("remove temporary database");
+        std::fs::remove_dir(&directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn replace_all_records_preserves_locked_local_record() {
+        let mut conn = Connection::open_in_memory().expect("open database");
         setup_db(&conn).expect("migrate database");
         insert_record(&conn, record("locked", "本地锁定版本", true)).expect("insert locked record");
         insert_record(&conn, record("old", "待替换版本", false)).expect("insert old record");
 
-        replace_all_records(
-            &conn,
+        crate::db_atomic_crud::replace_all_records_atomic(
+            &mut conn,
             vec![
                 record("locked", "云端覆盖版本", false),
                 record("remote", "云端新记录", false),

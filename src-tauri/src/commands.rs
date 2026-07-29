@@ -16,11 +16,11 @@ pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate:
 
 #[tauri::command]
 pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), crate::error::AppError> {
-    let conn = state
+    let mut conn = state
         .conn
         .lock()
         .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-    Ok(db::insert_record(&conn, r)?)
+    crate::db_atomic_crud::insert_record_atomic(&mut conn, r)
 }
 
 #[tauri::command]
@@ -45,11 +45,11 @@ pub fn update_record(
 
 #[tauri::command]
 pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
-    let conn = state
+    let mut conn = state
         .conn
         .lock()
         .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-    Ok(db::delete_record(&conn, id)?)
+    crate::db_atomic_crud::delete_record_atomic(&mut conn, &id)
 }
 
 #[tauri::command]
@@ -57,11 +57,11 @@ pub fn replace_all_records(
     state: State<DbState>,
     records: Vec<WatchRecord>,
 ) -> Result<(), crate::error::AppError> {
-    let conn = state
+    let mut conn = state
         .conn
         .lock()
         .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-    Ok(db::replace_all_records(&conn, records)?)
+    crate::db_atomic_crud::replace_all_records_atomic(&mut conn, records)
 }
 
 #[tauri::command]

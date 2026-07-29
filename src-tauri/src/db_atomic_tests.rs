@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::db;
+    use crate::db_atomic_crud::{
+        delete_record_atomic, insert_record_atomic, replace_all_records_atomic,
+    };
     use crate::db_atomic_helpers::{
         get_records_generation, get_tombstones_tx, set_setting_tx, Tombstone,
     };
@@ -65,6 +68,121 @@ mod tests {
             },
         )
         .expect("read record state")
+    }
+
+    #[test]
+    fn insert_commits_record_tombstone_cleanup_and_generation_together() {
+        let mut conn = database();
+        set_setting_tx(
+            &conn,
+            "sync_tombstones",
+            r#"[{"id":"inserted","deletedAt":"2026-07-28T01:00:00Z"},{"id":"other","deletedAt":"2026-07-28T02:00:00Z"}]"#,
+        )
+        .expect("seed tombstones");
+
+        insert_record_atomic(&mut conn, record("inserted")).expect("insert record");
+
+        assert!(db::get_record(&conn, "inserted").unwrap().is_some());
+        assert_eq!(get_records_generation(&conn).unwrap(), 1);
+        assert_eq!(
+            get_tombstones_tx(&conn).unwrap(),
+            vec![Tombstone {
+                id: "other".to_string(),
+                deleted_at: "2026-07-28T02:00:00Z".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn delete_commits_record_tombstone_and_generation_together() {
+        let mut conn = database();
+        db::insert_record(&conn, record("deleted")).expect("seed record");
+
+        delete_record_atomic(&mut conn, "deleted").expect("delete record");
+
+        assert!(db::get_record(&conn, "deleted").unwrap().is_none());
+        assert_eq!(get_records_generation(&conn).unwrap(), 1);
+        let tombstones = get_tombstones_tx(&conn).unwrap();
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].id, "deleted");
+        assert!(!tombstones[0].deleted_at.is_empty());
+    }
+
+    #[test]
+    fn insert_generation_failure_rolls_back_record_and_tombstone_cleanup() {
+        let mut conn = database();
+        set_setting_tx(
+            &conn,
+            "sync_tombstones",
+            r#"[{"id":"insert-failure","deletedAt":"2026-07-28T01:00:00Z"}]"#,
+        )
+        .unwrap();
+        let tombstones = get_tombstones_tx(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_insert_generation BEFORE UPDATE OF value ON settings
+             WHEN OLD.key = 'records_generation'
+             BEGIN SELECT RAISE(ABORT, 'injected generation failure'); END;",
+        )
+        .unwrap();
+
+        assert!(insert_record_atomic(&mut conn, record("insert-failure")).is_err());
+        assert!(db::get_record(&conn, "insert-failure").unwrap().is_none());
+        assert_eq!(get_records_generation(&conn).unwrap(), 0);
+        assert_eq!(get_tombstones_tx(&conn).unwrap(), tombstones);
+    }
+
+    #[test]
+    fn delete_generation_failure_rolls_back_record_and_tombstone() {
+        let mut conn = database();
+        db::insert_record(&conn, record("delete-failure")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_delete_generation BEFORE UPDATE OF value ON settings
+             WHEN OLD.key = 'records_generation'
+             BEGIN SELECT RAISE(ABORT, 'injected generation failure'); END;",
+        )
+        .unwrap();
+
+        assert!(delete_record_atomic(&mut conn, "delete-failure").is_err());
+        assert!(db::get_record(&conn, "delete-failure").unwrap().is_some());
+        assert_eq!(get_records_generation(&conn).unwrap(), 0);
+        assert!(get_tombstones_tx(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn replace_all_records_commits_once_and_preserves_locked_records() {
+        let mut conn = database();
+        let mut locked = record("locked");
+        locked.is_locked = Some(true);
+        db::insert_record(&conn, locked).unwrap();
+        db::insert_record(&conn, record("old")).unwrap();
+
+        replace_all_records_atomic(&mut conn, vec![record("locked"), record("imported")]).unwrap();
+
+        assert!(db::get_record(&conn, "locked").unwrap().is_some());
+        assert!(db::get_record(&conn, "imported").unwrap().is_some());
+        assert!(db::get_record(&conn, "old").unwrap().is_none());
+        assert_eq!(get_records_generation(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn replace_all_records_failure_rolls_back_records_and_generation() {
+        let mut conn = database();
+        db::insert_record(&conn, record("original")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_import BEFORE INSERT ON records
+             WHEN NEW.id = 'bad-import'
+             BEGIN SELECT RAISE(ABORT, 'injected import failure'); END;",
+        )
+        .unwrap();
+
+        assert!(replace_all_records_atomic(
+            &mut conn,
+            vec![record("replacement"), record("bad-import")],
+        )
+        .is_err());
+        assert!(db::get_record(&conn, "original").unwrap().is_some());
+        assert!(db::get_record(&conn, "replacement").unwrap().is_none());
+        assert_eq!(get_records_generation(&conn).unwrap(), 0);
     }
 
     #[test]

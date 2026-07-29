@@ -2,6 +2,7 @@ mod app_paths;
 mod auth;
 mod commands;
 mod db;
+mod db_atomic_crud;
 mod db_atomic_helpers;
 mod db_atomic_update;
 mod error;
