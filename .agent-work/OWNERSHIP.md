@@ -1,10 +1,10 @@
 # AI 协作文件所有权
 
-本文件、`.agent-work/REPOSITORY_ID`、`.agent-work/tasks/*.json` 和
-`.agent-work/schemas/*` 由 Codex 管理。执行者只能读取，不能通过修改合同、Schema、
-预算、BASE、失败策略或受保护区域扩大权限。
+本文件及正式任务状态由 Codex 管理。`.agent-work/tasks/*.json`、Schema、Runner、
+Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；从 `TASK-A-005`
+起不再是普通任务的执行前置条件。
 
-## 权威顺序
+## `TASK-A-004` 及以前的权威顺序
 
 - stdout/stderr 内容：`evidence/raw` 原始日志。
 - 退出码、单调持续时间、终止原因：Runner 生成的 step manifest。
@@ -26,28 +26,28 @@
 
 ## Executor-owned
 
-> 2026-07-28 temporary mode: Antigravity is paused. “Executor” currently means the
-> Codex Implementation Pass operating under a Codex-owned contract. The subsequent
-> Verification Pass must use a fresh review context/worktree and may not rely on the
+> Antigravity remains paused. From `TASK-A-005`, “Executor” means the Codex
+> Implementation Pass working within the file scope in `TASKS.md`. The subsequent
+> Verification Pass uses a clean HEAD or independent worktree and does not treat the
 > implementation summary as acceptance evidence.
 
-- 合同授权的业务源码和测试区域
-- `.agent-work/evidence/raw/<task-id>/`（只允许 Runner 创建，执行者不得手改）
-- `.agent-work/evidence/generated/<task-id>/`（只允许工具生成）
-- 合同指定的 `executor-notes.md`
+- `TASKS.md` 明确列出的业务源码和测试区域
+- 任务必要的测试日志、截图和脱敏诊断
+- `EXECUTION_LOG.md` 中该任务的实施摘要
 
 ## Shared, append-only
 
 - `.agent-work/TASKS.md` 的 `Execution Result` 执行者区域
-- `.agent-work/EXECUTION_LOG.md` 的 contract-defined execution area
+- `.agent-work/EXECUTION_LOG.md` 中对应任务的实施区域
 
-共享文件必须使用合同中的唯一锚点限制可编辑区域。Expected File 不代表允许整文件
-重写；BOM、行尾、文件模式和非目标区域仍受保护。
+共享文件只修改对应任务区域。Expected File 不代表允许整文件重写；BOM、行尾、
+文件模式和非目标区域仍受保护。
 
-## 提交规则
+## `TASK-A-005` 起的提交规则
 
-- 执行 worktree 开始时暂存区必须为空；工具不得 reset、restore 或清理用户暂存区。
-- 禁止 `git add .`、`git add -A`、`git commit -a` 和直接 `git commit`。
-- 执行提交只能通过 `SAFE_COMMIT.ps1`。
-- 没有合同 Hash trailer 和 Safe Commit receipt 的执行提交自动失去验收资格。
-- Hook 和脚本是同权限环境下的工程护栏，不构成针对恶意同权限主体的安全边界。
+- 任务 worktree 开始时应为空；发现已有修改时先识别所有者和范围，不得 reset、restore、覆盖或清理。
+- 禁止 `git add .`、`git add -A`、`git commit -a`；只按明确路径暂存并在提交前复核 staged diff。
+- 允许正常 `git commit`，不要求 JSON 合同、Safe Commit、Receipt 或 Attestation。
+- 提交必须包含单一任务的相关改动；业务实现与独立验收结论不得伪装成同一步完成。
+- Verification Pass 必须检查提交范围、运行必要测试，并将结论记录为 `ACCEPTED` 或 `CHANGES_REQUESTED`。
+- 涉及真实数据、凭据、外部发布或不可逆操作时，仍需用户明确授权。

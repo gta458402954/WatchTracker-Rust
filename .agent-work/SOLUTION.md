@@ -199,7 +199,7 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 
 - **既有改动被覆盖**：任务开始先 diff，按函数补丁修改，证据列出复用项。
 - **半 migration**：逐 migration 事务 + 故障注入 + 多版本夹具。
-- **数据目录选择错误**：CONFIRM-001 未决前阻塞相关任务；统一路径对象后做矩阵测试。
+- **数据目录选择错误**：CONFIRM-001 已确认采用规则 1；统一路径对象后做矩阵测试。
 - **mock 假阳性**：浏览器 E2E 与真实 Tauri/SQLite 冒烟分层。
 - **地区筛选跳变/幽灵状态**：计数与最终筛选分离，主动校验 activeRegion。
 - **本地网络失败污染数据**：网络与本地事务边界分离，失败前后快照断言。
@@ -211,7 +211,7 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 3. TASK-R-004 由 Codex 应用决策矩阵，必要时 bisect，并填写 `RECOVERY_DECISION.md`。
 4. TASK-R-005 从最后绿色提交建立 `codex/rebuild-from-stable`，重复绿色门禁；Codex 通过 Gate R 后才开放 A-001。
 5. TASK-A-001 在恢复分支建立 Wave 0~5 迁移基线；后续 A 任务只选择性移植当前快照中的必要实现。
-6. 用户确认 CONFIRM-001 后执行统一路径；随后完成原子契约、核心流程、同步安全、错误状态、文档/产物治理和全量回归。
-7. Antigravity 只把实现完成项标为 IMPLEMENTED；Codex 独立复核并生成 `ACCEPTANCE_REPORT_BASELINE.md`。
+6. TASK-A-004 已按旧治理方案完成统一路径；用户确认只有可执行文件旁预先存在 `data/` 时才进入便携模式。
+7. TASK-A-004 `ACCEPTED` 后切换到简化流程。TASK-A-005 及后续任务由 Codex Implementation Pass 实施并正常提交，再由独立 Verification Pass 复核；不再要求 JSON 合同、Runner、Safe Commit、Receipt 或 Attestation。
 8. Gate A 通过后，Codex 再将 B 任务按依赖转 READY；当前 B 全部保持 BLOCKED。
 9. 阶段 B 完成后由 Codex独立验收并生成地区报告；两阶段通过后才生成综合报告。

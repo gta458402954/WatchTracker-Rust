@@ -465,3 +465,14 @@
 - Data boundary: three real database size/mtime/SHA-256 tuples matched before/after the accepted run and after runtime smoke.
 - Independent verification: clean detached `D:\Project\Projects\WatchTracker-A004-Verify`; implementation attestation, frontend gates, Rust 21/21 and strict Clippy PASS.
 - Final status: TASK-A-004 ACCEPTED; AC-A-011 PASS. Work pauses here as requested; TASK-A-005 is not opened.
+
+---
+
+## Simplified Workflow Decision for TASK-A-005+
+
+- Date: 2026-07-29; decision owner: user.
+- Activation: TASK-A-004 is ACCEPTED, so TASK-A-005 and later ordinary tasks use the simplified workflow documented in `AI_COLLABORATION_WORKFLOW.md` and `.agent-work/OWNERSHIP.md`.
+- Required controls retained: explicit task scope, clean-worktree review, no overwrite of existing changes, isolated user-data handling, targeted staging, actual test results and an independent Verification Pass before ACCEPTED.
+- Universal controls removed: per-task JSON contracts, Runner sessions, temporary-index Safe Commit, Receipt, Attestation, tool hashes and governance red-team reruns.
+- Source: the user's policy patch remains preserved, uncommitted, in `D:\Project\Projects\WatchTracker-Workflow`; this branch integrates the same policy on top of the accepted A-004 baseline.
+- Current state: TASK-A-005 is READY.

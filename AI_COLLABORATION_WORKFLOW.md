@@ -1,13 +1,35 @@
 # WatchTracker：AI 协作流程
 
-本文是本项目的 AI 协作操作手册，通过 `.agent-work/` 留下完整、可复核的授权、实施和验收记录。
+本文是本项目的 AI 协作操作手册。项目保留必要的任务、测试和验收记录，但从 `TASK-A-005` 起不再要求普通业务任务维护密码学提交证明链。
 
-## 0. 当前执行模式（2026-07-28 起）
+## 0. 当前执行模式与规则边界
 
-- Antigravity 因服务地区限制和执行环境不稳定暂时 `PAUSED / OPTIONAL`，不得执行任何现有任务。
-- Codex 当前同时承担规划和实施，但必须把工作拆成两个隔离阶段：Implementation Pass 只实施和提交；Verification Pass 从提交和干净 worktree 重新检查 diff、测试、进程、数据和产物后才能验收。
-- 原文后续 Antigravity 指令保留为历史/可选流程，在用户明确恢复 Antigravity 前不生效。
-- 治理 Runner 继续作为工程护栏；已发现的进程生命周期缺陷记录为治理债务，不阻塞已由独立证据完成的业务验收。
+- `TASK-A-004` 及以前已经开始的任务按各自既有合同、Runner、Safe Commit、Receipt 和独立验收规则完成。
+- 从 `TASK-A-005` 起采用本文的简化流程。若旧 prompt、`.agent-work/tasks/*.json` 或历史治理说明与本节冲突，以本节为准。
+- Antigravity 保持 `PAUSED / OPTIONAL`；未得到用户明确恢复授权前，后续任务由 Codex 执行。
+- Codex 将工作分为 Implementation Pass 和 Verification Pass。Implementation Pass 可以实现和提交，但不能自行标记 `ACCEPTED`；Verification Pass 必须从已提交的干净 HEAD 或独立 worktree重新审查并运行必要验证。
+
+### 0.1 `TASK-A-005` 起的简化流程
+
+```text
+确认依赖与工作区
+→ 在独立任务分支/worktree 实施
+→ 运行任务列出的验证
+→ 按明确文件列表正常提交
+→ 在干净 HEAD/独立 worktree 复验
+→ ACCEPTED 或 CHANGES_REQUESTED
+```
+
+普通任务不再强制创建或使用 JSON 执行合同、Runner、Safe Commit、Receipt、Attestation、工具 Hash 或治理红队复测。
+
+### 0.2 不可简化的安全底线
+
+- 开始前检查 Git 状态，不覆盖、清除或重复实现已有修改。
+- 禁止对真实用户数据库原地运行迁移、导入、恢复或破坏性测试；使用临时数据库或只读复制后的副本。
+- 不在日志、截图或提交中保存凭据和不必要的个人数据。
+- 禁止 `git add .`、`git add -A` 和 `git commit -a`；只暂存本任务逐项核对过的文件。
+- 阶段 A 未经验收通过前，阶段 B 不得进入 `READY`；DEFERRED 本轮不得实施。
+- 涉及路径、数据库或发布产物的高风险任务仍需隔离目录、前后 Hash 或真实产物冒烟证据。
 
 ## 1. 推荐配置
 
@@ -41,7 +63,7 @@
 
 - 检查实际代码库和现有未提交修改；
 - 生成项目分析、实施方案、验收标准和任务；
-- 在 Implementation Pass 中按合同实施，在独立 Verification Pass 中重新运行测试并审查提交；
+- 在 Implementation Pass 中按 `TASKS.md` 的明确范围实施，在独立 Verification Pass 中重新运行测试并审查提交；
 - 提出具体整改意见；
 - 生成阶段验收报告和最终综合验收报告。
 
@@ -67,12 +89,12 @@ Antigravity 不得改变原始需求、降低验收标准或自行把任务标�
 | `.agent-work/SOLUTION.md` | Codex | 完整技术方案 |
 | `.agent-work/ACCEPTANCE_CRITERIA.md` | Codex | 可执行、可判断的验收标准 |
 | `.agent-work/TASKS.md` | Codex 主导 | 任务定义、依赖和状态交接 |
-| `.agent-work/EXECUTION_LOG.md` | 当前执行者 / Runner | 修改文件、执行命令、退出码和结果 |
+| `.agent-work/EXECUTION_LOG.md` | 当前执行者 | 修改文件、执行命令、退出码和结果 |
 | `.agent-work/REVIEW_FEEDBACK.md` | Codex | 审查问题和整改要求 |
 | `.agent-work/ACCEPTANCE_REPORT_BASELINE.md` | Codex | 阶段 A：稳定基线验收报告 |
 | `.agent-work/ACCEPTANCE_REPORT_REGION.md` | Codex | 阶段 B：地区专项验收报告 |
 | `.agent-work/ACCEPTANCE_REPORT.md` | Codex | 最终综合验收报告 |
-| `.agent-work/evidence/` | Runner / 当前执行者 | 构建、测试、日志和截图证据 |
+| `.agent-work/evidence/` | 当前执行者 | 必要的构建、测试、日志和截图证据 |
 
 ## 4. 开始前检查
 
@@ -182,7 +204,7 @@ Codex 应填写：
 
 - 唯一编号，例如 `TASK-A-001`、`TASK-B-001`；
 - Phase：`A`、`B` 或 `DEFERRED`；
-- Owner：`Antigravity`；
+- Owner：当前授权执行者；`TASK-A-005` 起默认为 `Codex`；
 - Status；
 - Priority；
 - 依赖任务；
@@ -218,7 +240,9 @@ Codex 应填写：
 
 方案确认后再交给 Antigravity。
 
-## 9. 第四步：Antigravity 实施阶段 A
+## 9. 历史流程：Antigravity 实施阶段 A
+
+> 本节至第 11 节仅用于解释 `TASK-A-004` 及以前的历史记录。从 `TASK-A-005` 起使用第 0 节简化流程。
 
 在 Antigravity 中发送：
 
@@ -386,8 +410,9 @@ ACCEPTED
 
 状态权限：
 
-- Codex：创建任务，设置 `DRAFT`、`READY`、`REVIEWING`、`CHANGES_REQUESTED`、`ACCEPTED`；
-- Antigravity：设置 `IN_PROGRESS`、`IMPLEMENTED`、`BLOCKED`；
+- Codex Implementation Pass：设置 `IN_PROGRESS`、`IMPLEMENTED` 或 `BLOCKED`，不得设置 `ACCEPTED`；
+- Codex Verification Pass：设置 `REVIEWING`、`CHANGES_REQUESTED` 或 `ACCEPTED`；
+- Antigravity：暂停；恢复后仍只能设置 `IN_PROGRESS`、`IMPLEMENTED` 或 `BLOCKED`；
 - 用户：决定重大阻塞、范围变化和有条件通过是否可接受。
 
 任何任务从 `CHANGES_REQUESTED` 返回后，都必须重新经过 `IMPLEMENTED -> REVIEWING -> ACCEPTED`，不能直接标记为通过。

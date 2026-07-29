@@ -707,11 +707,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 ## TASK-A-005：实现明确初始化状态与统一用户错误反馈
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: READY
 - Priority: P0 / High
-- Dependencies: TASK-A-001
+- Dependencies: TASK-A-001, TASK-A-004
 - Acceptance Criteria: AC-A-005
+- Execution Policy: Simplified workflow v1（无需 JSON 合同、Runner、Safe Commit、Receipt 或 Attestation；保留独立 Implementation/Verification Pass）
 - Expected Files:
   - `src/app/App.tsx`
   - `src/store/useWatchListStore.ts`
@@ -751,7 +752,7 @@ npx playwright test
 
 ### Execution Result
 
-Pending
+READY — user approved the simplified workflow for TASK-A-005 and later tasks on 2026-07-29; TASK-A-004 is ACCEPTED.
 
 ## TASK-A-006：验证并修复数据库升级、核心 CRUD 与离线流程
 
