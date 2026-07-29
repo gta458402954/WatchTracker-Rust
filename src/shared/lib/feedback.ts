@@ -5,6 +5,8 @@ export interface NoticeInput {
   message: string;
 }
 
+export type NoticeSink = (tone: NoticeTone, message: string) => void;
+
 export function publicFailureMessage(action: string): string {
   return `${action}失败，请稍后重试。`;
 }
@@ -17,4 +19,16 @@ export function errorCategory(error: unknown): string {
 
 export function reportOperationFailure(scope: string, error: unknown): void {
   console.error(`[${scope}] operation failed`, { errorCategory: errorCategory(error) });
+}
+
+export function notifyOperationFailure(
+  scope: string,
+  action: string,
+  error: unknown,
+  notify: NoticeSink,
+): string {
+  reportOperationFailure(scope, error);
+  const message = publicFailureMessage(action);
+  notify('error', message);
+  return message;
 }

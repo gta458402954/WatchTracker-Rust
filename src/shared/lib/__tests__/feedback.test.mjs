@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   errorCategory,
+  notifyOperationFailure,
   publicFailureMessage,
   reportOperationFailure,
 } from "../feedback.ts";
@@ -29,5 +30,31 @@ test("reportOperationFailure does not log the raw error message", () => {
 
   assert.deepEqual(captured, [
     ["[record.save] operation failed", { errorCategory: "Error" }],
+  ]);
+});
+
+test("an injected write failure produces one generic user notification", () => {
+  const originalError = console.error;
+  const capturedLogs = [];
+  const capturedNotices = [];
+  console.error = (...args) => capturedLogs.push(args);
+
+  try {
+    const message = notifyOperationFailure(
+      "Record.Save",
+      "保存记录",
+      new Error("SQL: credentials and private path"),
+      (tone, notice) => capturedNotices.push({ tone, message: notice }),
+    );
+    assert.equal(message, "保存记录失败，请稍后重试。");
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.deepEqual(capturedNotices, [
+    { tone: "error", message: "保存记录失败，请稍后重试。" },
+  ]);
+  assert.deepEqual(capturedLogs, [
+    ["[Record.Save] operation failed", { errorCategory: "Error" }],
   ]);
 });

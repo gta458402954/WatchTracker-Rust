@@ -10,7 +10,7 @@ import { calculateWatchValue } from '../shared/lib/analytics';
 import { hasRegion, mediaTypeOf, RegionTag } from '../shared/lib/classification';
 import { initializeApp } from './initialization';
 import NotificationRegion, { useNotifications } from '../shared/components/NotificationRegion';
-import { publicFailureMessage, reportOperationFailure } from '../shared/lib/feedback';
+import { notifyOperationFailure, publicFailureMessage, reportOperationFailure } from '../shared/lib/feedback';
 
 // New Split Components
 import Header from '../features/watchlist/components/Header';
@@ -198,8 +198,7 @@ export default function App() {
       setEditingRecord(null);
       return true;
     } catch (error) {
-      reportOperationFailure('App.SaveRecord', error);
-      notify('error', publicFailureMessage(editingRecord ? '更新记录' : '添加记录'));
+      notifyOperationFailure('App.SaveRecord', editingRecord ? '更新记录' : '添加记录', error, notify);
       return false;
     }
   }

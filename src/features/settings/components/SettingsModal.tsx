@@ -5,7 +5,7 @@ import {
 } from '../../../shared/lib/webdav';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync, updateRecord as updateRecordDb } from '../../../shared/lib/database';
 import { classifyTmdb, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
-import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
+import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -102,10 +102,8 @@ export default function SettingsModal({
     error: unknown,
     setStatus?: (message: string) => void,
   ) => {
-    reportOperationFailure(scope, error);
-    const message = publicFailureMessage(action);
+    const message = notifyOperationFailure(scope, action, error, onNotify ?? (() => undefined));
     setStatus?.(`❌ ${message}`);
-    onNotify?.('error', message);
   }, [onNotify]);
 
   const showSuccess = useCallback((message: string) => {
