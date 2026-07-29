@@ -7,16 +7,16 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 已 PASS；`TASK-A-001`、`TASK-A-002` 已验收；其他 Phase A 任务继续按依赖关系保持 DRAFT/BLOCKED。
+- Gate R 已 PASS；`TASK-A-001`~`TASK-A-006` 已验收；其余 Phase A 任务继续按依赖关系保持 DRAFT/BLOCKED。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
 ## 任务总览与依赖图
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
-- Phase A：10 个任务；`TASK-A-001`、`TASK-A-002`、`TASK-A-003` 已验收；`CONFIRM-001` 已由用户确认，`TASK-A-004` 现为 READY。
+- Phase A：10 个任务；`TASK-A-001`~`TASK-A-006` 已验收；`TASK-A-007`~`TASK-A-010` 尚未开放。
 - Phase B：5 个任务；全部依赖 Gate A，当前均 BLOCKED。
-- DEFERRED：4 个路线图包；本轮禁止实施，不计入 A/B 数量。
+- DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1264,8 +1264,29 @@ Blocked by Gate A
 - Status: BLOCKED
 - Priority: Future R1
 - Dependencies: Gate A, Gate B, 新的用户专项需求与验收标准
-- Scope: 观看日志、今晚看什么、Trakt、长期领域约束、网络/海报长期安全、持续集成后续演进。
+- Scope: 逐集完成时间/观看历史、今晚看什么、Trakt、长期领域约束、网络/海报长期安全、持续集成后续演进。
 - Prohibition: 除本轮明确要求的最小 CI/数据安全修复外，不实施产品能力。
+
+## TASK-D-R1-001：逐集完成时间与完结状态
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: BLOCKED
+- Priority: Future R1
+- Dependencies: Gate A, Gate B, 专项数据模型与验收标准
+- Business Source: `.agent-work/REQUEST.md` 9.3
+- Scope: 下一集语义、单集完成三态、跳集空时间、最后一集完结、幂等历史、旧进度兼容、migration、导入导出与同步边界。
+- Current Model Finding: 当前只有自由文本 `progress` 与 `totalEpisodes`；历史 `watch_logs` 表在 v13 migration 中被删除，不能直接复用为现行能力。
+- Required Future Design:
+  - `records.nextEpisode` 与独立 `episode_completions` 数据模型、可空 `completedAt`、唯一约束和向前 migration；
+  - 下一集更新与上一集完成事件的原子事务；
+  - 旧 `progress` 保持原样，并通过用户显式选择起始下一集启用新模型；
+  - 三态约束：无行＝未记录完成；有行且时间为空＝已完成但时间未记录；有行且时间非空＝已完成且时间已知；
+  - 跳集为中间集插入空时间完成记录、为目标前一集插入当前时间，不为未跨过的集预创建行；
+  - 重复、回退、跳集空值、离线、导入恢复和同步冲突测试；
+  - 单元、Rust/SQLite 集成和真实 Tauri UI 验收标准。
+- Confirmed First-Version Boundary: 下一集选择、单集完成三态、跳集空时间、完结、旧数据显式启用；不含观看时长、批量补历史、跨季聚合和历史编辑。
+- Prohibition: 本轮不得实施，不得并入阶段 A/B 或以稳定性修复名义提前修改 schema。
 
 ## TASK-D-R2：高级功能与架构路线图包
 

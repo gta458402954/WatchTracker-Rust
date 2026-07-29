@@ -502,3 +502,16 @@
 - Tooling incident: the desktop-control launch interface resolved generic `app.exe` to catalogued OneDrive Photos. Exact-path `Start-Process` launched the correct WatchTracker binary; future checks must verify PID and executable path before interaction.
 - Evidence: `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`.
 - Final status: TASK-A-006 ACCEPTED; AC-A-004, AC-A-006 and AC-A-007 PASS. TASK-A-007 remains unopened.
+
+---
+
+## Deferred Business Addition: Per-Episode Completion Time
+
+- Date: 2026-07-29; source: user-approved uncommitted design in `D:\Project\Projects\WatchTracker-Workflow`.
+- Migration: moved by file/section onto the accepted A-006 line; no Workflow business source or older task-state block was copied wholesale.
+- Placement: REQUEST roadmap R1 and deferred `TASK-D-R1-001`; explicitly excluded from current Phase A/B implementation.
+- Behavior: advancing the next-episode pointer records the preceding episode; selecting terminal `完结` records the final episode and completes the series.
+- Jump semantics: skipped intermediate episodes receive completion rows with `completedAt = NULL`; only the episode immediately before the selected next episode receives the current time.
+- Model: nullable `records.nextEpisode` plus unique `(recordId, episodeNumber)` rows in `episode_completions`; pointer and completion changes must be atomic and idempotent.
+- Compatibility: legacy free-text `progress` remains unchanged until the user explicitly enables the structured model. The historical `watch_logs` table was removed in migration v13 and is not treated as a current implementation base.
+- Boundary: specification and deferred task only; no schema, source, test, database or runtime change was made.

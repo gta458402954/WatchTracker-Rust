@@ -4,10 +4,10 @@
 
 ## 0. 当前执行模式与规则边界
 
-- `TASK-A-004` 及以前已经开始的任务按各自既有合同、Runner、Safe Commit、Receipt 和独立验收规则完成。
-- 从 `TASK-A-005` 起采用本文的简化流程。若旧 prompt、`.agent-work/tasks/*.json` 或历史治理说明与本节冲突，以本节为准。
+- `TASK-A-004` 及以前已经开始的任务继续按各自既有合同、Runner、Safe Commit、Receipt 和独立验收规则完成，不在执行中途换轨。
+- 从 `TASK-A-005` 起采用本文的简化流程。若后文章节、旧 prompt、`.agent-work/tasks/*.json` 或历史治理说明与本节冲突，以本节为准。
 - Antigravity 保持 `PAUSED / OPTIONAL`；未得到用户明确恢复授权前，后续任务由 Codex 执行。
-- Codex 将工作分为 Implementation Pass 和 Verification Pass。Implementation Pass 可以实现和提交，但不能自行标记 `ACCEPTED`；Verification Pass 必须从已提交的干净 HEAD 或独立 worktree重新审查并运行必要验证。
+- Codex 将工作分为 Implementation Pass 和 Verification Pass。Implementation Pass 可以实现和提交，但不能自行标记 `ACCEPTED`；Verification Pass 必须从已提交的干净 HEAD 或独立 worktree 重新审查并运行必要验证。
 
 ### 0.1 `TASK-A-005` 起的简化流程
 
@@ -20,7 +20,18 @@
 → ACCEPTED 或 CHANGES_REQUESTED
 ```
 
-普通任务不再强制创建或使用 JSON 执行合同、Runner、Safe Commit、Receipt、Attestation、工具 Hash 或治理红队复测。
+普通任务不再强制创建或使用：
+
+- JSON 执行合同和 Schema 校验；
+- Runner session、临时 index、Safe Commit；
+- Receipt、Attestation、工具 Hash 和逐命令状态机；
+- 为治理工具本身重复执行红队测试。
+
+每个任务只需保留：
+
+- `TASKS.md` 中的状态、依赖和允许范围；
+- `EXECUTION_LOG.md` 中的修改摘要、实际命令及结果；
+- 验收所必需的测试日志、截图或数据前后 Hash。
 
 ### 0.2 不可简化的安全底线
 
@@ -29,7 +40,7 @@
 - 不在日志、截图或提交中保存凭据和不必要的个人数据。
 - 禁止 `git add .`、`git add -A` 和 `git commit -a`；只暂存本任务逐项核对过的文件。
 - 阶段 A 未经验收通过前，阶段 B 不得进入 `READY`；DEFERRED 本轮不得实施。
-- 涉及路径、数据库或发布产物的高风险任务仍需隔离目录、前后 Hash 或真实产物冒烟证据。
+- A-004、A-006、A-009 等涉及路径、数据库或发布产物的高风险任务必须增加隔离目录、前后 Hash 或真实产物冒烟证据，但不因此恢复整套合同/Receipt 链。
 
 ## 1. 推荐配置
 
@@ -242,7 +253,7 @@ Codex 应填写：
 
 ## 9. 历史流程：Antigravity 实施阶段 A
 
-> 本节至第 11 节仅用于解释 `TASK-A-004` 及以前的历史记录。从 `TASK-A-005` 起使用第 0 节简化流程。
+> 本节至第 11 节仅用于解释 `TASK-A-004` 及以前的历史记录。从 `TASK-A-005` 起不得把这些旧合同/Runner 要求重新作为执行前置条件，应使用第 0 节简化流程。
 
 在 Antigravity 中发送：
 
@@ -419,7 +430,7 @@ ACCEPTED
 
 ## 16. 证据规则
 
-证据保存到：
+必要证据可保存到：
 
 ```text
 .agent-work/evidence/builds/
@@ -438,7 +449,7 @@ TASK-B-002-vitest.txt
 TASK-B-004-playwright.png
 ```
 
-每份证据应能对应到任务编号和验收标准。只写“测试通过”而没有命令、退出码或输出，不构成充分证据。
+证据应对应任务编号和验收标准。普通任务不要求为每条命令生成独立 manifest；执行日志记录命令和退出码，验收所依赖的失败诊断、截图、构建产物或数据 Hash 再单独保存。只写“测试通过”而没有实际结果，不构成充分证据。
 
 ## 17. 验收结果规则
 
@@ -491,21 +502,17 @@ cargo test
 
 ## 20. 最简操作清单
 
-日常使用时只需记住：
+从 `TASK-A-005` 起，日常使用只需记住：
 
 ```text
-1. 用户确认 REQUEST.md
-2. Codex 执行 CODEX_PLAN.md
-3. 用户审核方案
-4. Antigravity 执行阶段 A
-5. Codex 验收阶段 A
-6. Antigravity 按 REVIEW_FEEDBACK.md 整改
-7. Codex 复验并生成 BASELINE 报告
-8. Antigravity 执行阶段 B
-9. Codex 验收阶段 B
-10. 整改和复验直至通过
-11. Codex 生成 REGION 报告
-12. Codex 生成最终 ACCEPTANCE_REPORT.md
+1. 检查依赖、分支、工作区和已有修改
+2. Codex Implementation Pass 按 TASKS.md 范围实施
+3. 运行任务要求的测试并记录真实结果
+4. 按明确文件列表暂存并正常提交
+5. Codex Verification Pass 在干净 HEAD/worktree 独立复验
+6. 通过则 ACCEPTED；不通过则 CHANGES_REQUESTED 后整改复验
+7. Gate A 通过后才开放阶段 B
+8. 两阶段通过后生成最终验收报告
 ```
 
 任何时候都以 `.agent-work/REQUEST.md` 为业务范围来源，以 `.agent-work/ACCEPTANCE_CRITERIA.md` 为验收依据，以实际代码、命令结果和证据为最终事实来源。
