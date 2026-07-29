@@ -949,7 +949,7 @@ ACCEPTED — implementation `e44ff53` adds the current README, atomic local-data
 
 - Phase: A
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: P0 / Critical
 - Dependencies: TASK-A-002, TASK-A-004, TASK-A-006, TASK-A-007, TASK-A-008
 - Acceptance Criteria: AC-A-015
@@ -987,7 +987,7 @@ Get-ChildItem src-tauri/target/release -Recurse -File | Select-Object FullName,L
 
 ### Execution Result
 
-Pending
+IMPLEMENTED — `npm run tauri build` exited 0 and produced a runnable Release EXE plus MSI and NSIS bundles. An exact-hash copy with a pre-created adjacent `data/` directory passed main-window, create/read/update, movie-to-series classification, restart persistence, confirmed delete, delete-after-restart, and no-credential local-use smoke. Six real UI screenshots, raw build/app logs and artifact/data/process manifests are under `.agent-work/evidence/{builds,logs,screenshots}/TASK-A-009/`. All three real user database SHA-256/length/mtime tuples remained identical. Awaiting independent Verification Pass; unsigned artifacts remain an explicit delivery caveat.
 
 ## TASK-A-010：执行阶段 A 全量门禁并提交验收材料
 

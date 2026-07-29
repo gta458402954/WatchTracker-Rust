@@ -1,0 +1,8 @@
+{
+  "Command": "npm run tauri build",
+  "WorkingDirectory": "D:\\Project\\Projects\\WatchTracker-A009",
+  "StartedAtUtc": "2026-07-29T15:46:58.0524463Z",
+  "EndedAtUtc": "2026-07-29T15:49:10.3655687Z",
+  "DurationMs": 132313.0,
+  "ExitCode": 0
+}

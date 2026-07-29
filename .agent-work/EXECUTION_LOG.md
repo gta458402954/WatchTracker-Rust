@@ -542,3 +542,16 @@
 - Data/process boundary: no desktop app or database command; active database hashes unchanged; no port 4177 listener or related residual process.
 - Evidence: `.agent-work/evidence/review/TASK-A-008-CODEX-REVIEW.md`.
 - Final status: TASK-A-008 ACCEPTED; AC-A-012 and AC-A-016 PASS. TASK-A-009 remains unopened.
+
+---
+
+## TASK-A-009 Codex Implementation Pass
+
+- Date: 2026-07-29; BASE/authorization: `b5c9afd` on `codex/task-a-009`.
+- Build: locked install exit 0; complete `npm run tauri build` exit 0 in 132,313 ms. Post-exit Release EXE, MSI and NSIS sizes/hashes are recorded in `.agent-work/evidence/builds/TASK-A-009/artifacts-after-build.json`; all are locally unsigned and Git ignored.
+- Isolation: copied the final EXE by exact hash to `D:\Project\Projects\WatchTracker-A009-Smoke\app.exe`, pre-created adjacent `data\`, and verified the application log resolved database/posters/backups inside that directory on every startup.
+- Desktop result: empty startup, Create/Read, rename, movie-to-series reclassification, restart persistence, user-confirmed Delete and delete-after-restart all passed in the real Release UI; six captured window screenshots are indexed by SHA-256.
+- Offline result: isolated settings contain only database generation/tombstone keys; no TMDB/WebDAV credential. Local startup and CRUD remained usable, with no matching application error in the isolated log.
+- Launch-tool finding: generic desktop-control launch did not create a process. Exact-path PowerShell 7.6.3 `Start-Process` launched the intended binary; PID and executable path were verified before UI control.
+- Boundary: final related process count 0; the three real database SHA-256/length/mtime tuples exactly match the pre-test snapshot. No business source, dependency, schema or tracked artifact changed.
+- Status: TASK-A-009 IMPLEMENTED; independent Verification Pass is still required before AC-A-015 or the task can be accepted. TASK-A-010 remains unopened.
