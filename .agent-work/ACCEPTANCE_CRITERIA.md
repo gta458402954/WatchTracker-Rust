@@ -329,8 +329,8 @@
   5. `npx playwright test`
 - Expected Result: 全部退出码 0；不得关闭检查、跳过测试或依赖残留 dev server。
 - Required Evidence: 五份完整日志和 Playwright 结果摘要。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Detached verification at `8412d4f` passed `npm run typecheck`, `npm run lint`, `npm run test` (Node 14/14), `npm run build` (606 modules), and `npx playwright test` (Chromium 3/3). Playwright started an isolated strict-port Vite server, routed output to the system temp directory, and left no listener or process. See `.agent-work/evidence/review/TASK-A-007-CODEX-REVIEW.md`.
 
 ### AC-A-014：Rust 质量门禁全部通过
 
@@ -344,8 +344,8 @@
   3. `cargo test`
 - Expected Result: 全部退出码 0，无 warning 被放宽。
 - Required Evidence: 三份完整日志。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: The inherited trailing-whitespace diagnostics in `auth.rs` and `error.rs` were removed without logic changes. Detached verification passed `cargo fmt -- --check`, strict locked Clippy with `-D warnings`, and `cargo test --locked` (29/29). The localized Windows linker import-library notice is informational stdout; strict Clippy produced no warning failure. See `.agent-work/evidence/review/TASK-A-007-CODEX-REVIEW.md`.
 
 ### AC-A-015：Windows 构建产物生成并通过冒烟
 

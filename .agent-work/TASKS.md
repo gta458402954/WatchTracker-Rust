@@ -835,7 +835,7 @@ ACCEPTED — implementation `20df1f5` makes local insert/delete/replace state at
 
 - Phase: A
 - Owner: Codex
-- Status: READY
+- Status: ACCEPTED
 - Priority: P0 / High
 - Dependencies: TASK-A-003, TASK-A-005, TASK-A-006
 - Acceptance Criteria: AC-A-005~010, AC-A-013, AC-A-014
@@ -886,7 +886,7 @@ cargo test --locked
 
 ### Execution Result
 
-READY — based on accepted `TASK-A-006` documentation HEAD `2e77567`. Existing Rust/Node tests already cover REQUEST 7.1 items 1–8 and 10; this task must establish the missing `npm test`/Playwright gates, add direct initialization error/retry UI assertions, and publish a mechanical 7.1 mapping. No business source change is authorized.
+ACCEPTED — implementation `8412d4f` establishes `npm test` and isolated Playwright gates, a strict current-DTO IPC mock, direct initialization error/retry UI assertions, and closes the inherited rustfmt-only debt in `auth.rs`/`error.rs`. Detached verification passed typecheck, lint, Node 14/14, build, Playwright 3/3, `cargo fmt`, strict Clippy, and Rust 29/29. REQUEST 7.1 all ten scenarios are mapped in `.agent-work/evidence/review/TASK-A-007-CODEX-REVIEW.md`.
 
 ## TASK-A-008：同步 README、原子 API 文档、CI 与产物治理
 

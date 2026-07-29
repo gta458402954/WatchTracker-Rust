@@ -515,3 +515,16 @@
 - Model: nullable `records.nextEpisode` plus unique `(recordId, episodeNumber)` rows in `episode_completions`; pointer and completion changes must be atomic and idempotent.
 - Compatibility: legacy free-text `progress` remains unchanged until the user explicitly enables the structured model. The historical `watch_logs` table was removed in migration v13 and is not treated as a current implementation base.
 - Boundary: specification and deferred task only; no schema, source, test, database or runtime change was made.
+
+---
+
+## TASK-A-007 Codex Execution and Acceptance
+
+- Date: 2026-07-29; documentation BASE: `2e77567`; authorization: `77f9c24`, `e80b0ad`; implementation: `8412d4f`.
+- Scope: Node test script, Playwright 1.62 test infrastructure, strict current-DTO IPC fixture, three baseline page tests, and rustfmt-only cleanup of inherited whitespace in `auth.rs`/`error.rs`.
+- First Playwright diagnostic: 2/3 because a one-shot mock failure was consumed by React development double initialization; the fixture was made persistent until explicit release. No product code changed.
+- Independent frontend result: typecheck/lint/build PASS; Node 14/14; Playwright Chromium 3/3 on isolated port 4177.
+- Independent Rust result: `cargo fmt` PASS; strict locked Clippy PASS; Rust 29/29 PASS.
+- Boundary: no desktop app launch, schema, migration, runtime-path, WebDAV, credential or user-data change; three active user database hashes remained unchanged; related process and port counts were zero.
+- Evidence: `.agent-work/evidence/review/TASK-A-007-CODEX-REVIEW.md`.
+- Final status: TASK-A-007 ACCEPTED; AC-A-013 and AC-A-014 PASS. TASK-A-008 remains unopened.
