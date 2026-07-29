@@ -186,8 +186,8 @@
   3. 升级后重启并核对数据和 schema/version。
 - Expected Result: 三种场景均稳定进入主界面，旧记录可读且无丢失；可恢复错误有 UI 提示和日志。
 - Required Evidence: 三组启动日志、截图、升级前后数据/schema 摘要。
-- Result: NOT RUN
-- Evidence: TASK-A-002 startup subset PASS only: isolated empty/current/synthetic-v12 startup and v12→v15 migration were exercised; the synthetic record was preserved and legacy columns were removed. The user confirmed one complete main-interface launch. Full AC-A-004 remains NOT RUN until the later integration task supplies the complete three-scenario UI/data evidence; TASK-A-002 does not lower that requirement.
+- Result: PASS
+- Evidence: TASK-A-006 independently launched real isolated empty, current, and synthetic-v12 databases. Each entered the desktop main interface without a white screen or fatal error. The v12 record remained readable, migrated to schema version 18 without legacy columns, and survived a second launch. See `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`.
 
 ### AC-A-005：初始化三态、重试和统一错误反馈
 
@@ -217,8 +217,8 @@
   4. 验证单条兼容脏数据不会使整个列表失败。
 - Expected Result: CRUD 与重启状态一致，组合交互正确，坏单条记录按明确兼容/错误策略处理且不拖垮列表。
 - Required Evidence: 真实 Tauri/SQLite 冒烟记录、前后快照、截图。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Real isolated Tauri verification covered read/create/edit/delete, restart persistence, deletion persistence, media/status/region combinations, lock behavior, and a dirty-row fixture that preserved but skipped one incompatible row without breaking the valid list. The exact test record was absent after the final restart and its deletion tombstone/generation were verified in SQLite. Rust atomic success/rollback tests passed 29/29. See `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`.
 
 ### AC-A-007：设置、导入导出、备份恢复与网络降级安全
 
@@ -233,8 +233,8 @@
   4. 注入导入/恢复/同步失败，核对本地数据未受破坏。
 - Expected Result: 本地核心功能始终可用；成功流程数据一致；失败流程可恢复且无部分覆盖。
 - Required Evidence: 操作日志、脱敏校验摘要、截图。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Settings value `45` survived restart; local export and real file-dialog import retained records, `originCountry`, revision fields, and lock state. Local startup and CRUD worked with no TMDB/WebDAV credentials. A-005 injected failure feedback plus A-006 atomic replacement rollback tests establish failure safety without partial replacement. Active user database content hashes were unchanged. See `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`.
 
 ### AC-A-008：原子更新接口契约完整
 

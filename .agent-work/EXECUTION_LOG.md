@@ -489,3 +489,16 @@
 - Data/process boundary: all three real database size/mtime/SHA-256 tuples matched before/after; no disk-content change detected; final A005-related process count 0.
 - Advisory: locked install reports the existing npm audit inventory of 1 low and 3 high; no dependency change was authorized or made.
 - Final status: TASK-A-005 ACCEPTED; AC-A-005 PASS. Work pauses here as requested; TASK-A-006 is not opened.
+
+---
+
+## TASK-A-006 Codex Execution and Acceptance
+
+- Date: 2026-07-29; BASE: `98990e09cb9d6ac7621595f7b61ef32d0f4f82ea`; implementation: `20df1f51b1a48acd22a600179d3a4c343ca0f54c`.
+- Scope: ten authorized Rust/frontend files implementing atomic local insert/delete/replace and compatibility-preserving import normalization; no dependency, lock, Tauri configuration, WebDAV, credential or user-data change.
+- Independent automated result: typecheck/lint/frontend build PASS; Node 14/14 PASS; Rust 29/29 PASS; strict Clippy PASS; release build PASS.
+- Real desktop result: isolated empty/current/v12/dirty databases passed startup, migration, CRUD, lock/filter, settings, export/import, delete and restart-persistence verification without credentials.
+- Data/process boundary: three active user database size/mtime/SHA-256 tuples matched their accepted references; no disk-content change detected; no A-006 application process remained.
+- Tooling incident: the desktop-control launch interface resolved generic `app.exe` to catalogued OneDrive Photos. Exact-path `Start-Process` launched the correct WatchTracker binary; future checks must verify PID and executable path before interaction.
+- Evidence: `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`.
+- Final status: TASK-A-006 ACCEPTED; AC-A-004, AC-A-006 and AC-A-007 PASS. TASK-A-007 remains unopened.

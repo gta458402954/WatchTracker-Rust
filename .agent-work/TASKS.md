@@ -772,7 +772,7 @@ ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c`
 
 - Phase: A
 - Owner: Codex
-- Status: READY
+- Status: ACCEPTED
 - Priority: P0 / Critical
 - Dependencies: TASK-A-002, TASK-A-003, TASK-A-004, TASK-A-005
 - Acceptance Criteria: AC-A-004, AC-A-006, AC-A-007
@@ -829,7 +829,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 ### Execution Result
 
-READY — based on accepted TASK-A-005 commit `98990e0`. Historical Zustand/Vitest/Playwright paths were replaced with the current `useWatchList`, Node native tests and real Tauri isolated verification. No production-code change is authorized until an isolated fixture or real-Tauri run reproduces a concrete acceptance gap.
+ACCEPTED — implementation `20df1f5` makes local insert/delete/replace state atomic and preserves imported compatibility fields. A detached verification worktree passed typecheck, lint, frontend build, Node 14/14, Rust 29/29, strict Clippy and release build. Real isolated empty/current/v12/dirty databases passed startup, migration, CRUD, lock/filter, settings, export/import, deletion and restart checks without credentials. The three active user database content hashes remained unchanged. See `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`.
 
 ## TASK-A-007：补齐稳定基线自动化回归矩阵
 
