@@ -721,8 +721,8 @@ cargo clippy --all-targets --all-features -- -D warnings
   - `src/shared/lib/feedback.ts`
   - `src/features/watchlist/components/RecordForm.tsx`
   - `src/features/settings/components/SettingsModal.tsx`
-  - `src/shared/lib/__tests__/feedback.test.ts`
-  - `src/shared/lib/__tests__/initialization.test.ts`
+  - `src/shared/lib/__tests__/feedback.test.mjs`
+  - `src/shared/lib/__tests__/initialization.test.mjs`
 
 ### Objective
 
@@ -743,7 +743,7 @@ npm ci
 npx tsc -b --noEmit
 npm run lint
 npm run build
-node --test src/shared/lib/__tests__/feedback.test.ts src/shared/lib/__tests__/initialization.test.ts
+node --test src/shared/lib/__tests__/feedback.test.mjs src/shared/lib/__tests__/initialization.test.mjs
 Set-Location src-tauri
 cargo test --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
