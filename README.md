@@ -1,79 +1,146 @@
 # WatchTracker
 
-WatchTracker 是一款基于 **Rust (Tauri)** 和 **React** 构建的轻量级、高性能影视观看追踪应用。它专注于提供极致的便携式体验，支持全自动元数据填充和多端同步。
+WatchTracker 是一款基于 React、TypeScript、Rust 和 Tauri 2 的 Windows 影视观看追踪应用。核心列表、设置、导入导出和 SQLite 数据库可完全离线使用；TMDB 元数据和 WebDAV 同步是可选能力。
 
-## ✨ 核心特性
+## 功能概览
 
-- **可选择的便携模式**：只有程序同级已经存在 `data/` 目录时，记录与设置才保存在该目录；否则使用系统应用数据目录。凭据采用便携兼容编码，请妥善保护数据目录。
-- **智能元数据填充**：集成 TMDB API，一键自动获取影视剧封面、年份、总集数等信息。
-- **WebDAV 云同步**：通过 HTTPS 与坚果云等 WebDAV 服务同步，支持时间戳合并、删除墓碑和冲突恢复。
-- **数据库维护**：内置数据库压缩（VACUUM）工具。
-- **网络适配**：支持手动配置网络代理，解决部分环境下的网络连接问题。
+- 电影、剧集、纪录片、综艺和动画记录管理。
+- 状态、地区、评分、搜索、锁定和排序筛选。
+- JSON 导入导出与本地 SQLite 持久化。
+- 可选 TMDB 元数据、海报下载和 WebDAV 同步。
+- 可选择的便携模式，以及统一的数据库、日志、海报和备份目录。
 
-## 🛠️ 技术栈
+## 已验证开发环境
 
-- **前端**：React, TypeScript, Tailwind CSS, Vite
-- **后端**：Rust, Tauri v2
-- **数据库**：SQLite (rusqlite)
+当前 Windows 基线已使用以下版本完成独立验证：
 
-## 🚀 快速开始
+- Windows 11 x64
+- Node.js `24.18.0`
+- npm `11.16.0`
+- Rust / Cargo `1.97.1`
+- Git `2.55.0.windows.3`
 
-### 开发环境准备
-1. 安装 [Node.js](https://nodejs.org/) (建议 v20+)
-2. 安装 [Rust](https://www.rust-lang.org/) 环境
-3. 安装 Tauri 依赖（参考 [Tauri 官网指南](https://tauri.app/start/prerequisites/)）
+建议使用 Node.js 24 LTS 与当前 stable Rust。构建 Tauri 前还需要安装 [Tauri 2 Windows prerequisites](https://v2.tauri.app/start/prerequisites/) 中列出的 Microsoft C++ Build Tools 和 WebView2。仓库提交了 `package-lock.json` 与 `src-tauri/Cargo.lock`；安装和 CI 必须使用锁文件。
 
-### 运行与编译
-```bash
-# 安装依赖
-npm install
+## 安装和运行
 
-# 启动开发模式
+```powershell
+git clone https://github.com/gta458402954/WatchTracker-Rust.git
+Set-Location WatchTracker-Rust
+npm ci
+```
+
+启动完整桌面应用：
+
+```powershell
 npm run tauri dev
+```
 
-# 编译生产版本 (便携版)
+仅启动 Vite 前端服务器：
+
+```powershell
+npm run dev
+```
+
+单独的 Vite 页面没有真实 Tauri IPC，主要用于前端构建和由 Playwright 注入严格 mock 的自动化测试；验证真实数据库必须使用 Tauri 或隔离构建产物。
+
+## 强制质量门禁
+
+首次运行 Playwright 前安装 Chromium：
+
+```powershell
+npx playwright install chromium
+```
+
+前端门禁：
+
+```powershell
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npx playwright test
+```
+
+Rust 门禁：
+
+```powershell
+Set-Location src-tauri
+cargo fmt -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --locked
+Set-Location ..
+```
+
+`npm run test` 使用 Node 原生测试；Playwright 使用隔离端口并把临时输出写入系统临时目录。不得用跳过、`only` 或降低 Clippy 警告等级来使门禁通过。
+
+## Windows 构建
+
+```powershell
 npm run tauri build
 ```
 
-## 💾 数据目录与恢复
+成功后检查实际生成的文件，而不是依赖历史文件名：
 
-应用启动时只解析一次数据根目录，数据库、日志、海报和本地备份共享该结果：
+```text
+src-tauri/target/release/app.exe
+src-tauri/target/release/bundle/msi/*.msi
+src-tauri/target/release/bundle/nsis/*-setup.exe
+```
 
-| 内容 | 相对数据根目录的位置 |
+仓库不跟踪本地 `.exe`、安装包、`dist/`、`dist-build/`、测试报告或 Rust `target/`。正式发布产物应由经过门禁的 CI run 或专门发布流程保存。
+
+## 数据目录
+
+应用启动时只解析一次数据根目录；数据库、日志、海报协议和本地备份共享同一个 `AppPaths` 结果。
+
+| 内容 | 数据根目录中的位置 |
 | --- | --- |
 | SQLite 数据库 | `watchtracker.db` |
 | 应用日志 | `app.log` |
 | 海报缓存与 `poster://` | `posters/` |
-| 本地备份目录 | `backups/` |
+| 本地备份 | `backups/` |
 
-- **便携模式**：启动前，在可执行文件旁手工创建 `data/` 目录。应用不会为了启用便携模式而自动创建这个目录。
-- **系统模式**：可执行文件旁没有 `data/` 目录时，使用操作系统为 `com.watchtracker.desktop` 分配的应用数据目录。
-- 如果可执行文件旁的 `data` 是普通文件，或者选定根目录及其 `posters/`、`backups/` 无法创建，应用会报告路径错误并停止启动，不会静默切换到另一份数据库。
+数据根目录选择规则：
 
-恢复数据前请完全退出 WatchTracker，并备份目标目录。恢复同一种模式时，将已备份的 `watchtracker.db`、`posters/` 和需要的 `backups/` 放回同一数据根目录；不要同时保留两份不确定来源的数据库。若要从系统模式切换到便携模式，请先退出应用，在程序旁创建 `data/`，再把系统数据目录中的内容复制进去后启动。
+1. **便携模式**：只有启动前已在可执行文件旁创建 `data/` 目录，应用才使用该目录。
+2. **系统模式**：可执行文件旁没有 `data/` 时，Windows 使用 `%APPDATA%\com.watchtracker.desktop`。
+3. 如果已选择的目录不可写，或 `data`、`posters`、`backups` 被普通文件占用，启动会报告错误；应用不会静默切换到另一份数据库。
 
+不要仅为了测试在真实发布程序旁临时创建或删除 `data/`。迁移、导入、恢复和故障注入必须使用隔离目录或数据库副本。
 
-## 📁 项目结构
+## 离线与凭据
+
+- 不配置 TMDB API Key 或 WebDAV 凭据时，启动、CRUD、筛选、设置和本地导入导出仍可使用。
+- TMDB 查询、海报下载和 WebDAV 同步在缺少凭据或网络失败时不可用，但不得清空本地列表。
+- WebDAV 凭据不应写入日志、测试夹具、截图或 Git。便携数据目录本身仍应视为敏感数据并妥善保护。
+
+## 备份与恢复
+
+恢复前完全退出 WatchTracker，并备份整个当前数据根目录。恢复同一种模式时，应把 `watchtracker.db`、`posters/` 和需要的 `backups/` 放回同一根目录。
+
+从系统模式切换到便携模式：
+
+1. 退出 WatchTracker。
+2. 在目标可执行文件旁创建 `data/`。
+3. 把 `%APPDATA%\com.watchtracker.desktop` 中需要的数据复制到新 `data/`。
+4. 确认复制完成后再启动。
+
+不要在应用运行时覆盖数据库，也不要同时保留来源不明的两份活动数据库。
+
+## 项目结构
 
 ```text
-src/
-├── app/                 # 应用装配与页面级样式
-├── features/            # 按业务域组织的界面与状态逻辑
-│   ├── dashboard/
-│   ├── settings/
-│   └── watchlist/
-└── shared/              # 跨业务域复用的组件、类型和基础设施
-    ├── components/
-    ├── lib/
-    └── types/
-
-src-tauri/               # Tauri / Rust 后端
-public/                  # 静态资源
-docs/                    # 架构说明与历史记录
+src/                     React/TypeScript 前端
+src-tauri/               Rust/Tauri 后端与 SQLite
+tests/                   Playwright 页面回归
+docs/                    架构、API 和历史文档
+.github/workflows/       GitHub Actions 门禁
+.agent-work/             需求、任务和验收记录
 ```
-## 📄 开源协议
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+原子 CRUD/同步边界详见 [docs/REFACTOR_ATOMIC_API.md](docs/REFACTOR_ATOMIC_API.md)。
 
----
-*Created by Mark*
+## 开源协议
+
+本项目采用 [MIT License](LICENSE)。
