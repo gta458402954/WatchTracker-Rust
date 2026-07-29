@@ -125,7 +125,7 @@
 - Expected Result: Gate R 前没有实施 Phase A；阶段 A 报告为 PASS（或用户书面接受指定条件的 CONDITIONAL PASS）前，没有 Phase B 任务进入 READY/IN_PROGRESS/IMPLEMENTED。
 - Required Evidence: baseline 报告、TASKS 状态、用户确认（如适用）。
 - Result: PASS
-- Evidence: Final correction `b0b68b9365b01a647d47455007ba5db03239890f` preserves the exact four-file correction scope and all protected files. The accepted evidence records the original and remediation BASE separately, raw process output, environment/worktree baselines, an empty synthetic test root, verified migration sources/dispositions and a failure matrix that preserves cargo-fmt FAIL and Tauri-dev raw exit 1. No business/configuration/database change occurred. See closed `REVIEW-A-001`.
+- Evidence: All Phase A criteria AC-A-001~017 are PASS. TASK-A-010 independently re-ran locked install and all nine required gates in detached worktree `D:\Project\Projects\WatchTracker-A010-Verify` at implementation `64e9a53`; all exited `0`. The second-build EXE rendered the real empty WatchTracker UI from a new portable data root, while all three real database SHA-256/length/mtime tuples remained unchanged. `.agent-work/ACCEPTANCE_REPORT_BASELINE.md` concludes PASS. Phase B remained BLOCKED throughout Phase A and still requires a separate Owner authorization.
 
 ## 阶段 A：恢复运行和稳定基线
 
@@ -388,8 +388,8 @@
   2. 检查每个结论均链接证据。
 - Expected Result: `.agent-work/ACCEPTANCE_REPORT_BASELINE.md` 真实、完整；未验证项未标 PASS。
 - Required Evidence: baseline 报告和证据索引。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: `.agent-work/ACCEPTANCE_REPORT_BASELINE.md` records the original failures, accepted fixes, all command outcomes, Windows artifacts, desktop/SQLite verification, evidence index, and remaining risks. Independent raw logs and review are under `.agent-work/evidence/review/TASK-A-010/` and `.agent-work/evidence/review/TASK-A-010-CODEX-REVIEW.md`.
 
 ## 阶段 B：地区动态化专项
 
@@ -407,7 +407,7 @@
 - Expected Result: 输出为稳定、去重的大写代码数组，完全符合 FR-01。
 - Required Evidence: Vitest 测试名称与日志。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-002：地区显示与未知地区正确
 
@@ -422,7 +422,7 @@
 - Expected Result: 三个中国地区互不合并；未知有统一哨兵且不与真实代码冲突。
 - Required Evidence: 单测和 UI 截图。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-003：动态选项范围、数量与失效选择正确
 
@@ -438,7 +438,7 @@
 - Expected Result: 只显示当前 mediaType/status 范围内实际存在项；无 0 数量和不可见幽灵状态；聚合无不必要重复全量计算。
 - Required Evidence: 纯函数/Hook/组件测试、E2E 截图。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-004：地区统计、筛选与稳定排序正确
 
@@ -453,7 +453,7 @@
 - Expected Result: 每记录每地区最多计一次，多国可贡献多个地区，排序完全稳定。
 - Required Evidence: Vitest/Playwright 日志和期望数据表。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 
@@ -468,7 +468,7 @@
 - Expected Result: `originCountry` 不丢多国代码；筛选用代码；自定义标签不被覆盖或误删；不修改 TMDB 搜索接口。
 - Required Evidence: mapper/classification/store 测试日志。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-006：旧数据、导入恢复同步兼容
 
@@ -483,7 +483,7 @@
 - Expected Result: 无破坏性迁移，新旧混合结果可预测一致。
 - Required Evidence: Vitest、Rust/IPC 或 E2E 集成日志。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-007：地区专项自动化与界面流程完整
 
@@ -498,7 +498,7 @@
 - Expected Result: REQUEST 7.2/7.3 全部场景有自动化覆盖；布局与可访问性无明显回归。
 - Required Evidence: 测试日志、截图/trace。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ### AC-B-008：地区专项回归与报告通过
 
@@ -513,7 +513,7 @@
 - Expected Result: 无现有筛选回归；所有命令通过；`.agent-work/ACCEPTANCE_REPORT_REGION.md` 结论真实完整。
 - Required Evidence: 全量日志、地区报告、证据索引。
 - Result: NOT RUN
-- Evidence: Blocked by AC-GATE-001
+- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
 ## 最终综合报告
 

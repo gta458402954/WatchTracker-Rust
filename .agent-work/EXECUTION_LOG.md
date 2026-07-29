@@ -579,3 +579,13 @@
 - SQLite final state: version `18`; empty/current/upgrade record counts `0/2/2`; upgrade retained both records and removed the synthetic legacy `category`/`sortOrder` columns.
 - Boundary: exact executable path was verified for each launch; final related-process count `0`; three real user database SHA-256/length/UTC-mtime tuples exactly match pre-test values. `src-tauri/Cargo.toml` remains Git stat/EOL noise only, with worktree blob equal to HEAD, and is excluded from the task commit.
 - Status: TASK-A-010 IMPLEMENTED. Independent clean detached Verification Pass is required before writing the baseline report, AC-A-017, or Gate A conclusion.
+
+### TASK-A-010 Independent Verification and Gate A Acceptance
+
+- Reviewed implementation: `64e9a533c98713026d1f60be562bc3e0fb55fccc`.
+- Verification environment: clean detached `D:\Project\Projects\WatchTracker-A010-Verify`; command evidence captured outside the worktree and copied under `.agent-work/evidence/review/TASK-A-010/`.
+- Independent automated result: locked install and all nine required commands exited `0`; Node 14/14, Playwright 3/3 and Rust 29/29 passed; rustfmt and strict Clippy passed.
+- Independent build: EXE `15,351,296` bytes, MSI `5,693,440` bytes and NSIS `3,992,857` bytes. All are unsigned. Matching functional output sizes do not imply byte-for-byte reproducibility.
+- Independent runtime: the second-build EXE launched from `D:\Project\Projects\WatchTracker-A010-Verify-Smoke`, rendered the real empty WatchTracker main interface, resolved its adjacent portable data root, and closed with zero residual process and zero port-4177 listener.
+- Final boundary: all three real user database SHA-256/length/UTC-mtime tuples still match the task pre-test snapshot. Verification worktree business content is clean; `Cargo.toml` has only stat/EOL noise with a blob identical to HEAD.
+- Final status: TASK-A-010 ACCEPTED; AC-A-017 PASS; AC-GATE-001 PASS. Phase A is accepted. Phase B remains unstarted and requires separate authorization.

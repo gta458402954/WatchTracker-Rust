@@ -1,0 +1,37 @@
+{
+  "reviewed_commit": "64e9a533c98713026d1f60be562bc3e0fb55fccc",
+  "verification_worktree": "D:\\Project\\Projects\\WatchTracker-A010-Verify",
+  "detached_head": true,
+  "all_required_commands_exit_zero": true,
+  "smoke": {
+    "root": "D:\\Project\\Projects\\WatchTracker-A010-Verify-Smoke",
+    "executable_sha256": "41EA168120017A84D46479D9AC0747F9CCE4009C53206D12370E9D65CD4EDFE1",
+    "database_exists": true,
+    "database_length": 32768,
+    "database_sha256": "19B4CC824A8ECFF08ED1539E22F13F546701E3F478F30A5E6B4C035B6563B934",
+    "final_process_count": 0
+  },
+  "final_port_4177_listener_count": 0,
+  "real_databases": [
+    {
+      "path": "C:\\Users\\markp\\AppData\\Roaming\\com.watchtracker.desktop\\watchtracker.db",
+      "hash_matches": true,
+      "length_matches": true,
+      "mtime_matches": true
+    },
+    {
+      "path": "D:\\Project\\Projects\\WatchTracker-Rust-Portable\\data\\watchtracker.db",
+      "hash_matches": true,
+      "length_matches": true,
+      "mtime_matches": true
+    },
+    {
+      "path": "D:\\Project\\Projects\\WatchTracker-Public-Release\\data\\watchtracker.db",
+      "hash_matches": true,
+      "length_matches": true,
+      "mtime_matches": true
+    }
+  ],
+  "cargo_toml_blob_matches_head": true,
+  "cargo_toml_blob": "abfc222ba249ee1cd6f6aab4fe551d60fbd8c467"
+}
