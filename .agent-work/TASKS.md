@@ -846,6 +846,8 @@ ACCEPTED — implementation `20df1f5` makes local insert/delete/replace state at
   - `playwright.config.ts`
   - `src-tauri/src/db_atomic_tests.rs`
   - `src-tauri/src/db.rs` 测试模块或专用测试模块
+  - `src-tauri/src/auth.rs`（仅关闭既有 `cargo fmt` 空白债务，不得改变凭据逻辑）
+  - `src-tauri/src/error.rs`（仅关闭既有 `cargo fmt` 空白债务，不得改变错误语义）
   - `src/shared/lib/__tests__/*.test.mjs`
   - `tests/fixtures/mockIpc.ts`
   - `tests/*.spec.ts`
