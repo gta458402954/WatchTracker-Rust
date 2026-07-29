@@ -891,18 +891,21 @@ ACCEPTED — implementation `8412d4f` establishes `npm test` and isolated Playwr
 ## TASK-A-008：同步 README、原子 API 文档、CI 与产物治理
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: READY
 - Priority: P0 / High
 - Dependencies: TASK-A-002, TASK-A-003, TASK-A-004, TASK-A-006, TASK-A-007
 - Acceptance Criteria: AC-A-012, AC-A-016
+- Execution Policy: Simplified workflow v1（文档/CI/产物治理 Implementation Pass + 独立 Verification Pass；禁止业务源码修改）
 - Expected Files:
   - `README.md`
   - `docs/REFACTOR_ATOMIC_API.md`
   - `.github/workflows/*`
   - `.gitignore`
+  - `WatchTracker-Portable.exe`（仅从 Git 跟踪和任务 worktree 移除；历史提交及外部发布副本可恢复）
   - `playwright-report/`（从 Git 跟踪中移除）
   - `dist-build/`（从 Git 跟踪中移除或明确非本地产物策略）
+  - `.agent-work/evidence/review/TASK-A-008-CODEX-REVIEW.md`
 
 ### Objective
 
@@ -912,7 +915,7 @@ ACCEPTED — implementation `8412d4f` establishes `npm test` and isolated Playwr
 
 - README 覆盖精确版本/前置、`npm ci`、Vite/Tauri dev、全部检查、build、数据目录、日志/海报/备份、离线/无凭据行为。
 - 原子 API 文档覆盖当前 DTO/命令、generation、commitId、事务不变量、错误、stale、安全重试、恢复及无分布式事务限制。
-- CI 使用锁文件，覆盖前端与 Rust 强制命令；Tauri Windows build 可分 job，但不能把未运行写成通过。
+- CI 使用锁文件，覆盖 Node-native frontend tests、Playwright 与 Rust 强制命令；Tauri Windows build 分 job，不能把未运行写成通过。
 - 移除跟踪的 `playwright-report/`、`test-results/` 和本地构建产物并更新 ignore；不删除用户源文件/需求文档。
 - 审计根目录历史一次性说明/脚本，保留有价值文档或在获得明确依据后处理，禁止擅自清理。
 
@@ -924,10 +927,12 @@ git check-ignore -v playwright-report/index.html test-results/example.txt dist/e
 npm run typecheck
 npm run lint
 npm run test
+npm run build
+npx playwright test
 Set-Location src-tauri
 cargo fmt -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --locked
 ```
 
 ### Required Evidence
@@ -938,7 +943,7 @@ cargo test
 
 ### Execution Result
 
-Pending
+READY — based on accepted TASK-A-007 HEAD `aa59ccb`. The current tree has no tracked `playwright-report/`, `test-results/`, `dist-build/`, `dist/`, or `src-tauri/target/`, but still tracks the 15,181,312-byte root build artifact `WatchTracker-Portable.exe`; removal is explicitly authorized. The atomic API document is absent and must be rebuilt from current registered Rust commands and TypeScript calls, with unimplemented commitId/stale/distributed-transaction capabilities documented as limitations rather than claimed features.
 
 ## TASK-A-009：生成并冒烟 Windows 可交付产物
 
