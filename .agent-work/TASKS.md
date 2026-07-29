@@ -834,15 +834,19 @@ ACCEPTED — implementation `20df1f5` makes local insert/delete/replace state at
 ## TASK-A-007：补齐稳定基线自动化回归矩阵
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: READY
 - Priority: P0 / High
 - Dependencies: TASK-A-003, TASK-A-005, TASK-A-006
 - Acceptance Criteria: AC-A-005~010, AC-A-013, AC-A-014
+- Execution Policy: Simplified workflow v1（测试基础设施 Implementation Pass + 独立 Verification Pass；不得借测试任务修改业务行为）
 - Expected Files:
+  - `package.json`
+  - `package-lock.json`
+  - `playwright.config.ts`
   - `src-tauri/src/db_atomic_tests.rs`
   - `src-tauri/src/db.rs` 测试模块或专用测试模块
-  - `src/shared/lib/__tests__/*`
+  - `src/shared/lib/__tests__/*.test.mjs`
   - `tests/fixtures/mockIpc.ts`
   - `tests/*.spec.ts`
 
@@ -853,7 +857,9 @@ ACCEPTED — implementation `20df1f5` makes local insert/delete/replace state at
 ### Implementation Requirements
 
 - 明确覆盖 7.1 的十项：系统字段、空更新、非法值、Rust 时间、全量回滚、不存在记录 Tombstone、migration 回滚、setting 错误、初始化失败、统一路径。
-- mock 必须匹配当前 IPC DTO 和错误语义；不能因 mock 宽松产生假通过。
+- Node 原生测试继续作为 `npm test` 的单元测试入口；不为统一命令而引入 Vitest。
+- Playwright mock 必须匹配当前 IPC DTO、返回值和错误语义；未知命令必须失败，不能因宽松 fallback 产生假通过。
+- 初始化失败页面必须自动断言错误提示、重试入口、正常空状态不出现，以及重试后恢复。
 - 不用 `skip/only`，不降低 lint/clippy。
 - 生成目录保持隔离且不进入提交。
 
@@ -863,11 +869,12 @@ ACCEPTED — implementation `20df1f5` makes local insert/delete/replace state at
 npm run typecheck
 npm run lint
 npm run test
+npm run build
 npx playwright test
 Set-Location src-tauri
 cargo fmt -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --locked
 ```
 
 ### Required Evidence
@@ -877,7 +884,7 @@ cargo test
 
 ### Execution Result
 
-Pending
+READY — based on accepted `TASK-A-006` documentation HEAD `2e77567`. Existing Rust/Node tests already cover REQUEST 7.1 items 1–8 and 10; this task must establish the missing `npm test`/Playwright gates, add direct initialization error/retry UI assertions, and publish a mechanical 7.1 mapping. No business source change is authorized.
 
 ## TASK-A-008：同步 README、原子 API 文档、CI 与产物治理
 
