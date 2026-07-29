@@ -33,28 +33,47 @@ test("reportOperationFailure does not log the raw error message", () => {
   ]);
 });
 
-test("an injected write failure produces one generic user notification", () => {
+test("key asynchronous failures produce generic user notifications", () => {
   const originalError = console.error;
   const capturedLogs = [];
   const capturedNotices = [];
+  const operations = [
+    ["Record.Add", "添加记录"],
+    ["Record.Edit", "更新记录"],
+    ["Record.Delete", "删除记录"],
+    ["Records.Import", "导入记录"],
+    ["Records.Restore", "恢复冲突记录"],
+    ["Sync.Run", "WebDAV 同步"],
+    ["Settings.Save", "保存设置"],
+  ];
   console.error = (...args) => capturedLogs.push(args);
 
   try {
-    const message = notifyOperationFailure(
-      "Record.Save",
-      "保存记录",
-      new Error("SQL: credentials and private path"),
-      (tone, notice) => capturedNotices.push({ tone, message: notice }),
-    );
-    assert.equal(message, "保存记录失败，请稍后重试。");
+    for (const [scope, action] of operations) {
+      const message = notifyOperationFailure(
+        scope,
+        action,
+        new Error("SQL: credentials and private path"),
+        (tone, notice) => capturedNotices.push({ tone, message: notice }),
+      );
+      assert.equal(message, `${action}失败，请稍后重试。`);
+    }
   } finally {
     console.error = originalError;
   }
 
-  assert.deepEqual(capturedNotices, [
-    { tone: "error", message: "保存记录失败，请稍后重试。" },
-  ]);
-  assert.deepEqual(capturedLogs, [
-    ["[Record.Save] operation failed", { errorCategory: "Error" }],
-  ]);
+  assert.deepEqual(
+    capturedNotices,
+    operations.map(([, action]) => ({
+      tone: "error",
+      message: `${action}失败，请稍后重试。`,
+    })),
+  );
+  assert.deepEqual(
+    capturedLogs,
+    operations.map(([scope]) => [
+      `[${scope}] operation failed`,
+      { errorCategory: "Error" },
+    ]),
+  );
 });
