@@ -771,19 +771,24 @@ ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c`
 ## TASK-A-006：验证并修复数据库升级、核心 CRUD 与离线流程
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: READY
 - Priority: P0 / Critical
 - Dependencies: TASK-A-002, TASK-A-003, TASK-A-004, TASK-A-005
 - Acceptance Criteria: AC-A-004, AC-A-006, AC-A-007
+- Execution Policy: Simplified workflow v1（独立 Implementation/Verification Pass；业务代码必须有隔离复现证据）
 - Expected Files:
-  - `src/store/useWatchListStore.ts`
+  - `src/features/watchlist/hooks/useWatchList.ts`
   - `src/shared/lib/database.ts`
   - `src/shared/lib/webdav.ts`
-  - `src/features/settings/components/*`
-  - `src-tauri/src/db*.rs`
-  - `tests/*`
-  - `.agent-work/evidence/*`
+  - `src/features/settings/components/SettingsModal.tsx`
+  - `src/shared/lib/__tests__/*.test.mjs`
+  - `src-tauri/src/db.rs`
+  - `src-tauri/src/db_atomic_tests.rs`
+  - `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`
+- Conditional Files:
+  - `src/app/App.tsx` — only if a real Tauri integration failure proves the page boundary must change.
+  - `src/shared/types/index.ts` — only if a reproduced import/schema compatibility defect requires a type correction.
 
 ### Objective
 
@@ -791,7 +796,7 @@ ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c`
 
 ### Implementation Requirements
 
-- 构造可审计的空库、当前库、旧库和单条脏数据夹具。
+- 构造可审计的空库、当前库、代表性旧库和单条兼容脏数据夹具；不得使用真实活动数据库执行 migration 或故障注入。
 - 在真实 Tauri IPC 上完成加载、新增、编辑、删除、重启持久化和组合筛选。
 - 设置、导入、导出、备份、恢复和 WebDAV 失败不得破坏本地数据；验证 `originCountry` 往返。
 - 无 TMDB/WebDAV 凭据和网络失败时本地 CRUD 正常。
@@ -800,12 +805,17 @@ ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c`
 ### Verification
 
 ```powershell
-npm run tauri dev
-npm run test
-npx playwright test
+npm ci
+npx tsc -b --noEmit
+npm run lint
+npm run build
+node --test src/shared/lib/__tests__/*.test.mjs
 Set-Location src-tauri
-cargo test
+cargo test --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
 ```
+
+另在预创建 executable-adjacent `data/` 的隔离目录中执行真实 Tauri 首次/当前/升级启动、CRUD、重启持久化、组合筛选和无凭据离线验证；失败后核对 SQLite checksum、行数与 schema/version。
 
 ### Required Evidence
 
@@ -815,7 +825,7 @@ cargo test
 
 ### Execution Result
 
-Pending
+READY — based on accepted TASK-A-005 commit `98990e0`. Historical Zustand/Vitest/Playwright paths were replaced with the current `useWatchList`, Node native tests and real Tauri isolated verification. No production-code change is authorized until an isolated fixture or real-Tauri run reproduces a concrete acceptance gap.
 
 ## TASK-A-007：补齐稳定基线自动化回归矩阵
 
