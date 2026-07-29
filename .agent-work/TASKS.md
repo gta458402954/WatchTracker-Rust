@@ -783,8 +783,11 @@ ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c`
   - `src/shared/lib/webdav.ts`
   - `src/features/settings/components/SettingsModal.tsx`
   - `src/shared/lib/__tests__/*.test.mjs`
+  - `src-tauri/src/commands.rs`
   - `src-tauri/src/db.rs`
+  - `src-tauri/src/db_atomic_crud.rs`
   - `src-tauri/src/db_atomic_tests.rs`
+  - `src-tauri/src/lib.rs`
   - `.agent-work/evidence/review/TASK-A-006-CODEX-REVIEW.md`
 - Conditional Files:
   - `src/app/App.tsx` — only if a real Tauri integration failure proves the page boundary must change.
