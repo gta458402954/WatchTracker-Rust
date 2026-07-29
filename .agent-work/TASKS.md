@@ -948,15 +948,17 @@ ACCEPTED — implementation `e44ff53` adds the current README, atomic local-data
 ## TASK-A-009：生成并冒烟 Windows 可交付产物
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: READY
 - Priority: P0 / Critical
 - Dependencies: TASK-A-002, TASK-A-004, TASK-A-006, TASK-A-007, TASK-A-008
 - Acceptance Criteria: AC-A-015
+- Execution Policy: Simplified workflow v1（Windows 交付产物 Implementation Pass + 独立 Verification Pass；真实用户数据库前后 Hash/大小/mtime 必须一致）
 - Expected Files:
   - `.agent-work/evidence/builds/*`
   - `.agent-work/evidence/logs/*`
   - `.agent-work/evidence/screenshots/*`
+  - `.agent-work/evidence/review/TASK-A-009-CODEX-REVIEW.md`
 
 ### Objective
 
@@ -967,6 +969,8 @@ ACCEPTED — implementation `e44ff53` adds the current README, atomic local-data
 - 运行完整 `npm run tauri build`，不复制旧产物冒充本轮结果。
 - 记录 exe/installer 路径、hash、大小和生成时间；产物保持 Git ignored。
 - 启动产物，验证主界面、数据目录、日志、海报、CRUD、重启持久化和无凭据本地可用。
+- 所有自动启动必须使用预创建 executable-adjacent `data/` 的任务专用产物副本；禁止启动会回退到真实 AppData 的原始 `target/release/app.exe`。
+- 自动化验证前后记录三处真实用户数据库的 SHA-256、大小和 mtime；任一变化立即停止并判定失败。
 - 如果失败，保存原始错误、环境探测和最小复现；不得因环境问题推断代码通过。
 
 ### Verification
