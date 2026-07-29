@@ -7,6 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc -b --noEmit",
+    "test": "node --test \"src/shared/lib/__tests__/*.test.mjs\"",
+    "test:e2e": "playwright test",
     "build": "tsc -b && vite build",
     "tauri": "tauri",
     "lint": "eslint .",
@@ -21,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.0",
     "@tauri-apps/cli": "^2.11.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
