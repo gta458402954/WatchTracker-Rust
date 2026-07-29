@@ -359,8 +359,8 @@
   3. 启动产物，完成最小 CRUD、重启持久化及数据目录/日志/海报检查。
 - Expected Result: 构建退出码 0且产物可运行；若仅签名/安装器环境阻塞，必须有可复核错误和代码/环境分类，不能推断通过。
 - Required Evidence: build 日志、产物清单/hash、运行截图和应用日志。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Implementation `b44d6db` plus independent detached verification. Two clean `npm run tauri build` sessions exited 0 and produced Release EXE/MSI/NSIS artifacts. The implementation Release EXE passed isolated real-window Create/Read/Update, movie-to-series classification, restart persistence, user-confirmed Delete, delete-after-restart and no-credential local use; a separately rebuilt EXE independently rendered from a second fresh portable data root. Seven actual-window JPEG screenshots, complete build/app logs, post-exit artifact manifests and exact real-database before/final tuples are under `.agent-work/evidence/{builds,logs,screenshots}/TASK-A-009/`; detailed review: `.agent-work/evidence/review/TASK-A-009-CODEX-REVIEW.md`. Artifacts are explicitly unsigned and builds are not byte-for-byte reproducible.
 
 ### AC-A-016：README、CI 与仓库产物治理达标
 

@@ -555,3 +555,13 @@
 - Launch-tool finding: generic desktop-control launch did not create a process. Exact-path PowerShell 7.6.3 `Start-Process` launched the intended binary; PID and executable path were verified before UI control.
 - Boundary: final related process count 0; the three real database SHA-256/length/mtime tuples exactly match the pre-test snapshot. No business source, dependency, schema or tracked artifact changed.
 - Status: TASK-A-009 IMPLEMENTED; independent Verification Pass is still required before AC-A-015 or the task can be accepted. TASK-A-010 remains unopened.
+
+### TASK-A-009 Independent Verification and Acceptance
+
+- Verification environment: clean detached `D:\Project\Projects\WatchTracker-A009-Verify` at implementation `b44d6db`.
+- Independent build: `npm ci` exit 0; `npm run tauri build` exit 0 in 166,295 ms; a second EXE/MSI/NSIS set was collected after command exit.
+- Reproducibility finding: EXE/MSI sizes matched the implementation build, NSIS differed by 225 bytes and all hashes differed. Functional build reproducibility PASS; byte-for-byte reproducibility is not claimed.
+- Independent runtime: exact-hash second-build EXE launched from `D:\Project\Projects\WatchTracker-A009-Verify-Smoke` with a fresh adjacent data root, rendered the empty WatchTracker main window, logged the isolated database/posters/backups paths and closed without residual process.
+- Evidence review: all seven screenshots were visually inspected as actual WatchTracker windows; JPEG signatures match `.jpg` extensions. Implementation screenshots prove Create, Update/reclassification, restart persistence, confirmed Delete and delete-after-restart.
+- Final boundary: all three real database SHA-256/length/UTC-mtime tuples still match the task pre-test snapshot; final related process count 0; Cargo.toml content Hash equals HEAD despite stat noise.
+- Final status: TASK-A-009 ACCEPTED; AC-A-015 PASS. Unsigned output and existing npm audit inventory remain explicit caveats. TASK-A-010 remains unopened.

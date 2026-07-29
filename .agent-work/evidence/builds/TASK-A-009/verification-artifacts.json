@@ -1,0 +1,23 @@
+[
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009-Verify\\src-tauri\\target\\release\\app.exe",
+    "Length": 15351296,
+    "LastWriteTimeUtc": "2026-07-29T16:05:48.2963065Z",
+    "SHA256": "559F83CB66BFAC8C8BB337AEA2C2A86376736F0484C013E3EE666DFAF97FEA2D",
+    "SignatureStatus": "NotSigned"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009-Verify\\src-tauri\\target\\release\\bundle\\msi\\WatchTracker_1.10.0_x64_en-US.msi",
+    "Length": 5693440,
+    "LastWriteTimeUtc": "2026-07-29T16:05:33.4220000Z",
+    "SHA256": "5BA1265DA295CAC68329C19A73FA324975CE9E9DBDD975DF30B0CA6EAC77AFB6",
+    "SignatureStatus": "NotSigned"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009-Verify\\src-tauri\\target\\release\\bundle\\nsis\\WatchTracker_1.10.0_x64-setup.exe",
+    "Length": 3992876,
+    "LastWriteTimeUtc": "2026-07-29T16:05:48.2619367Z",
+    "SHA256": "21F594CA2952D975C0175CDB0F6132ACBE0E88373119DE072C76831DF50FCCD4",
+    "SignatureStatus": "NotSigned"
+  }
+]
