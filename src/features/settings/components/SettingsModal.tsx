@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { MediaType, Status, WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync, updateRecord as updateRecordDb } from '../../../shared/lib/database';
-import { classifyTmdb, errorMessage, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
+import { classifyTmdb, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
+import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -15,6 +16,7 @@ interface SettingsModalProps {
   onRefresh?: () => unknown | Promise<unknown>;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
+  onNotify?: (tone: NoticeTone, message: string) => void;
 }
 
 const VALID_STATUSES: readonly Status[] = ['在看', '未看', '已看'];
@@ -63,7 +65,7 @@ function normalizeImportedRecord(value: unknown, index: number): WatchRecord {
 }
 export default function SettingsModal({
   onClose, records, onImport, onSync, onRestoreConflict, onRefresh,
-  syncInterval, onSyncIntervalChange
+  syncInterval, onSyncIntervalChange, onNotify
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
 
@@ -94,47 +96,58 @@ export default function SettingsModal({
   const [batchProgress, setBatchProgress] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
 
+  const showFailure = useCallback((
+    scope: string,
+    action: string,
+    error: unknown,
+    setStatus?: (message: string) => void,
+  ) => {
+    reportOperationFailure(scope, error);
+    const message = publicFailureMessage(action);
+    setStatus?.(`❌ ${message}`);
+    onNotify?.('error', message);
+  }, [onNotify]);
+
+  const showSuccess = useCallback((message: string) => {
+    onNotify?.('success', message);
+  }, [onNotify]);
+
   // 初始化加载设置
   useEffect(() => {
     async function loadInitial() {
-      // 1. 检查 WebDAV 状态
-      const creds = await getCreds();
-      setSaved(!!creds);
-      if (creds?.url) {
-        setWebdavUrl(creds.url);
-      }
+      try {
+        const creds = await getCreds();
+        setSaved(!!creds);
+        if (creds?.url) setWebdavUrl(creds.url);
 
-      // 2. 加载 TMDB Key
-      const encryptedTmdb = await getSettingAsync('tmdb_api_key');
-      if (encryptedTmdb) {
-        try {
+        const encryptedTmdb = await getSettingAsync('tmdb_api_key');
+        if (encryptedTmdb) {
           const decrypted = await safeDecrypt(encryptedTmdb);
           if (decrypted === '__ERR_DECRYPT_VERSION_MISMATCH__' || decrypted === '__ERR_DECRYPT_FAILED__') {
-            console.warn('[Settings] Legacy TMDB Key detected, reset required.');
             setTmdbSaved(false);
+            onNotify?.('warning', 'TMDB 密钥格式已过期，请重新保存。');
           } else if (decrypted) {
             setTmdbKey(decrypted);
             setTmdbSaved(true);
           }
-        } catch (e) {
-          console.error('[Settings] Failed to decrypt TMDB Key:', e);
         }
-      }
 
-      // 3. 加载代理设置
-      const savedProxy = await getSettingAsync('network_proxy');
-      if (savedProxy) setProxy(savedProxy);
+        const savedProxy = await getSettingAsync('network_proxy');
+        if (savedProxy) setProxy(savedProxy);
+      } catch (error) {
+        showFailure('Settings.Initialize', '读取设置', error, setSyncStatus);
+      }
     }
-    loadInitial();
-  }, []);
+    void loadInitial();
+  }, [onNotify, showFailure]);
 
   useEffect(() => {
     let cancelled = false;
     clearResolvedSyncConflicts(records)
       .then(conflicts => { if (!cancelled) setSyncConflicts(conflicts); })
-      .catch(error => console.error('[Settings] Failed to load sync conflicts:', error));
+      .catch(error => showFailure('Settings.LoadConflicts', '读取同步冲突', error));
     return () => { cancelled = true; };
-  }, [records]);
+  }, [records, showFailure]);
 
   // 保存 TMDB 密钥
   async function handleSaveTmdbKey() {
@@ -146,10 +159,10 @@ export default function SettingsModal({
       await setSettingAsync('tmdb_api_key', encrypted);
       setTmdbSaved(true);
       setSyncStatus('✅ TMDB 密钥已保存');
+      showSuccess('TMDB 密钥已保存。');
       setTimeout(() => setSyncStatus(''), 2000);
-    } catch (e) {
-      console.error('[Settings] Failed to save TMDB Key:', e);
-      setSyncStatus('❌ 保存失败');
+    } catch (error) {
+      showFailure('Settings.SaveTmdbKey', '保存 TMDB 密钥', error, setSyncStatus);
     }
   }
 
@@ -161,16 +174,22 @@ export default function SettingsModal({
       setTmdbKey('');
       setTmdbSaved(false);
       setSyncStatus('🧹 TMDB 密钥已清除');
+      showSuccess('TMDB 密钥已清除。');
       setTimeout(() => setSyncStatus(''), 2000);
-    } catch (e) {
-      alert('清除失败: ' + e);
+    } catch (error) {
+      showFailure('Settings.ClearTmdbKey', '清除 TMDB 密钥', error, setSyncStatus);
     }
   }
 
   // 保存代理设置
   async function handleSaveProxy() {
-    await setSettingAsync('network_proxy', proxy.trim());
-    setSyncStatus('✅ 代理设置已更新');
+    try {
+      await setSettingAsync('network_proxy', proxy.trim());
+      setSyncStatus('✅ 代理设置已更新');
+      showSuccess('代理设置已更新。');
+    } catch (error) {
+      showFailure('Settings.SaveProxy', '保存代理设置', error, setSyncStatus);
+    }
     setTimeout(() => setSyncStatus(''), 2000);
   }
 
@@ -181,8 +200,9 @@ export default function SettingsModal({
       await saveCreds({ username: username.trim(), password: password.trim(), url: webdavUrl.trim() });
       setSaved(true);
       setSyncStatus('✅ 凭据已保存');
+      showSuccess('WebDAV 凭据已保存。');
     } catch (error) {
-      setSyncStatus('❌ 保存失败: ' + errorMessage(error));
+      showFailure('Settings.SaveWebDav', '保存 WebDAV 凭据', error, setSyncStatus);
     }
     setTimeout(() => setSyncStatus(''), 3000);
   }
@@ -195,8 +215,9 @@ export default function SettingsModal({
       setPassword('');
       setSaved(false);
       setSyncStatus('🧹 凭据已清除');
+      showSuccess('WebDAV 凭据已清除。');
     } catch (error) {
-      setSyncStatus('❌ 清除失败: ' + errorMessage(error));
+      showFailure('Settings.ClearWebDav', '清除 WebDAV 凭据', error, setSyncStatus);
     }
     setTimeout(() => setSyncStatus(''), 3000);
   }
@@ -209,9 +230,12 @@ export default function SettingsModal({
       if (result.ok) {
         setSyncConflicts(await clearResolvedSyncConflicts(records));
         setSyncStatus(result.conflictCount ? `✅ 同步成功，已自动合并 ${result.conflictCount} 处冲突` : '✅ 同步成功');
-      } else setSyncStatus(`❌ 同步失败: ${result.error}`);
+        showSuccess('WebDAV 同步完成。');
+      } else {
+        showFailure('Settings.SyncWebDav', 'WebDAV 同步', result.error, setSyncStatus);
+      }
     } catch (error) {
-      setSyncStatus('❌ 出错: ' + errorMessage(error));
+      showFailure('Settings.SyncWebDav', 'WebDAV 同步', error, setSyncStatus);
     }
     setTimeout(() => setSyncStatus(''), 3000);
   }
@@ -219,20 +243,29 @@ export default function SettingsModal({
   async function handleRestoreConflict(conflict: SyncConflict) {
     if (!onRestoreConflict) return;
     if (!confirm(`确定恢复「${conflict.discarded.chineseName}」的被覆盖版本吗？恢复后会在下次同步时上传。`)) return;
-    await onRestoreConflict(conflict.discarded);
-    const remaining = syncConflicts.filter(item => item !== conflict);
-    await clearSyncConflicts();
-    // 保留未处理的记录。
-    if (remaining.length) {
-      await setSettingAsync('sync_conflicts', JSON.stringify(remaining));
+    try {
+      await onRestoreConflict(conflict.discarded);
+      const remaining = syncConflicts.filter(item => item !== conflict);
+      await clearSyncConflicts();
+      if (remaining.length) {
+        await setSettingAsync('sync_conflicts', JSON.stringify(remaining));
+      }
+      setSyncConflicts(remaining);
+      showSuccess('冲突记录已恢复。');
+    } catch (error) {
+      showFailure('Settings.RestoreConflict', '恢复冲突记录', error);
     }
-    setSyncConflicts(remaining);
   }
 
   async function handleClearConflicts() {
     if (!confirm('确定清空全部冲突记录吗？此操作不会删除任何影视条目。')) return;
-    await clearSyncConflicts();
-    setSyncConflicts([]);
+    try {
+      await clearSyncConflicts();
+      setSyncConflicts([]);
+      showSuccess('同步冲突记录已清空。');
+    } catch (error) {
+      showFailure('Settings.ClearConflicts', '清空同步冲突', error);
+    }
   }
 
   // 从云端导入
@@ -244,11 +277,12 @@ export default function SettingsModal({
         if (response.ok && Array.isArray(response.data)) {
           await onImport(response.data as WatchRecord[]);
           setImportStatus('✅ 导入成功');
+          showSuccess('云端记录已导入。');
         } else {
-          setImportStatus(`❌ 导入失败: ${response.error || '请检查账号密码'}`);
+          showFailure('Settings.ImportWebDav', '从云端导入', response.error, setImportStatus);
         }
       } catch (error) {
-        setImportStatus('❌ 出错: ' + errorMessage(error));
+        showFailure('Settings.ImportWebDav', '从云端导入', error, setImportStatus);
       }
       setTimeout(() => setImportStatus(''), 3000);
     }
@@ -256,9 +290,14 @@ export default function SettingsModal({
 
   // 保存同步频率
   async function handleSaveInterval() {
-    await setSettingAsync('sync_interval', localInterval.toString());
-    onSyncIntervalChange(localInterval);
-    setSyncStatus('✅ 自动同步频率已更新');
+    try {
+      await setSettingAsync('sync_interval', localInterval.toString());
+      onSyncIntervalChange(localInterval);
+      setSyncStatus('✅ 自动同步频率已更新');
+      showSuccess('自动同步频率已更新。');
+    } catch (error) {
+      showFailure('Settings.SaveSyncInterval', '保存同步频率', error, setSyncStatus);
+    }
     setTimeout(() => setSyncStatus(''), 3000);
   }
 
@@ -291,9 +330,9 @@ export default function SettingsModal({
           if (!Array.isArray(parsed)) throw new Error('无效的 JSON 格式');
           const completeData = parsed.map(normalizeImportedRecord);
           await onImport(completeData);
-          alert('成功导入 ' + completeData.length + ' 条记录');
+          showSuccess(`已导入 ${completeData.length} 条本地记录。`);
         } catch (error) {
-          alert('导入失败: ' + errorMessage(error));
+          showFailure('Settings.ImportLocal', '导入本地文件', error, setImportStatus);
         }
       };
       reader.readAsText(file);
@@ -316,8 +355,9 @@ export default function SettingsModal({
     try {
       await vacuumDbAsync();
       setVacuumStatus('✅ 数据库压缩完成');
+      showSuccess('数据库压缩完成。');
     } catch (error) {
-      setVacuumStatus('❌ 压缩失败: ' + errorMessage(error));
+      showFailure('Settings.Vacuum', '压缩数据库', error, setVacuumStatus);
     }
     setTimeout(() => setVacuumStatus(''), 3000);
   }
@@ -330,6 +370,7 @@ export default function SettingsModal({
     );
     if (!tmdbKey.trim()) {
       setBatchStatus('❌ 请先配置 TMDB API Key');
+      onNotify?.('warning', '请先配置 TMDB API Key。');
       return;
     }
     if (targets.length === 0) {
@@ -387,7 +428,7 @@ export default function SettingsModal({
           fail++;
         }
       } catch (error) {
-        console.error('[Settings] Failed to sync record', record.chineseName, error);
+        reportOperationFailure('Settings.BatchMetadataRecord', error);
         fail++;
       }
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -395,7 +436,13 @@ export default function SettingsModal({
 
     setBatchSyncing(false);
     setBatchStatus('🎉 同步完成！成功: ' + success + ', 失败: ' + fail);
-    await onRefresh?.();
+    if (fail > 0) onNotify?.('warning', `批量补全完成，${fail} 条记录失败。`);
+    else showSuccess('批量补全完成。');
+    try {
+      await onRefresh?.();
+    } catch (error) {
+      showFailure('Settings.RefreshAfterBatch', '刷新记录', error);
+    }
     setTimeout(() => setBatchStatus(''), 5000);
   }
 

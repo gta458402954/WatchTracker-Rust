@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useMemo, useEffect } from 'react';
+import { lazy, Suspense, useCallback, useState, useMemo, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord, MediaType, Status } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
@@ -8,6 +8,9 @@ import SettingsModal from '../features/settings/components/SettingsModal';
 import { hasCreds } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
 import { hasRegion, mediaTypeOf, RegionTag } from '../shared/lib/classification';
+import { initializeApp } from './initialization';
+import NotificationRegion, { useNotifications } from '../shared/components/NotificationRegion';
+import { publicFailureMessage, reportOperationFailure } from '../shared/lib/feedback';
 
 // New Split Components
 import Header from '../features/watchlist/components/Header';
@@ -16,6 +19,7 @@ import PosterWall from '../features/watchlist/components/PosterWall';
 
 type FilterStatus = Status | 'all';
 type RegionFilter = 'all' | RegionTag;
+type InitializationState = 'loading' | 'ready' | 'error';
 
 const Dashboard = lazy(() => import('../features/dashboard/components/Dashboard'));
 
@@ -26,10 +30,14 @@ function localDateString(date = new Date()): string {
 
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
+  const { notices, notify, dismiss } = useNotifications();
+  const handleBackgroundError = useCallback((message: string) => {
+    notify('warning', message);
+  }, [notify]);
   const {
     records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow, restoreRecord,
     isSyncPaused, toggleSyncPause
-  } = useWatchList(syncInterval);
+  } = useWatchList(syncInterval, handleBackgroundError);
 
   const [activeMediaType, setActiveMediaType] = useState<MediaType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -43,51 +51,65 @@ export default function App() {
   const [lockFilter, setLockFilter] = useState<'all' | 'locked' | 'unlocked'>('all');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string>('');
-  const [loading, setLoading] = useState(true);
+  const [initializationState, setInitializationState] = useState<InitializationState>('loading');
   const [viewMode, setViewMode] = useState<'list' | 'poster'>('list');
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [hasWebDAVCreds, setHasWebDAVCreds] = useState(false);
 
-  // 初始化并加载数据
-  useEffect(() => {
-    async function init() {
-      try {
-        setLoading(true);
-        const credsOk = await hasCreds();
-        setHasWebDAVCreds(credsOk);
-        const savedInterval = await invoke<string | null>('get_setting', { key: 'sync_interval' });
-        if (savedInterval) {
-          setSyncInterval(parseInt(savedInterval, 10));
-        }
-        await loadRecords();
-      } catch (e) {
-        console.error('[App] 加载数据失败:', e);
-      } finally {
-        setLoading(false);
-      }
+  const loadInitialState = useCallback(async () => {
+    try {
+      const result = await initializeApp({
+        readCredentials: hasCreds,
+        readSyncInterval: () => invoke<string | null>('get_setting', { key: 'sync_interval' }),
+        readRecords: loadRecords,
+      });
+      setHasWebDAVCreds(result.hasWebDAVCredentials);
+      setSyncInterval(result.syncInterval);
+      setInitializationState('ready');
+    } catch (error) {
+      reportOperationFailure('App.Initialize', error);
+      setInitializationState('error');
     }
-    init();
   }, [loadRecords]);
+
+  const retryInitialization = useCallback(() => {
+    setInitializationState('loading');
+    void loadInitialState();
+  }, [loadInitialState]);
+
+  useEffect(() => {
+    // Initialization crosses the Tauri IPC boundary; all state updates occur
+    // after the awaited reads complete.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadInitialState();
+  }, [loadInitialState]);
 
   // 手动同步到坚果云 WebDAV
   async function handleQuickSync() {
-    if (!(await hasCreds())) {
-      setSyncMsg('⚙️ 请先在设置里配置坚果云账号');
-      setTimeout(() => setSyncMsg(''), 3000);
-      return;
-    }
     setSyncing(true);
     setSyncMsg('');
     try {
+      if (!(await hasCreds())) {
+        const message = '请先在设置里配置 WebDAV 账号。';
+        setSyncMsg(`⚙️ ${message}`);
+        notify('warning', message);
+        return;
+      }
       const result = await syncNow();
       if (result.ok) {
         setSyncMsg('✅ 已同步');
+        notify('success', '同步完成。');
         setLastSync(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
       } else {
-        setSyncMsg(`❌ ${result.error ?? '同步失败'}`);
+        const message = publicFailureMessage('同步');
+        setSyncMsg(`❌ ${message}`);
+        notify('error', message);
       }
     } catch (error) {
-      setSyncMsg(`❌ ${error instanceof Error ? error.message : String(error)}`);
+      reportOperationFailure('App.QuickSync', error);
+      const message = publicFailureMessage('同步');
+      setSyncMsg(`❌ ${message}`);
+      notify('error', message);
     } finally {
       setSyncing(false);
       setTimeout(() => setSyncMsg(''), 3000);
@@ -149,29 +171,37 @@ export default function App() {
       data.platform = '';
     }
 
-    if (editingRecord) {
-      if (data.imdbId) {
-        const duplicate = records.find(r => r.imdbId === data.imdbId && r.id !== editingRecord.id);
-        if (duplicate) {
-          if (!window.confirm(`检测到已有相同 IMDb ID (${data.imdbId}) 的记录：【${duplicate.chineseName}】。\n是否继续修改？`)) {
-            return false;
+    try {
+      if (editingRecord) {
+        if (data.imdbId) {
+          const duplicate = records.find(r => r.imdbId === data.imdbId && r.id !== editingRecord.id);
+          if (duplicate) {
+            if (!window.confirm(`检测到已有相同 IMDb ID (${data.imdbId}) 的记录：【${duplicate.chineseName}】。\n是否继续修改？`)) {
+              return false;
+            }
           }
         }
-      }
-      await updateRecord(editingRecord.id, data);
-    } else {
-      if (data.imdbId) {
-        const duplicate = records.find(r => r.imdbId === data.imdbId);
-        if (duplicate) {
-          if (!window.confirm(`检测到已有相同 IMDb ID (${data.imdbId}) 的记录：【${duplicate.chineseName}】。\n是否继续添加？`)) {
-            return false;
+        await updateRecord(editingRecord.id, data);
+        notify('success', '记录已更新。');
+      } else {
+        if (data.imdbId) {
+          const duplicate = records.find(r => r.imdbId === data.imdbId);
+          if (duplicate) {
+            if (!window.confirm(`检测到已有相同 IMDb ID (${data.imdbId}) 的记录：【${duplicate.chineseName}】。\n是否继续添加？`)) {
+              return false;
+            }
           }
         }
+        await addRecord(data);
+        notify('success', '记录已添加。');
       }
-      await addRecord(data);
+      setEditingRecord(null);
+      return true;
+    } catch (error) {
+      reportOperationFailure('App.SaveRecord', error);
+      notify('error', publicFailureMessage(editingRecord ? '更新记录' : '添加记录'));
+      return false;
     }
-    setEditingRecord(null);
-    return true;
   }
 
   function handleCloseForm() {
@@ -181,7 +211,13 @@ export default function App() {
 
   async function handleDelete(id: string) {
     if (confirm('确定要删除这条记录吗？')) {
-      await deleteRecord(id);
+      try {
+        await deleteRecord(id);
+        notify('success', '记录已删除。');
+      } catch (error) {
+        reportOperationFailure('App.DeleteRecord', error);
+        notify('error', publicFailureMessage('删除记录'));
+      }
     }
   }
 
@@ -192,7 +228,12 @@ export default function App() {
   async function handleLockToggle(id: string) {
     const r = records.find(r => r.id === id);
     if (r) {
-      await updateRecord(id, { isLocked: !r.isLocked });
+      try {
+        await updateRecord(id, { isLocked: !r.isLocked });
+      } catch (error) {
+        reportOperationFailure('App.ToggleLock', error);
+        notify('error', publicFailureMessage('更新锁定状态'));
+      }
     }
   }
 
@@ -215,7 +256,12 @@ export default function App() {
         if (episodic) updates.progress = record.totalEpisodes ? '第' + record.totalEpisodes + '集' : '完结';
       }
     }
-    await updateRecord(id, updates);
+    try {
+      await updateRecord(id, updates);
+    } catch (error) {
+      reportOperationFailure('App.ChangeStatus', error);
+      notify('error', publicFailureMessage('更新观看状态'));
+    }
   }
 
   async function handleProgressChange(id: string, progress: string) {
@@ -227,11 +273,17 @@ export default function App() {
         updates.startDate = localDateString();
       }
     }
-    await updateRecord(id, updates);
+    try {
+      await updateRecord(id, updates);
+    } catch (error) {
+      reportOperationFailure('App.ChangeProgress', error);
+      notify('error', publicFailureMessage('更新进度'));
+    }
   }
 
   return (
     <div className="h-screen overflow-hidden bg-gray-50 flex flex-col">
+      <NotificationRegion notices={notices} onDismiss={dismiss} />
       {/* Top Header Bar */}
       <Header
         searchText={searchText}
@@ -268,7 +320,7 @@ export default function App() {
 
       {/* Content Main Area */}
       <main className="custom-scrollbar min-h-0 max-w-5xl mx-auto w-full flex-1 overflow-y-auto px-4 pb-8 mt-4">
-        {loading ? (
+        {initializationState === 'loading' ? (
           <div className="space-y-8 animate-pulse">
             {[1, 2].map(group => (
               <div key={group}>
@@ -280,6 +332,19 @@ export default function App() {
                 </div>
               </div>
             ))}
+          </div>
+        ) : initializationState === 'error' ? (
+          <div className="mx-auto mt-16 max-w-lg rounded-3xl border border-red-100 bg-white p-8 text-center shadow-sm" role="alert">
+            <span className="mb-4 block text-5xl" aria-hidden="true">⚠️</span>
+            <h1 className="text-xl font-black text-gray-900">无法读取本地数据</h1>
+            <p className="mt-2 text-sm leading-6 text-gray-500">当前列表没有被当作空数据处理。请确认数据目录可用后重试。</p>
+            <button
+              type="button"
+              onClick={retryInitialization}
+              className="mt-6 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            >
+              重试加载
+            </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-gray-400">
@@ -319,6 +384,7 @@ export default function App() {
           record={editingRecord}
           onSave={handleSave}
           onDelete={handleDelete}
+          onNotify={notify}
           onClose={handleCloseForm}
         />
       )}
@@ -338,6 +404,7 @@ export default function App() {
           onRefresh={loadRecords}
           syncInterval={syncInterval}
           onSyncIntervalChange={setSyncInterval}
+          onNotify={notify}
         />
       )}
 

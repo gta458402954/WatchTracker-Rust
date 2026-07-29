@@ -14,8 +14,9 @@ import {
   clearRecordDeletion,
   type SyncResult,
 } from '../../../shared/lib/webdav';
+import { publicFailureMessage, reportOperationFailure } from '../../../shared/lib/feedback';
 
-export function useWatchList(syncInterval = 30) {
+export function useWatchList(syncInterval = 30, onBackgroundError?: (message: string) => void) {
   const [records, setRecords] = useState<WatchRecord[]>([]);
   const [isSyncPaused, setIsSyncPaused] = useState(false);
   const recordsRef = useRef<WatchRecord[]>([]);
@@ -69,12 +70,16 @@ export function useWatchList(syncInterval = 30) {
     syncTimerRef.current = setTimeout(async () => {
       syncTimerRef.current = null;
       try {
-        if (await hasCreds()) await runSync();
+        if (await hasCreds()) {
+          const result = await runSync();
+          if (!result.ok) onBackgroundError?.(publicFailureMessage('自动同步'));
+        }
       } catch (error) {
-        console.error('[Sync] Automatic sync failed:', error);
+        reportOperationFailure('Sync.Automatic', error);
+        onBackgroundError?.(publicFailureMessage('自动同步'));
       }
     }, intervalRef.current * 1000);
-  }, [isSyncPaused, runSync]);
+  }, [isSyncPaused, onBackgroundError, runSync]);
 
   const toggleSyncPause = useCallback(() => {
     setIsSyncPaused(previous => {
