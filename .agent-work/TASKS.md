@@ -992,15 +992,19 @@ ACCEPTED — implementation `b44d6db` and clean detached Verification Pass both 
 ## TASK-A-010：执行阶段 A 全量门禁并提交验收材料
 
 - Phase: A
-- Owner: Antigravity
-- Status: DRAFT
+- Owner: Codex
+- Status: READY
 - Priority: P0 / Critical
 - Dependencies: TASK-A-007, TASK-A-008, TASK-A-009
 - Acceptance Criteria: AC-A-001~017, AC-GATE-001
+- Execution Policy: Simplified workflow v1（最终门禁 Implementation Pass + 干净 detached Verification Pass；九项命令顺序执行并保留原始退出码）
 - Expected Files:
   - `.agent-work/TASKS.md`
   - `.agent-work/EXECUTION_LOG.md`
+  - `.agent-work/ACCEPTANCE_CRITERIA.md`
+  - `.agent-work/ACCEPTANCE_REPORT_BASELINE.md`
   - `.agent-work/evidence/**/*`
+  - `.agent-work/evidence/review/TASK-A-010-CODEX-REVIEW.md`
 
 ### Objective
 
@@ -1010,6 +1014,7 @@ ACCEPTED — implementation `b44d6db` and clean detached Verification Pass both 
 
 - 所有命令从明确工作目录运行，记录退出码；失败不得覆盖或删除，修复后追加新日志。
 - 重复真实桌面三类启动、CRUD 重启、离线和构建产物冒烟。
+- 桌面与 Release 冒烟只能使用预创建 executable-adjacent `data/` 的 A-010 专用副本；真实用户数据库必须保存前后 SHA-256、大小和 UTC mtime 并完全一致。
 - 更新任务为 IMPLEMENTED，绝不标 ACCEPTED；不填写 PASS baseline 报告。
 - 最终 Git 状态列出所有改动与残余风险。
 
