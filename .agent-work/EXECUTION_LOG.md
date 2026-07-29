@@ -476,3 +476,16 @@
 - Universal controls removed: per-task JSON contracts, Runner sessions, temporary-index Safe Commit, Receipt, Attestation, tool hashes and governance red-team reruns.
 - Source: the user's policy patch remains preserved, uncommitted, in `D:\Project\Projects\WatchTracker-Workflow`; this branch integrates the same policy on top of the accepted A-004 baseline.
 - Current state: TASK-A-005 is READY.
+
+---
+
+## TASK-A-005 Codex Execution and Acceptance
+
+- Date: 2026-07-29; accepted BASE: `bd111f072c51fa9aa12a3feda93bcdc6ec29e9dd`.
+- Implementation: `96e682a`; failure-feedback follow-ups: `fb3149c`, `739ee2e`.
+- Scope: initialization state/retry, accessible notifications, generic public failure text, category-only logs and non-blocking poster warnings; no dependency, lock, schema, Rust, Tauri configuration or user-data change.
+- Independent automated result: typecheck/lint/frontend build PASS; Node 9/9 PASS; Rust 21/21 PASS; strict Clippy PASS.
+- UI: browser failure/retry showed the error alert and never the normal empty state; isolated real Tauri reached ready state and displayed `记录已添加。` after an isolated insert.
+- Data/process boundary: all three real database size/mtime/SHA-256 tuples matched before/after; no disk-content change detected; final A005-related process count 0.
+- Advisory: locked install reports the existing npm audit inventory of 1 low and 3 high; no dependency change was authorized or made.
+- Final status: TASK-A-005 ACCEPTED; AC-A-005 PASS. Work pauses here as requested; TASK-A-006 is not opened.

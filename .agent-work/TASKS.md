@@ -708,7 +708,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 - Phase: A
 - Owner: Codex
-- Status: READY
+- Status: ACCEPTED
 - Priority: P0 / High
 - Dependencies: TASK-A-001, TASK-A-004
 - Acceptance Criteria: AC-A-005
@@ -757,7 +757,16 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 ### Execution Result
 
-READY — user approved the simplified workflow for TASK-A-005 and later tasks on 2026-07-29; TASK-A-004 is ACCEPTED. Historical Zustand/Vitest/Playwright paths were replaced with the current `useWatchList`, Node 24 native TypeScript tests and real Tauri UI verification; no dependency expansion is authorized.
+ACCEPTED — implementation `96e682a` plus failure-feedback follow-ups `fb3149c` and `739ee2e`. Loading/ready/error, retry, unified accessible notifications, category-only logging and non-blocking poster failure are implemented. Detached frontend gates, Node 9/9, Rust 21/21 and strict Clippy passed; browser error/retry and isolated real-Tauri success-notification checks passed with unchanged real-database tuples and zero residual processes.
+
+### Codex Review
+
+<!-- BEGIN OWNER:CODEX TASK-A-005 REVIEW -->
+- Result: ACCEPTED. AC-A-005 PASS.
+- Independent verification worktree: `D:\Project\Projects\WatchTracker-A005-Verify`, detached at `739ee2e`.
+- Failure/retry never rendered the normal empty state; the isolated Tauri app reached ready state and showed `记录已添加。` after an isolated write.
+- Full details: `.agent-work/evidence/review/TASK-A-005-CODEX-REVIEW.md`.
+<!-- END OWNER:CODEX TASK-A-005 REVIEW -->
 
 ## TASK-A-006：验证并修复数据库升级、核心 CRUD 与离线流程
 

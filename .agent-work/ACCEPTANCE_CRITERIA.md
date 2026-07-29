@@ -201,8 +201,8 @@
   3. 分别注入新增、编辑、删除、导入、恢复、同步/设置失败。
 - Expected Result: 初始化失败不显示正常空列表；重试可恢复；所有异步失败有统一用户可见反馈和脱敏日志，本地既有数据不被清空。
 - Required Evidence: Vitest/Playwright 日志、截图、应用日志。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: Detached verification at `739ee2e` passed typecheck, lint, production build, Node 9/9, Rust 21/21 and strict Clippy. Browser failure/retry verification proved that initialization error never renders the normal empty state; isolated real-Tauri verification reached ready state and displayed `记录已添加。`. Injected add/edit/delete/import/restore/sync/settings failures produced generic notifications and category-only logs. See `.agent-work/evidence/review/TASK-A-005-CODEX-REVIEW.md`.
 
 ### AC-A-006：核心 CRUD、持久化与组合交互通过
 
