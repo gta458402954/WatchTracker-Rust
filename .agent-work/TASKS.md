@@ -715,13 +715,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 - Execution Policy: Simplified workflow v1（无需 JSON 合同、Runner、Safe Commit、Receipt 或 Attestation；保留独立 Implementation/Verification Pass）
 - Expected Files:
   - `src/app/App.tsx`
-  - `src/store/useWatchListStore.ts`
-  - `src/shared/components/*`
+  - `src/app/initialization.ts`
+  - `src/features/watchlist/hooks/useWatchList.ts`
+  - `src/shared/components/NotificationRegion.tsx`
+  - `src/shared/lib/feedback.ts`
   - `src/features/watchlist/components/RecordForm.tsx`
-  - `src/features/settings/components/*.tsx`
-  - `src/shared/lib/__tests__/*`
-  - `tests/fixtures/mockIpc.ts`
-  - `tests/*.spec.ts`
+  - `src/features/settings/components/SettingsModal.tsx`
+  - `src/shared/lib/__tests__/feedback.test.ts`
+  - `src/shared/lib/__tests__/initialization.test.ts`
 
 ### Objective
 
@@ -738,21 +739,25 @@ cargo clippy --all-targets --all-features -- -D warnings
 ### Verification
 
 ```powershell
-npm run typecheck
+npm ci
+npx tsc -b --noEmit
 npm run lint
-npm run test
-npx playwright test
+npm run build
+node --test src/shared/lib/__tests__/feedback.test.ts src/shared/lib/__tests__/initialization.test.ts
+Set-Location src-tauri
+cargo test --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
 ```
 
 ### Required Evidence
 
-- 初始化三态与各错误路径测试日志。
-- error/retry 和统一通知截图。
+- Node 原生测试、前端/Rust 门禁日志。
+- 真实 Tauri error/retry 和统一通知截图或交互记录。
 - 脱敏应用日志。
 
 ### Execution Result
 
-READY — user approved the simplified workflow for TASK-A-005 and later tasks on 2026-07-29; TASK-A-004 is ACCEPTED.
+READY — user approved the simplified workflow for TASK-A-005 and later tasks on 2026-07-29; TASK-A-004 is ACCEPTED. Historical Zustand/Vitest/Playwright paths were replaced with the current `useWatchList`, Node 24 native TypeScript tests and real Tauri UI verification; no dependency expansion is authorized.
 
 ## TASK-A-006：验证并修复数据库升级、核心 CRUD 与离线流程
 
