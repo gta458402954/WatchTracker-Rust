@@ -528,3 +528,17 @@
 - Boundary: no desktop app launch, schema, migration, runtime-path, WebDAV, credential or user-data change; three active user database hashes remained unchanged; related process and port counts were zero.
 - Evidence: `.agent-work/evidence/review/TASK-A-007-CODEX-REVIEW.md`.
 - Final status: TASK-A-007 ACCEPTED; AC-A-013 and AC-A-014 PASS. TASK-A-008 remains unopened.
+
+---
+
+## TASK-A-008 Codex Execution and Acceptance
+
+- Date: 2026-07-29; BASE: `aa59ccb`; authorization: `777e978`; implementation: `e44ff53`.
+- Scope: README, current atomic API guide, official-action CI, precise artifact ignore rules, and removal of the tracked root `WatchTracker-Portable.exe`; no business source, dependency, lockfile or database change.
+- Documentation: current record IPC/DTO/transaction behavior is mapped; commitId, stale-snapshot CAS, outbox and distributed SQLite/WebDAV transactions are explicitly unimplemented.
+- CI: frontend/Playwright, Windows Rust and dependent Windows bundle jobs; YAML lint PASS. No remote run is claimed before push.
+- Independent result: npm locked install; typecheck/lint/build PASS; Node 14/14; Playwright 3/3; rustfmt/strict Clippy PASS; Rust 29/29.
+- Artifact governance: tracked artifact query empty; report/dist/target/root portable/MSI/NSIS ignore probes all matched. The removed binary remains recoverable from commit `53a541c` and external releases.
+- Data/process boundary: no desktop app or database command; active database hashes unchanged; no port 4177 listener or related residual process.
+- Evidence: `.agent-work/evidence/review/TASK-A-008-CODEX-REVIEW.md`.
+- Final status: TASK-A-008 ACCEPTED; AC-A-012 and AC-A-016 PASS. TASK-A-009 remains unopened.

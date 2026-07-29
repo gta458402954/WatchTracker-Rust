@@ -312,8 +312,8 @@
   3. 检查是否明确 WebDAV PUT 与 SQLite 无分布式事务。
 - Expected Result: 不再描述废弃 IPC，不声称未经验证的“完美落实”，所有必需主题准确。
 - Required Evidence: 文档审查清单与代码引用。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: `docs/REFACTOR_ATOMIC_API.md` was compared with the five registered record commands, Rust DTO/transaction helpers and TypeScript callers. It documents allowed/rejected fields, generation/revision/Tombstone invariants, rollback/retry and the SQLite/WebDAV boundary, while explicitly marking commitId, expected-generation CAS, stale-snapshot errors, outbox and distributed transactions as unimplemented. See `.agent-work/evidence/review/TASK-A-008-CODEX-REVIEW.md`.
 
 ### AC-A-013：前端质量门禁全部通过
 
@@ -370,12 +370,12 @@
 - Preconditions: 最终命令与路径语义确定。
 - Verification Steps:
   1. 按 README 从安装到 dev/build 逐条验证。
-  2. 检查 CI 覆盖 typecheck/lint/Vitest/Playwright/Rust fmt/clippy/test/build。
+  2. 检查 CI 覆盖 typecheck/lint/Node 原生测试/Playwright/Rust fmt/clippy/test/build。
   3. 检查 Git 无一次性脚本、缓存、`playwright-report/`、`test-results/`、本地构建产物待提交。
 - Expected Result: 文档可复现；CI 配置有效；产物从跟踪中移除并被忽略，不误删用户源文件。
 - Required Evidence: README 执行日志、CI 配置检查、最终 git status/ignore check。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: README commands and path/offline/recovery statements were mechanically reviewed against accepted code and A-004/A-006 runtime evidence. The new three-job workflow covers locked frontend, Playwright, strict Rust and dependent Windows bundle jobs; YAML lint and every local quality command passed. No listed report/target/dist/root release artifact remains tracked and all ignore probes match. The workflow is not yet pushed, so no remote GitHub run is claimed. See `.agent-work/evidence/review/TASK-A-008-CODEX-REVIEW.md`.
 
 ### AC-A-017：阶段 A 独立验收报告完整
 
