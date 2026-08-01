@@ -60,7 +60,7 @@ Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；
 - `TASK-B-002`: Owner `Codex`; Status `ACCEPTED`; implementation `0f15a84` passed an independent clean detached Verification Pass.
 - `TASK-B-003`: Owner `Codex`; Status `ACCEPTED`; BASE `6202f85d86a6e0b8611e6135cec479306a8768fc`; implementation `72fa529` plus regression `c7a332e` passed an independent clean detached Verification Pass. AC-B-005/006 are PASS within the documented mock/build evidence boundaries.
 - `TASK-B-004`: Owner `Codex`; Status `ACCEPTED`; test-only implementation `c07b985` passed an independent clean detached Verification Pass.
-- `TASK-B-005`: Owner `Codex`; Status `IMPLEMENTED`; BASE `62cdd53` on the canonical integration branch. Full local gates and isolated release-desktop evidence are committed for independent review; no product change or acceptance conclusion was made in the Implementation Pass.
+- `TASK-B-005`: Owner `Codex`; Status `ACCEPTED`; implementation `0ee2cae` passed an independent clean detached Verification Pass with full frontend/Rust/Tauri gates and a second isolated real-desktop smoke. AC-B-008 and the region report are PASS; Gate B/remote CI remain pending.
 - Antigravity remains paused. Future Phase B Implementation Passes may update their task to `IMPLEMENTED` at most; only an independent Verification Pass may mark a task `ACCEPTED`.
 
 ## Phase B integration ownership

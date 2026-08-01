@@ -518,8 +518,8 @@
   3. Codex 填写地区报告并逐项链接证据。
 - Expected Result: 无现有筛选回归；所有命令通过；`.agent-work/ACCEPTANCE_REPORT_REGION.md` 结论真实完整。
 - Required Evidence: 全量日志、地区报告、证据索引。
-- Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Result: PASS
+- Evidence: TASK-B-005 implementation `0ee2cae` and its independent detached Verification Pass both completed the full frontend, Node, Playwright, Rust and Windows Tauri build gates. Independent results were audit 0, Node 36/36, Playwright 16/16 and Rust 29/29. Two separate newly created portable directories proved empty startup, dynamic France option/filter behavior, isolated SQLite placement and clean exit without real credentials or external service access. See `.agent-work/evidence/review/TASK-B-005-CODEX-REVIEW.md` and `.agent-work/ACCEPTANCE_REPORT_REGION.md`.
 
 ## Gate B
 
@@ -537,7 +537,7 @@
 - Expected Result: Phase B integration 分支可追溯、无未验收任务、无隔离分支污染、全部本地与远端门禁通过，具备合并 `main` 的资格。
 - Required Evidence: B-001~B-005 review、`.agent-work/ACCEPTANCE_REPORT_REGION.md`、最终 PR 检查、CI 链接/结果、数据与进程证据、最终 Git 清单。
 - Result: NOT RUN
-- Evidence: TASK-B-001/B-002 are accepted. TASK-B-003~B-005, the final PR and remote CI remain pending.
+- Evidence: TASK-B-001~B-005, AC-B-001~008 and the region report are PASS locally. The unique final Phase B PR has not been opened and its required remote Frontend/Playwright, Rust and Windows Tauri checks have not run, so Gate B remains NOT RUN and the branch is not yet eligible to merge into `main`.
 
 ## 最终综合报告
 

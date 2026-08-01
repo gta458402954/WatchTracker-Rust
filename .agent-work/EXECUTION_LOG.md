@@ -739,3 +739,15 @@
 - Real-window smoke passed: empty startup, add `法国测试影片` with content tag `法国`, dynamic `法国 1` option, active France filter retaining the record, and clean exit. Screenshots are committed under `.agent-work/evidence/screenshots/TASK-B-005/`.
 - The app created only the isolated `data/watchtracker.db`, `data/app.log`, `data/backups/` and `data/posters/`. No real user database, credentials, TMDB or WebDAV endpoint was accessed; no residual copied-app process remained.
 - Status: IMPLEMENTED, not accepted. AC-B-008, the region report, Gate B and final report remain reviewer-owned and NOT RUN pending an independent clean Verification Pass.
+
+---
+
+## 2026-08-01 — TASK-B-005 independent Verification Pass
+
+- Reviewed committed implementation `0ee2cae` from clean detached `D:\Project\Projects\WatchTracker-B005-Verify`; no implementation worktree dependency or target directory was reused.
+- Fresh install: 267 packages, audit 0. Frontend build (608 modules), typecheck and lint passed; Node passed 36/36; Playwright passed 16/16.
+- Windows Tauri release build produced EXE/MSI/NSIS. Rust fmt and clippy with warnings denied passed; locked Rust tests passed 29/29. `git diff --check` passed.
+- The verifier build was copied to a second new portable directory, `D:\Project\Projects\WatchTracker-B005-Verify-Smoke`, with a pre-created empty adjacent `data/`. It independently passed empty startup, `法国独立验收影片` creation, immediate `法国 1` option/filter behavior and clean exit.
+- Verifier postflight: zero related processes, zero port-4177 listeners, a clean detached worktree after refreshing a same-blob Cargo.toml stat/line-ending artifact, and only isolated app-managed database/log/poster/backup paths.
+- Git ancestry confirmed accepted B-001/B-002 anchors and the formal B-003/B-004/B-005 chain; quarantined commits `dc8308f` and `0f44b76` are not ancestors.
+- Result: TASK-B-005 ACCEPTED; AC-B-008 PASS; region report PASS. Gate B, the final Phase B PR, remote CI and the comprehensive report remain pending and are not implied by this acceptance.

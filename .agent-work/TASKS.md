@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001`~`TASK-B-004` 已验收；`TASK-B-005` 已从正式集成线单独签发。
+- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 和 `TASK-B-001`~`TASK-B-005` 均已由 Codex 独立验收。Phase B 本地验收已完成；唯一最终 PR、远端 CI、Gate B 和综合报告仍待执行。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 - Phase B 后续工作以 `codex/phase-b-integration` 为唯一集成线；B-003~B-005 必须从最新已验收 integration HEAD 逐项签发，整个 Phase B 完成并通过 Gate B 后才向 `main` 提交一次完整 PR。
@@ -16,7 +16,7 @@
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
-- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001`~`TASK-B-004` 已 `ACCEPTED`，`TASK-B-005` 已 `READY`。
+- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001`~`TASK-B-005` 均已 `ACCEPTED`；最终 PR、远端 CI、Gate B 和综合报告仍待执行。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text
@@ -1417,7 +1417,7 @@ ACCEPTED — Test-only implementation `c07b985` was independently reviewed from 
 
 - Phase: B
 - Owner: Codex
-- Status: IMPLEMENTED
+- Status: ACCEPTED
 - Priority: P1 / Critical
 - Dependencies: AC-GATE-001 PASS, TASK-B-001~TASK-B-004 ACCEPTED
 - BASE: `62cdd53` (`codex/phase-b-integration` after independent B-004 acceptance)
@@ -1474,7 +1474,7 @@ cargo test --locked
 
 ### Execution Result
 
-IMPLEMENTED — From clean `codex/task-b-005@15c4739`, the Implementation Pass completed a fresh audit-zero install; frontend build/typecheck/lint; Node 36/36; Playwright 16/16; Rust fmt/clippy/test 29/29; Windows Tauri EXE/MSI/NSIS build; and an isolated portable desktop smoke. The release EXE started beside a newly created empty `data/`, created a single record tagged `法国`, immediately exposed the dynamic `法国 1` option, retained the record under that filter, and exited with no residual process. Only `D:\Project\Projects\WatchTracker-B005-Smoke\data\watchtracker.db` was created; no real user database, credential, TMDB or WebDAV endpoint was accessed. Evidence is under `.agent-work/evidence/{tests,builds,screenshots}/TASK-B-005/`. This is implementation evidence only; AC-B-008, the region report and Gate B remain NOT RUN pending an independent clean Verification Pass.
+ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Project\Projects\WatchTracker-B005-Verify`. A fresh `npm ci` reported audit 0; frontend build/typecheck/lint passed; Node passed 36/36; Playwright passed 16/16; Rust fmt/clippy/test passed with 29/29 tests; Windows Tauri EXE/MSI/NSIS build and `git diff --check` passed. A second newly built EXE was copied to a different fresh portable directory and independently repeated empty startup, creation of a `法国` record, immediate `法国 1` option/filter behavior and clean exit. Related process and port-4177 counts were zero; both implementation and verifier data stayed inside their new adjacent `data/` directories. AC-B-008 and `.agent-work/ACCEPTANCE_REPORT_REGION.md` are PASS. Review: `.agent-work/evidence/review/TASK-B-005-CODEX-REVIEW.md`. This acceptance does not mark Gate B or the comprehensive report PASS; the unique final PR and remote CI remain pending.
 
 ---
 
