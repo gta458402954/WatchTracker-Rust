@@ -622,3 +622,13 @@
 - Boundary: no package/lockfile, UI component, TMDB, import/export, WebDAV, Rust, schema, database or DEFERRED change. No application was launched against real user data.
 - Evidence: `.agent-work/evidence/tests/TASK-B-001/implementation-summary.md`.
 - Status: IMPLEMENTED; not accepted. Independent Verification Pass remains mandatory.
+
+### TASK-B-001 Independent Verification and Acceptance
+
+- Reviewed implementation: `b70aa24` from clean detached `D:\Project\Projects\WatchTracker-B001-Verify`.
+- Scope review: only the three authorized domain/test files plus task/evidence documentation changed; no dependency, UI, TMDB, Rust, schema, database or DEFERRED scope entered the implementation.
+- Independent result: `npm ci` audit 0; region Node tests 12/12; complete Node tests 26/26; typecheck/lint/build PASS; baseline Playwright 3/3; three extra read-only boundary assertions PASS.
+- Evidence integrity: one initial ad-hoc boundary command failed at JavaScript parsing because of shell quoting and did not execute product code; the corrected equivalent command exited 0 and is the authoritative boundary result.
+- AC disposition: AC-B-001 PASS. AC-B-002 domain display/unknown and AC-B-004 aggregation/order portions are verified, but both overall criteria retain later UI/combined-filter work and are not prematurely marked PASS.
+- Final status: TASK-B-001 ACCEPTED. B-002 through B-005 remain blocked pending separate authorization.
+- Review: `.agent-work/evidence/review/TASK-B-001-CODEX-REVIEW.md`.

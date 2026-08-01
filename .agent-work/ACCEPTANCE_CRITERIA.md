@@ -406,8 +406,8 @@
   4. 保留未映射但格式有效两位代码。
 - Expected Result: 输出为稳定、去重的大写代码数组，完全符合 FR-01。
 - Required Evidence: 当前稳定基线的 Node 原生单元测试名称与日志。
-- Result: NOT RUN
-- Evidence: Gate A and protected-main CI are PASS; TASK-B-001 is separately authorized but has not yet been implemented or verified.
+- Result: PASS
+- Evidence: TASK-B-001 implementation `b70aa24` plus independent clean detached Verification Pass. Node tests cover trim/case/two comma forms/dedup, placeholders/malformed values, alias-before-validation `UK -> GB`, CN/HK/TW separation, legacy labels and unmapped valid codes. See `.agent-work/evidence/review/TASK-B-001-CODEX-REVIEW.md`.
 
 ### AC-B-002：地区显示与未知地区正确
 
@@ -422,7 +422,7 @@
 - Expected Result: 三个中国地区互不合并；未知有统一哨兵且不与真实代码冲突。
 - Required Evidence: 单测和 UI 截图。
 - Result: NOT RUN
-- Evidence: Gate A and protected-main CI are PASS; the B-001 domain portion is authorized but has not yet been implemented or verified. UI evidence remains outside B-001.
+- Evidence: TASK-B-001 independently verifies fixed names, unmapped-code self display and a collision-free unknown sentinel through the single `regionCodesOf` path. The UI screenshot portion remains NOT RUN and keeps the overall criterion open for B-002/B-004.
 
 ### AC-B-003：动态选项范围、数量与失效选择正确
 
@@ -453,7 +453,7 @@
 - Expected Result: 每记录每地区最多计一次，多国可贡献多个地区，排序完全稳定。
 - Required Evidence: Node 原生单元测试、Playwright 日志和期望数据表。
 - Result: NOT RUN
-- Evidence: Gate A and protected-main CI are PASS; the B-001 aggregation/sorting portion is authorized but has not yet been implemented or verified. Combined-filter UI evidence remains outside B-001.
+- Evidence: TASK-B-001 independently verifies per-record deduplication, multi-country contribution and exact preferred/count/name/code/unknown-last ordering. Combined filters and region Playwright scenarios remain NOT RUN, so the overall criterion stays open for B-002/B-004.
 
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 
