@@ -57,4 +57,4 @@ Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；
 - `TASK-B-001`: Owner `Codex`; Status `ACCEPTED`; implementation `b70aa24` passed an independent clean detached Verification Pass.
 - `TASK-B-002`: Owner `Codex`; Status `READY`; BASE `b6f30912e5c4f592d8abb7cd2c73a00bdeaa4e8d`. Authorization is limited to the files and AC portions in `TASKS.md`; this governance commit contains no implementation.
 - `TASK-B-003`~`TASK-B-005`: not authorized for implementation; remain `BLOCKED` until their dependencies are accepted and Codex separately reassigns them.
-- Antigravity remains paused. The B-001 Implementation Pass cannot mark the task `ACCEPTED`; an independent Verification Pass is required.
+- Antigravity remains paused. The TASK-B-002 Implementation Pass may update the task to `IMPLEMENTED` at most; only an independent Verification Pass may mark it `ACCEPTED`.

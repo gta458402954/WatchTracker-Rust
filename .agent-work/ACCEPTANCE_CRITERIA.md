@@ -428,12 +428,12 @@
 ### AC-B-003：动态选项范围、数量与失效选择正确
 
 - Requirement: FR-03、NFR 6.1。
-- Task Allocation: TASK-B-002 负责 records、mediaType、status、动态选项/数量和失效选择的实现与直接验证。
+- Task Allocation: TASK-B-002 负责证明任意 records 集合发生新增、编辑、删除或整体替换时，地区 UI 会根据新的 records/mediaType/status 重新计算动态选项、数量和失效选择。真实本地导入、恢复和 WebDAV 同步的端到端验证不属于 TASK-B-002，留给 TASK-B-003 实现和 TASK-B-004 综合验证；TASK-B-002 不得修改导入、恢复或 WebDAV 代码。
 - Priority: Must
 - Verification Type: Automated / Manual
 - Preconditions: Gate A 通过，混合数据夹具。
 - Verification Steps:
-  1. 在新增、编辑、删除、导入、同步后检查选项更新。
+  1. 通过受控 records 集合的新增、编辑、删除和整体替换，检查地区 UI 根据新的 records/mediaType/status 更新；不在本任务中执行真实本地导入、恢复或 WebDAV 同步端到端流程。
   2. 切换 mediaType/status，核对选项和数量。
   3. 改变评分、搜索、锁定、排序、activeRegion，核对基础集合/数量不变。
   4. 使当前地区消失，核对自动回到 all；空记录无地区栏。

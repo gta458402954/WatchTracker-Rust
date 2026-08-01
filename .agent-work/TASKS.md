@@ -1119,7 +1119,7 @@ ACCEPTED — Implementation `b70aa24` was reviewed from clean detached HEAD. Ind
 - BASE: `b6f30912e5c4f592d8abb7cd2c73a00bdeaa4e8d` (`origin/main` at authorization)
 - Acceptance Criteria:
   - `AC-B-002`：仅承担剩余 UI 显示与筛选部分；B-001 已验收的领域显示规则不重复实现。
-  - `AC-B-003`：承担 records/mediaType/status 动态选项、数量与失效选择行为。
+  - `AC-B-003`：承担任意 records 集合新增、编辑、删除或整体替换后，基于新 records/mediaType/status 重算动态选项、数量与失效选择的行为；真实本地导入、恢复和 WebDAV 同步的端到端验证不在本任务范围内。
   - `AC-B-004`：仅承担组合筛选 UI 部分；B-001 已验收的聚合与排序领域规则不重复实现。
 - Execution Policy: Codex simplified workflow; Implementation Pass may end at `IMPLEMENTED` only, followed by an independent Verification Pass. This authorization does not include AC-B-007 or any later Phase B task.
 - Expected Files:
@@ -1131,6 +1131,9 @@ ACCEPTED — Implementation `b70aa24` was reviewed from clean detached HEAD. Ind
   - `tests/regions.spec.ts`
   - `tests/fixtures/mockIpc.ts`
   - `.agent-work/evidence/tests/TASK-B-002/*`
+  - `.agent-work/TASKS.md` — 仅允许更新 TASK-B-002 的 Status、Execution Result 和 Implementation 记录。
+  - `.agent-work/OWNERSHIP.md` — 仅允许更新 TASK-B-002 当前阶段状态。
+  - `.agent-work/EXECUTION_LOG.md` — 仅允许追加 TASK-B-002 Implementation Pass 的事实摘要。
 - Conditional Files:
   - `src/features/settings/components/SettingsModal.tsx` — 仅允许修改地区来源说明文字；不得修改设置行为、导入、恢复、同步或 TMDB 实现。
 - Forbidden Changes:
@@ -1154,6 +1157,8 @@ ACCEPTED — Implementation `b70aa24` was reviewed from clean detached HEAD. Ind
 - 未知哨兵和未映射 ISO code 必须能够显示、选择和筛选；不得创建第二套国家解析、名称映射、聚合或排序实现。
 - 多地区布局使用 wrap 或横向滚动，不遮挡其他控件；保留明确选中态和 `aria-pressed`。
 - `SettingsModal.tsx` 如需修改，只能将说明文字改为 originCountry 主源、contentTags 仅旧数据回退。
+- 任意 records 集合发生新增、编辑、删除或整体替换时，地区 UI 必须根据新的 records/mediaType/status 重新计算；可通过受控 records 替换直接验证该反应性。
+- 真实本地导入、恢复和 WebDAV 同步的端到端验证留给 TASK-B-003 实现和 TASK-B-004 综合验证；TASK-B-002 不得修改导入、恢复或 WebDAV 代码。
 - 沿用 Node 原生测试和现有 Playwright，不引入新测试框架或依赖。
 
 ### Verification
