@@ -14,8 +14,13 @@ if (status) {
 const commit = git('rev-parse', '--short=8', 'HEAD');
 console.log(`正在从 Git 提交 ${commit} 构建便携版。`);
 
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const result = spawnSync(npmCommand, ['run', 'tauri', 'build'], {
+const npmCli = process.env.npm_execpath;
+if (!npmCli) {
+  console.error('无法定位当前 npm CLI，便携版打包已取消。');
+  process.exit(1);
+}
+
+const result = spawnSync(process.execPath, [npmCli, 'run', 'tauri', 'build'], {
   stdio: 'inherit',
   env: { ...process.env, WATCHTRACKER_GIT_COMMIT: commit },
 });
