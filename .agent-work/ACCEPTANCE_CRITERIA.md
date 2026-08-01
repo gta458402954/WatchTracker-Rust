@@ -422,8 +422,8 @@
   3. 核对无可识别来源显示/筛选“未知地区”。
 - Expected Result: 三个中国地区互不合并；未知有统一哨兵且不与真实代码冲突。
 - Required Evidence: 单测和 UI 截图。
-- Result: NOT RUN
-- Evidence: TASK-B-001 independently verifies fixed names, unmapped-code self display and a collision-free unknown sentinel through the single `regionCodesOf` path. TASK-B-002 is responsible only for the remaining UI display/filter evidence. Result remains NOT RUN; no UI PASS is claimed by contract authorization.
+- Result: PASS
+- Evidence: TASK-B-001 independently verified fixed names, unmapped-code self display and the collision-free unknown sentinel. TASK-B-002 implementation `0f15a84` and its clean detached Verification Pass verified code-keyed UI display/filter behavior for CN/HK/TW, GB/UK, unknown and unmapped codes, with Playwright 8/8. See `.agent-work/evidence/review/TASK-B-002-CODEX-REVIEW.md`.
 
 ### AC-B-003：动态选项范围、数量与失效选择正确
 
@@ -440,7 +440,7 @@
 - Expected Result: 只显示当前 mediaType/status 范围内实际存在项；无 0 数量和不可见幽灵状态；聚合无不必要重复全量计算。
 - Required Evidence: 纯函数/Hook/组件测试、E2E 截图。
 - Result: NOT RUN
-- Evidence: Gate A and TASK-B-001 are accepted; TASK-B-002 is authorized but not implemented. Result remains NOT RUN.
+- Evidence: TASK-B-002 independently verifies its allocated portion: mediaType/status-scoped dynamic options, counts independent of search/lock/sort/active region, add/edit/delete and controlled-record replacement, immediate invalid-selection fallback, persistent state cleanup and empty-data omission. Real local import, restore and WebDAV end-to-end evidence remains for TASK-B-003/B-004, so the overall criterion remains NOT RUN.
 
 ### AC-B-004：地区统计、筛选与稳定排序正确
 
@@ -456,7 +456,7 @@
 - Expected Result: 每记录每地区最多计一次，多国可贡献多个地区，排序完全稳定。
 - Required Evidence: Node 原生单元测试、Playwright 日志和期望数据表。
 - Result: NOT RUN
-- Evidence: TASK-B-001 independently verifies per-record deduplication, multi-country contribution and exact preferred/count/name/code/unknown-last ordering. TASK-B-002 combined-filter UI evidence remains NOT RUN, so the overall criterion stays open; no PASS is claimed by contract authorization.
+- Evidence: TASK-B-001 independently verifies per-record deduplication, multi-country contribution and exact preferred/count/name/code/unknown-last ordering. TASK-B-002 independently verifies code-based UI filtering and mediaType/status/search/lock combinations, aliases, unknown/unmapped codes and stable option counts. TASK-B-004 still owns the final REQUEST 7.2/7.3 matrix, so the overall criterion remains NOT RUN.
 
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 

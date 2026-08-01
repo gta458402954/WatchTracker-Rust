@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 已验收，`TASK-B-002` 已从最新 `origin/main` 单独重新签发；其余 Phase B 任务尚未开放。
+- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 与 `TASK-B-002` 已验收；其余 Phase B 任务尚未开放。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
@@ -15,7 +15,7 @@
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
-- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001` 已 `ACCEPTED`，`TASK-B-002` 已重新签发为 `READY`，`TASK-B-003`~`TASK-B-005` 继续等待依赖和单独签发。
+- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001` 与 `TASK-B-002` 已 `ACCEPTED`，`TASK-B-003`~`TASK-B-005` 继续等待依赖和单独签发。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text
@@ -1059,7 +1059,7 @@ Evidence is under `.agent-work/evidence/{builds,logs,screenshots,tests}/TASK-A-0
 
 ---
 
-## Phase B：地区动态化专项（Gate A 已 PASS；TASK-B-002 已单独重新签发）
+## Phase B：地区动态化专项（Gate A 已 PASS；TASK-B-001/B-002 已验收）
 
 ## TASK-B-001：收口地区规范化与聚合领域规则
 
@@ -1113,7 +1113,7 @@ ACCEPTED — Implementation `b70aa24` was reviewed from clean detached HEAD. Ind
 
 - Phase: B
 - Owner: Codex
-- Status: IMPLEMENTED
+- Status: ACCEPTED
 - Priority: P1 / High
 - Dependencies: Gate A PASS (`AC-GATE-001`), TASK-B-001 ACCEPTED
 - BASE: `b6f30912e5c4f592d8abb7cd2c73a00bdeaa4e8d` (`origin/main` at authorization)
@@ -1180,7 +1180,7 @@ npx playwright test
 
 ### Execution Result
 
-IMPLEMENTED — Codex Implementation Pass completed on the formally authorized contract HEAD `58c01a984358d55f94fd3bd315117015c93a9465`. Dynamic ISO-code region options, scoped aggregation, combined filtering, invalid-selection cleanup, responsive StatsBar rendering, Node tests and Playwright coverage are implemented. All six required verification commands exited `0`; evidence is under `.agent-work/evidence/tests/TASK-B-002/`. This is not an acceptance decision; an independent Verification Pass remains required.
+ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was independently reviewed from clean detached `D:\Project\Projects\WatchTracker-B002-Verify`. Scope matched the final contract; fresh `npm ci` reported audit 0, targeted Node tests passed 6/6, the complete Node suite passed 32/32, typecheck/lint/build passed, and Playwright passed 8/8. The verification worktree remained clean and no related process remained. AC-B-002 is PASS; TASK-B-002 portions of AC-B-003/004 are verified while their deferred import/sync and final matrix portions remain open. Review: `.agent-work/evidence/review/TASK-B-002-CODEX-REVIEW.md`. This does not authorize TASK-B-003 or later work.
 
 ## TASK-B-003：保证 TMDB、表单及数据往返兼容
 

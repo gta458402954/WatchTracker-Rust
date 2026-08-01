@@ -641,3 +641,14 @@
 - Verification: targeted Node tests 6/6; complete Node tests 32/32; typecheck PASS; lint PASS; build PASS; complete Playwright 8/8. All six required commands exited `0` and recorded cwd plus start/end times in `.agent-work/evidence/tests/TASK-B-002/`.
 - Boundary: no dependency, package/lockfile, analytics, Header, SettingsModal, TMDB, import/restore/WebDAV implementation, Rust, database, B-003+ or DEFERRED change. The controlled replacement test is confined to the browser IPC fixture.
 - Status: IMPLEMENTED; not accepted. Independent Verification Pass remains mandatory.
+
+### TASK-B-002 Independent Verification Pass
+
+- Reviewed implementation: `0f15a840b6246479e6890d8de551e69f5ca4d27c` from clean detached `D:\Project\Projects\WatchTracker-B002-Verify`.
+- Scope review: the implementation changed only the contract-authorized App/StatsBar/filtering/test/fixture files plus task-specific governance and evidence; no dependency, Rust, database, TMDB, import/restore/WebDAV, B-003+ or DEFERRED code entered the commit.
+- Independent result: fresh `npm ci` installed 267 packages with audit 0; targeted filtering tests 6/6; complete Node tests 32/32; typecheck, lint and build PASS; complete Playwright 8/8.
+- UI/state review: code values drive selection and keys while labels drive display; region options are memoized from mediaType/status scope; an invalid selection is treated as `all` in the current render and then permanently cleared; repeat-click, non-revival, empty data, wrapping and `aria-pressed` are covered.
+- Final hygiene: the detached worktree and implementation worktree remained clean, the committed screenshot hash was unchanged after Playwright, and no related Node/Vite/Playwright/browser process remained. No Tauri/app/database path was used.
+- AC disposition: AC-B-002 PASS. B-002 portions of AC-B-003/004 are verified; their real import/restore/WebDAV and final full-matrix portions remain open for B-003/B-004. AC-B-007 remains NOT RUN.
+- Final status: TASK-B-002 ACCEPTED. This does not authorize TASK-B-003 or later Phase B work.
+- Review: `.agent-work/evidence/review/TASK-B-002-CODEX-REVIEW.md`.
