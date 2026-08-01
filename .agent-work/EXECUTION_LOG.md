@@ -751,3 +751,14 @@
 - Verifier postflight: zero related processes, zero port-4177 listeners, a clean detached worktree after refreshing a same-blob Cargo.toml stat/line-ending artifact, and only isolated app-managed database/log/poster/backup paths.
 - Git ancestry confirmed accepted B-001/B-002 anchors and the formal B-003/B-004/B-005 chain; quarantined commits `dc8308f` and `0f44b76` are not ancestors.
 - Result: TASK-B-005 ACCEPTED; AC-B-008 PASS; region report PASS. Gate B, the final Phase B PR, remote CI and the comprehensive report remain pending and are not implied by this acceptance.
+
+---
+
+## 2026-08-01 — Phase B PR and Gate B
+
+- Pushed only `codex/phase-b-integration@b6f4c11` to `origin`; `main` and quarantined branches were not pushed or modified by this action.
+- Opened the unique final Phase B draft PR: `https://github.com/gta458402954/WatchTracker-Rust/pull/3`, base `main`, head `codex/phase-b-integration`, reported `MERGEABLE/CLEAN` after checks.
+- GitHub connector PR creation returned 403 `Resource not accessible by integration`; authenticated GitHub CLI fallback created the same draft PR successfully without changing commits.
+- Push run `https://github.com/gta458402954/WatchTracker-Rust/actions/runs/30704409393`: Frontend and Playwright PASS, Rust checks PASS, Windows Tauri bundle PASS with artifact upload.
+- PR run `https://github.com/gta458402954/WatchTracker-Rust/actions/runs/30704458991`: Frontend and Playwright PASS, Rust checks PASS, Windows Tauri bundle PASS with artifact upload.
+- Gate B and AC-FINAL-001 are recorded PASS in the reports. PR #3 remains draft for Owner review; no merge to `main` was performed or implied.

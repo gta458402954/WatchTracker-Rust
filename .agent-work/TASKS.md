@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 和 `TASK-B-001`~`TASK-B-005` 均已由 Codex 独立验收。Phase B 本地验收已完成；唯一最终 PR、远端 CI、Gate B 和综合报告仍待执行。
+- Gate R、Gate A 与 Gate B 均已 PASS；`TASK-A-001`~`TASK-A-010` 和 `TASK-B-001`~`TASK-B-005` 均已由 Codex 独立验收。最终综合报告已完成；唯一 Phase B PR #3 保持 draft，等待 Owner 复核和明确合并决定。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 - Phase B 后续工作以 `codex/phase-b-integration` 为唯一集成线；B-003~B-005 必须从最新已验收 integration HEAD 逐项签发，整个 Phase B 完成并通过 Gate B 后才向 `main` 提交一次完整 PR。
@@ -16,7 +16,7 @@
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
-- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001`~`TASK-B-005` 均已 `ACCEPTED`；最终 PR、远端 CI、Gate B 和综合报告仍待执行。
+- Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text

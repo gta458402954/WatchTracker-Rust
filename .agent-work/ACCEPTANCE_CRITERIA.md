@@ -536,8 +536,8 @@
   4. 核对真实用户数据库隔离、最终进程清理、工作区状态及未解决问题。
 - Expected Result: Phase B integration 分支可追溯、无未验收任务、无隔离分支污染、全部本地与远端门禁通过，具备合并 `main` 的资格。
 - Required Evidence: B-001~B-005 review、`.agent-work/ACCEPTANCE_REPORT_REGION.md`、最终 PR 检查、CI 链接/结果、数据与进程证据、最终 Git 清单。
-- Result: NOT RUN
-- Evidence: TASK-B-001~B-005, AC-B-001~008 and the region report are PASS locally. The unique final Phase B PR has not been opened and its required remote Frontend/Playwright, Rust and Windows Tauri checks have not run, so Gate B remains NOT RUN and the branch is not yet eligible to merge into `main`.
+- Result: PASS
+- Evidence: Draft PR [#3](https://github.com/gta458402954/WatchTracker-Rust/pull/3) targets `main` from canonical `codex/phase-b-integration@b6f4c11` and is reported `MERGEABLE/CLEAN`. Both the push run `30704409393` and pull-request run `30704458991` passed Frontend and Playwright, Rust checks, and Windows Tauri bundle; both bundle jobs uploaded EXE/MSI/NSIS artifacts. The formal chain contains accepted B-001~B-005 and excludes quarantined `dc8308f`/`0f44b76` as ancestors. Local/desktop isolation, process cleanup, reports and worktree checks are recorded in the B task reviews and `.agent-work/ACCEPTANCE_REPORT_REGION.md`. The PR remains draft for owner review; no merge to `main` is claimed.
 
 ## 最终综合报告
 
@@ -552,5 +552,5 @@
   2. 核对最终结论不把 NOT RUN/BLOCKED 算作 PASS。
 - Expected Result: `.agent-work/ACCEPTANCE_REPORT.md` 可追溯到两阶段全部证据。
 - Required Evidence: 综合报告。
-- Result: NOT RUN
-- Evidence: Pending
+- Result: PASS
+- Evidence: `.agent-work/ACCEPTANCE_REPORT.md` now consolidates the Recovery, Phase A and Phase B task results, AC outcomes, local and remote commands, Windows desktop/data evidence, remaining limitations, evidence index and final recommendation. It does not classify DEFERRED roadmap work, code signing, byte-reproducibility or real external WebDAV service testing as completed.
