@@ -439,8 +439,8 @@
   4. 使当前地区消失，核对自动回到 all；空记录无地区栏。
 - Expected Result: 只显示当前 mediaType/status 范围内实际存在项；无 0 数量和不可见幽灵状态；聚合无不必要重复全量计算。
 - Required Evidence: 纯函数/Hook/组件测试、E2E 截图。
-- Result: NOT RUN
-- Evidence: TASK-B-002 independently verifies its allocated portion: mediaType/status-scoped dynamic options, counts independent of search/lock/sort/active region, add/edit/delete and controlled-record replacement, immediate invalid-selection fallback, persistent state cleanup and empty-data omission. Real local import, restore and WebDAV end-to-end evidence remains for TASK-B-003/B-004, so the overall criterion remains NOT RUN.
+- Result: PASS
+- Evidence: B-002 independently verified mediaType/status-scoped options, add/edit/delete/replacement, immediate invalid-selection fallback and empty-data omission. B-003 verified import, sync replacement and conflict restoration at browser mock boundaries. B-004 independently verified the consolidated REQUEST 7.2/7.3 matrix and added UI assertions that search, sort, lock cycling and active-region selection leave the base option set unchanged. See `.agent-work/evidence/review/TASK-B-004-CODEX-REVIEW.md`.
 
 ### AC-B-004：地区统计、筛选与稳定排序正确
 
@@ -455,8 +455,8 @@
   3. 验证优先序 `CN,HK,TW,US,JP,KR,GB`，其余数量降序、名称升序、代码升序，未知最后。
 - Expected Result: 每记录每地区最多计一次，多国可贡献多个地区，排序完全稳定。
 - Required Evidence: Node 原生单元测试、Playwright 日志和期望数据表。
-- Result: NOT RUN
-- Evidence: TASK-B-001 independently verifies per-record deduplication, multi-country contribution and exact preferred/count/name/code/unknown-last ordering. TASK-B-002 independently verifies code-based UI filtering and mediaType/status/search/lock combinations, aliases, unknown/unmapped codes and stable option counts. TASK-B-004 still owns the final REQUEST 7.2/7.3 matrix, so the overall criterion remains NOT RUN.
+- Result: PASS
+- Evidence: B-001 independently verified per-record deduplication, multi-country contribution and preferred/count/name/code/unknown-last ordering. B-002 verified code-keyed UI filtering and combined predicates. B-004 independently reran the complete Node 36/36 and Playwright 16/16 suites and confirmed the consolidated REQUEST matrix, including CN/HK/TW, GB/UK, multi-country, unknown/unmapped codes and stable option sets. See `.agent-work/evidence/review/TASK-B-004-CODEX-REVIEW.md`.
 
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 
@@ -503,8 +503,8 @@
   3. 用大量地区检查 wrap/滚动、选中态、`aria-pressed` 和无重叠。
 - Expected Result: REQUEST 7.2/7.3 全部场景有自动化覆盖；布局与可访问性无明显回归。
 - Required Evidence: 测试日志、截图/trace。
-- Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Result: PASS
+- Evidence: The independently reviewed B-004 matrix maps every REQUEST 7.2/7.3 item to committed Node or Playwright tests. Full Playwright passed 16/16, including large wrapped region sets, `aria-pressed`, empty state, combined filtering, dynamic updates, import/sync/conflict mock boundaries and option-set independence from non-scope controls. The existing committed large-region screenshot remains the visual layout evidence. See `.agent-work/evidence/tests/TASK-B-004/matrix.md` and `.agent-work/evidence/review/TASK-B-004-CODEX-REVIEW.md`.
 
 ### AC-B-008：地区专项回归与报告通过
 

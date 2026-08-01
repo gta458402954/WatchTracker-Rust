@@ -1359,7 +1359,7 @@ ACCEPTED — Implementation `72fa529` plus the conflict-restoration regression `
 
 - Phase: B
 - Owner: Codex
-- Status: IMPLEMENTED
+- Status: ACCEPTED
 - Priority: P1 / High
 - Dependencies: AC-GATE-001 PASS, TASK-B-001 ACCEPTED, TASK-B-002 ACCEPTED, TASK-B-003 ACCEPTED
 - BASE: `db6f1ad` (`codex/phase-b-integration` after independent B-003 acceptance)
@@ -1411,7 +1411,7 @@ npm run build
 
 ### Execution Result
 
-IMPLEMENTED — The Implementation Pass audited REQUEST 7.2/7.3 against the accepted B-001~B-003 tests, recorded the complete mapping in `.agent-work/evidence/tests/TASK-B-004/matrix.md`, and added only the missing UI assertions that search, sort, lock-state cycling and active-region selection do not alter the base option set. The first targeted run exposed an over-broad `select` locator and exited 1; after narrowing it to the banner combobox, targeted regions passed 5/5. Fresh install audit 0, Node 36/36, full Playwright 16/16, typecheck, lint, build and diff check passed. No production, fixture, dependency or quarantined-line content changed. Awaiting independent Verification Pass; this is not acceptance.
+ACCEPTED — Test-only implementation `c07b985` was independently reviewed from clean detached `D:\Project\Projects\WatchTracker-B004-Verify`. The first verification attempt stopped after Node 36/36 because `npm ci` had been orchestrated in the wrong worktree and local `@playwright/test` was absent; after installing in the actual verification worktree, the complete sequence restarted and passed Node 36/36, Playwright 16/16, typecheck, lint, build and diff check. Postflight found zero related processes, zero port-4177 listeners and a clean worktree. The diff contains no production, fixture, dependency or quarantined-line content. AC-B-003, AC-B-004 and AC-B-007 PASS. Review: `.agent-work/evidence/review/TASK-B-004-CODEX-REVIEW.md`. B-005 remains blocked until separately authorized.
 
 ## TASK-B-005：执行地区全量回归并提交验收材料
 
