@@ -1,0 +1,20 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 172 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 7 tests using 1 worker
+
+  ok 1 [chromium] › tests\b003-roundtrip.spec.ts:37:1 › @expected-settings-modal batch metadata preserves custom tags and normalized countries (974ms)
+  ok 2 [chromium] › tests\b003-roundtrip.spec.ts:74:1 › @conditional-record-form new movie preserves all normalized countries and custom tags (642ms)
+  ok 3 [chromium] › tests\b003-roundtrip.spec.ts:102:1 › @conditional-record-form edited TV season preserves countries and custom tags (668ms)
+  ok 4 [chromium] › tests\b003-roundtrip.spec.ts:136:1 › @conditional-webdav-payload schema v2 merge and PUT preserve region fields (321ms)
+  ok 5 [chromium] › tests\b003-roundtrip.spec.ts:171:1 › @conditional-webdav-payload legacy array GET preserves region fields (337ms)
+  ok 6 [chromium] › tests\b003-roundtrip.spec.ts:191:1 › @conditional-watchlist-boundary local export and import preserve region fields (712ms)
+  ok 7 [chromium] › tests\b003-roundtrip.spec.ts:219:1 › @conditional-watchlist-boundary sync replacement and conflict restore preserve region fields (368ms)
+
+  7 passed (5.7s)

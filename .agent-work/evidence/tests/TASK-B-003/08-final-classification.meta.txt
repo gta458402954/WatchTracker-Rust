@@ -1,0 +1,8 @@
+command: node --test src/shared/lib/__tests__/classification.test.mjs
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 25748
+started: 2026-08-01T20:48:49.9691312+08:00
+ended: 2026-08-01T20:48:50.1913389+08:00
+exit_code: 0
+stdout: 08-final-classification.stdout.txt
+stderr: 08-final-classification.stderr.txt

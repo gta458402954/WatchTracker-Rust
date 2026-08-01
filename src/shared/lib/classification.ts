@@ -12,16 +12,6 @@ export const MEDIA_TYPES: readonly MediaType[] = ['电影', '剧集', '纪录片
 export const REGION_TAGS = ['美国', '韩国', '日本', '英国', '中国大陆', '中国香港', '中国台湾'] as const;
 export type RegionTag = (typeof REGION_TAGS)[number];
 
-const COUNTRY_LABELS: Record<string, RegionTag> = {
-  US: '美国',
-  KR: '韩国',
-  JP: '日本',
-  GB: '英国',
-  CN: '中国大陆',
-  HK: '中国香港',
-  TW: '中国台湾',
-};
-
 const SPECIAL_MEDIA_TYPES: readonly MediaType[] = ['纪录片', '综艺', '动画'];
 
 export interface TmdbGenre {
@@ -172,10 +162,10 @@ export function aggregateRegions(
 }
 
 export function mergeContentTags(existing: string | null | undefined, tmdbRegions: string): string {
-  const customTags = (existing ?? '').split(',').map(tag => tag.trim()).filter(tag =>
-    tag && tag !== '纪录片' && !REGION_TAGS.includes(tag as RegionTag),
+  const customTags = (existing ?? '').split(/[,，]/).map(tag => tag.trim()).filter(tag =>
+    tag && tag !== '纪录片' && countryCodeOfLabel(tag) === undefined,
   );
-  const regions = tmdbRegions.split(',').map(tag => tag.trim()).filter(Boolean);
+  const regions = tmdbRegions.split(/[,，]/).map(tag => tag.trim()).filter(Boolean);
   return [...new Set([...customTags, ...regions])].join(',');
 }
 
@@ -184,10 +174,13 @@ export function classifyTmdb(
   isTV: boolean,
   preferredType?: MediaType | null,
 ): { mediaType: MediaType; contentTags: string; originCountry: string | null; genres: string | null } {
-  const countryCodes = isTV
+  const rawCountryCodes = isTV
     ? detail.origin_country ?? []
-    : detail.production_countries?.map(country => country.iso_3166_1).filter((code): code is string => Boolean(code)) ?? [];
-  const regions = countryCodes.map(code => COUNTRY_LABELS[code]).filter((region): region is RegionTag => Boolean(region));
+    : detail.production_countries?.map(country => country.iso_3166_1 ?? '') ?? [];
+  const countryCodes = normalizeCountryCodes(rawCountryCodes.join(','));
+  const regions = countryCodes
+    .map(code => countryLabelOf(code))
+    .filter((label, index) => label !== countryCodes[index]);
   const genreNames = detail.genres?.map(genre => genre.name?.trim()).filter((name): name is string => Boolean(name)) ?? [];
   const isDocumentary = genreNames.some(name => name === 'Documentary' || name === '纪录片');
 

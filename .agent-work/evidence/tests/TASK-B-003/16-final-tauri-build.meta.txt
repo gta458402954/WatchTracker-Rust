@@ -1,0 +1,8 @@
+command: npm run tauri build
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 23416
+started: 2026-08-01T20:50:01.8667610+08:00
+ended: 2026-08-01T20:52:46.1145011+08:00
+exit_code: 0
+stdout: 16-final-tauri-build.stdout.txt
+stderr: 16-final-tauri-build.stderr.txt

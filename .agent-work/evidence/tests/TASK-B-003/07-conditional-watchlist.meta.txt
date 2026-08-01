@@ -1,0 +1,8 @@
+command: npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-watchlist-boundary"
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 7044
+started: 2026-08-01T20:48:29.3348170+08:00
+ended: 2026-08-01T20:48:33.3998743+08:00
+exit_code: 0
+stdout: 07-conditional-watchlist.stdout.txt
+stderr: 07-conditional-watchlist.stderr.txt

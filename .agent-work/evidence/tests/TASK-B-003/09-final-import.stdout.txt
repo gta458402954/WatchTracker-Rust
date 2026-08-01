@@ -1,0 +1,12 @@
+✔ import normalization preserves region and revision fields (1.8084ms)
+✔ missing identifiers and timestamps receive deterministic fallbacks (0.2027ms)
+✔ invalid top-level payloads and array rows are rejected before replacement (0.4001ms)
+✔ B003 conditional: import normalization preserves exact country codes and custom tags (0.1447ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 101.5636

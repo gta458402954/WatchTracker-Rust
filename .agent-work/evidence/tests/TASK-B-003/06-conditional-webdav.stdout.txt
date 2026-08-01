@@ -1,0 +1,15 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 173 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 2 tests using 1 worker
+
+  ok 1 [chromium] › tests\b003-roundtrip.spec.ts:136:1 › @conditional-webdav-payload schema v2 merge and PUT preserve region fields (412ms)
+  ok 2 [chromium] › tests\b003-roundtrip.spec.ts:171:1 › @conditional-webdav-payload legacy array GET preserves region fields (520ms)
+
+  2 passed (2.7s)

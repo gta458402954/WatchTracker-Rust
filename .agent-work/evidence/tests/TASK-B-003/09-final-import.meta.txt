@@ -1,0 +1,8 @@
+command: node --test src/shared/lib/__tests__/importValidation.test.mjs
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 14824
+started: 2026-08-01T20:48:50.2237275+08:00
+ended: 2026-08-01T20:48:50.4170243+08:00
+exit_code: 0
+stdout: 09-final-import.stdout.txt
+stderr: 09-final-import.stderr.txt

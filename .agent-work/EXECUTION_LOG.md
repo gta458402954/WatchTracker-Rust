@@ -700,3 +700,14 @@
 - Resume gate: preserve the current authorized uncommitted implementation/test/evidence; do not repeat `npm ci`. After confirming zero related residual processes and zero port-4177 listeners, apply only the two Header attributes and rerun the single `@expected-settings-modal` command. PASS may proceed to Conditional diagnostics; FAIL stops immediately.
 - Evidence retention: the original exit `1` and the rerun result must both remain in the final report; the first failure may not be skipped, erased or overwritten.
 - Scope: contract revision only. Existing business, test and evidence changes were not modified or staged; no test was run, no Implementation Pass was resumed, and no push or PR was performed.
+
+### TASK-B-003 Codex Implementation Pass
+
+- Date/contract recovery HEAD: 2026-08-01, `codex/task-b-003@fcb21859fda4d68c1c288b04967c5dcdee754889`; the previously authorized dirty implementation scene was preserved exactly and `npm ci` was not repeated.
+- Scope: `classifyTmdb` now delegates country normalization to the existing `normalizeCountryCodes`, preserves the full normalized multi-country value including unmapped valid codes, and derives only known display labels. `mergeContentTags` removes only recognized legacy system region/classification tags while preserving custom tags. Settings batch metadata continues through the same classification/merge rules.
+- Accessibility recovery: the first Expected SettingsModal Playwright test exited `1` because the existing settings button had no accessible name. The revised contract authorized only `aria-label="设置"` and `title="设置"`; the preserved rerun passed 1/1.
+- Conditional diagnostics: import normalization passed 1/1; RecordForm passed 2/2; WebDAV payload passed 2/2; watchlist boundary passed 2/2. No Conditional File was modified or promoted.
+- Final verification: classification 15/15, import validation 4/4, complete Node suite 36/36, typecheck, lint, frontend build, B-003 Playwright 7/7, complete Playwright 15/15, Windows Tauri build and `git diff --check` all passed with exit `0`.
+- Runtime boundary: no Tauri/app executable was launched; no SQLite database or real credentials were accessed; no real or local WebDAV service was contacted. Final related-process and port-4177 counts were both zero.
+- Evidence: `.agent-work/evidence/tests/TASK-B-003/implementation-summary.md` and the adjacent per-command stdout/stderr/meta logs. Node evidence proves pure functions/import normalization, Playwright proves browser UI and mock IPC/payload boundaries, and Tauri build proves buildability only.
+- Status: IMPLEMENTED; not accepted. AC-B-005/006 remain NOT RUN pending an independent Verification Pass.

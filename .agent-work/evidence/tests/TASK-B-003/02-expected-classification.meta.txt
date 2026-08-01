@@ -1,0 +1,8 @@
+command: node --test --test-name-pattern="B003 expected:" src/shared/lib/__tests__/classification.test.mjs
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 22724
+started: 2026-08-01T20:40:12.4658473+08:00
+ended: 2026-08-01T20:40:12.6668062+08:00
+exit_code: 0
+stdout: 02-expected-classification.stdout.txt
+stderr: 02-expected-classification.stderr.txt

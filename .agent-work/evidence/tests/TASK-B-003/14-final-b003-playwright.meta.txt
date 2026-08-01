@@ -1,0 +1,8 @@
+command: npx playwright test tests/b003-roundtrip.spec.ts
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 3724
+started: 2026-08-01T20:49:29.4528863+08:00
+ended: 2026-08-01T20:49:36.1822018+08:00
+exit_code: 0
+stdout: 14-final-b003-playwright.stdout.txt
+stderr: 14-final-b003-playwright.stderr.txt

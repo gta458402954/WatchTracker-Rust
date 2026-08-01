@@ -1,0 +1,8 @@
+command: npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-record-form"
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 7088
+started: 2026-08-01T20:48:02.0661046+08:00
+ended: 2026-08-01T20:48:06.3154710+08:00
+exit_code: 0
+stdout: 05-conditional-record-form.stdout.txt
+stderr: 05-conditional-record-form.stderr.txt

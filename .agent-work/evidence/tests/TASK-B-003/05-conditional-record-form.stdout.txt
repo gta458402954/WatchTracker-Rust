@@ -1,0 +1,15 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 229 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 2 tests using 1 worker
+
+  ok 1 [chromium] › tests\b003-roundtrip.spec.ts:74:1 › @conditional-record-form new movie preserves all normalized countries and custom tags (760ms)
+  ok 2 [chromium] › tests\b003-roundtrip.spec.ts:102:1 › @conditional-record-form edited TV season preserves countries and custom tags (713ms)
+
+  2 passed (3.2s)

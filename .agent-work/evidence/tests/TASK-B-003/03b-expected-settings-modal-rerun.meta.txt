@@ -1,0 +1,8 @@
+command: npx playwright test tests/b003-roundtrip.spec.ts --grep "@expected-settings-modal"
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 11664
+started: 2026-08-01T20:47:37.3689773+08:00
+ended: 2026-08-01T20:47:41.1759487+08:00
+exit_code: 0
+stdout: 03b-expected-settings-modal-rerun.stdout.txt
+stderr: 03b-expected-settings-modal-rerun.stderr.txt

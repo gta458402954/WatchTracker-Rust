@@ -1,0 +1,8 @@
+command: npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-webdav-payload"
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 11552
+started: 2026-08-01T20:48:15.2715622+08:00
+ended: 2026-08-01T20:48:18.9856250+08:00
+exit_code: 0
+stdout: 06-conditional-webdav.stdout.txt
+stderr: 06-conditional-webdav.stderr.txt

@@ -1,15 +1,21 @@
 import type { Page } from '@playwright/test';
 import type { WatchRecord } from '../../src/shared/types';
+import type { TmdbMedia } from '../../src/shared/lib/classification';
 
 export interface MockIpcOptions {
   records?: WatchRecord[];
   failRecordLoads?: boolean;
+  settings?: Record<string, string | null>;
+  tmdbSearchResults?: TmdbMedia[];
+  tmdbDetail?: TmdbMedia;
+  webdavRemote?: unknown;
 }
 
-interface MockSnapshot {
+export interface MockSnapshot {
   calls: Array<{ command: string; args: Record<string, unknown> }>;
   records: WatchRecord[];
   failRecordLoads: boolean;
+  settings: Record<string, string | null>;
 }
 
 declare global {
@@ -23,12 +29,13 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, webdavRemote }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const snapshot: MockSnapshot = {
         calls: [],
         records: controlledRecords ? JSON.parse(controlledRecords) : structuredClone(records),
         failRecordLoads,
+        settings: structuredClone(settings),
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
 
@@ -52,7 +59,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
           switch (command) {
             case 'get_setting':
               requireKeys(command, args, ['key']);
-              return null;
+              return snapshot.settings[args.key as string] ?? null;
             case 'get_all_records':
               requireKeys(command, args, []);
               if (snapshot.failRecordLoads) {
@@ -91,6 +98,25 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return null;
             case 'set_setting':
               requireKeys(command, args, ['key', 'value']);
+              snapshot.settings[args.key as string] = args.value as string;
+              return true;
+            case 'encrypt':
+              requireKeys(command, args, ['tag', 'text']);
+              return `encrypted:${String(args.text)}`;
+            case 'decrypt':
+              requireKeys(command, args, ['id']);
+              return String(args.id).replace(/^encrypted:/, '');
+            case 'search_tmdb':
+              requireKeys(command, args, ['apiKey', 'language', 'proxy', 'query']);
+              return { results: structuredClone(tmdbSearchResults) };
+            case 'get_tmdb_detail':
+              requireKeys(command, args, ['apiKey', 'id', 'language', 'mediaType', 'proxy']);
+              return structuredClone(tmdbDetail);
+            case 'webdav_request':
+              requireKeys(command, args, ['body', 'method', 'password', 'proxy', 'url', 'username']);
+              return args.method === 'GET' ? structuredClone(webdavRemote) : null;
+            case 'vacuum_db':
+              requireKeys(command, args, []);
               return null;
             default:
               throw new Error(`Unhandled mock IPC command: ${command}`);
@@ -101,6 +127,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
     {
       records: options.records ?? [],
       failRecordLoads: options.failRecordLoads ?? false,
+      settings: options.settings ?? {},
+      tmdbSearchResults: options.tmdbSearchResults ?? [],
+      tmdbDetail: options.tmdbDetail ?? {},
+      webdavRemote: options.webdavRemote ?? [],
     },
   );
 }

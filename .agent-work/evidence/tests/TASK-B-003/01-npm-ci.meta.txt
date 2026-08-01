@@ -1,0 +1,8 @@
+command: npm ci
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 12124
+started: 2026-08-01T20:35:08.9088190+08:00
+ended: 2026-08-01T20:35:15.3786032+08:00
+exit_code: 0
+stdout: 01-npm-ci.stdout.txt
+stderr: 01-npm-ci.stderr.txt

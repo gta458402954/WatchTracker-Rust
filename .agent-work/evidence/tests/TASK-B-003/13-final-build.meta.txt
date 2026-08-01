@@ -1,0 +1,8 @@
+command: npm run build
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 14396
+started: 2026-08-01T20:49:09.4322594+08:00
+ended: 2026-08-01T20:49:12.6509224+08:00
+exit_code: 0
+stdout: 13-final-build.stdout.txt
+stderr: 13-final-build.stderr.txt

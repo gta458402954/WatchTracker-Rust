@@ -1,0 +1,2 @@
+[WebServer] 20:49:43 [vite] (client) [console.error] [App.Initialize] operation failed {"errorCategory":"Error"}
+[WebServer] 20:49:43 [vite] (client) [console.error] [App.Initialize] operation failed {"errorCategory":"Error"}

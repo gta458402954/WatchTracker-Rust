@@ -1,0 +1,8 @@
+command: node --test --test-name-pattern="B003 conditional: import normalization" src/shared/lib/__tests__/importValidation.test.mjs
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 7492
+started: 2026-08-01T20:47:52.3232771+08:00
+ended: 2026-08-01T20:47:52.5331033+08:00
+exit_code: 0
+stdout: 04-conditional-import.stdout.txt
+stderr: 04-conditional-import.stderr.txt

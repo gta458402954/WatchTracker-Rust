@@ -1,0 +1,5 @@
+command: final B003 process and port checks
+cwd: D:\Project\Projects\WatchTracker-B003
+checked: 2026-08-01T20:53:06.0413730+08:00
+related_process_count: 0
+port_4177_listener_count: 0

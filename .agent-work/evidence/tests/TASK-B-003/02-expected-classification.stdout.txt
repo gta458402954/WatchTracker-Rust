@@ -1,0 +1,13 @@
+▶ TASK-B-003 TMDB roundtrip rules
+  ✔ B003 expected: movie countries reuse normalization and preserve mapped and unmapped codes (0.5454ms)
+  ✔ B003 expected: TV countries retain CN HK TW separately after trim case and deduplication (0.1279ms)
+  ✔ B003 expected: tag merging removes only recognized legacy region and system tags (0.167ms)
+✔ TASK-B-003 TMDB roundtrip rules (1.9261ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 98.2477

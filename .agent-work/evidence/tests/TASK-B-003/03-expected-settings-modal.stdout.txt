@@ -1,0 +1,45 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 229 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 1 test using 1 worker
+
+  x  1 [chromium] › tests\b003-roundtrip.spec.ts:37:1 › @expected-settings-modal batch metadata preserves custom tags and normalized countries (30.1s)
+
+
+  1) [chromium] › tests\b003-roundtrip.spec.ts:37:1 › @expected-settings-modal batch metadata preserves custom tags and normalized countries 
+
+    Test timeout of 30000ms exceeded.
+
+    Error: locator.click: Test timeout of 30000ms exceeded.
+    Call log:
+      - waiting for getByRole('button', { name: '设置' })
+
+
+      31 |
+      32 | async function openSettingsTools(page: Page) {
+    > 33 |   await page.getByRole('button', { name: '设置' }).click();
+         |                                                  ^
+      34 |   await page.getByRole('button', { name: /系统工具/ }).click();
+      35 | }
+      36 |
+        at openSettingsTools (D:\Project\Projects\WatchTracker-B003\tests\b003-roundtrip.spec.ts:33:50)
+        at D:\Project\Projects\WatchTracker-B003\tests\b003-roundtrip.spec.ts:57:9
+
+    Error Context: C:\Users\markp\AppData\Local\Temp\watchtracker-playwright-a007\b003-roundtrip--expected-s-601b4-gs-and-normalized-countries-chromium\error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    C:\Users\markp\AppData\Local\Temp\watchtracker-playwright-a007\b003-roundtrip--expected-s-601b4-gs-and-normalized-countries-chromium\trace.zip
+    Usage:
+
+        npx playwright show-trace C:\Users\markp\AppData\Local\Temp\watchtracker-playwright-a007\b003-roundtrip--expected-s-601b4-gs-and-normalized-countries-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › tests\b003-roundtrip.spec.ts:37:1 › @expected-settings-modal batch metadata preserves custom tags and normalized countries 

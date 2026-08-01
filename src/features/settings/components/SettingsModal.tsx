@@ -730,7 +730,7 @@ export default function SettingsModal({
             <div className="space-y-6 animate-fade-in animate-duration-200">
               <div>
                 <h3 className="text-2xl font-black text-gray-900">🏷️ 类型与标签</h3>
-                <p className="text-xs text-gray-400 mt-1">内容类型用于主列表筛选；地区与主题通过内容标签识别。TMDB 自动填充地区标签，也可在编辑记录时手动补充。</p>
+                <p className="text-xs text-gray-400 mt-1">内容类型用于主列表筛选；地区以 originCountry 国家代码为主，内容标签仅为旧数据回退和自定义主题。</p>
               </div>
 
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
@@ -757,7 +757,7 @@ export default function SettingsModal({
                   <span className="text-2xl">🌐</span>
                   <div>
                     <h4 className="font-bold text-gray-800">标准地区标签</h4>
-                    <p className="text-[11px] text-gray-400">用于顶部地区筛选。旧“美剧、韩剧”等数据已自动映射为对应地区标签。</p>
+                    <p className="text-[11px] text-gray-400">顶部地区筛选优先读取国家代码；旧中文地区标签仅在国家代码缺失时回退使用。</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -770,7 +770,7 @@ export default function SettingsModal({
 
               <div className="rounded-3xl border border-amber-100 bg-amber-50/60 p-5">
                 <h4 className="font-bold text-amber-900">如何维护内容标签</h4>
-                <p className="mt-1 text-xs leading-6 text-amber-800">“纪录片”现在是独立内容类型，请在编辑页的“内容类型”中选择。内容标签用于地区和其他主题，可用英文逗号分隔，例如“韩国, 律政”；TMDB 自动填充会更新标准地区标签，并保留你手工添加的其他标签。</p>
+                <p className="mt-1 text-xs leading-6 text-amber-800">“纪录片”现在是独立内容类型，请在编辑页的“内容类型”中选择。TMDB 自动填充会更新 originCountry 和可识别的标准地区标签，同时保留你手工添加的其他主题标签。</p>
               </div>
             </div>
           )}

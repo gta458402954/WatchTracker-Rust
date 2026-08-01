@@ -1,0 +1,31 @@
+▶ country-code normalization (FR-01)
+  ✔ trims, uppercases, splits both comma forms, deduplicates, and retains valid fallback codes (1.8921ms)
+  ✔ filters placeholders and malformed values before accepting two-letter codes (0.1674ms)
+  ✔ maps UK to GB before generic two-letter validation (0.1195ms)
+  ✔ keeps CN, HK, and TW distinct and recognizes legacy Chinese labels (0.1624ms)
+✔ country-code normalization (FR-01) (3.0473ms)
+▶ TASK-B-003 TMDB roundtrip rules
+  ✔ B003 expected: movie countries reuse normalization and preserve mapped and unmapped codes (0.2409ms)
+  ✔ B003 expected: TV countries retain CN HK TW separately after trim case and deduplication (0.123ms)
+  ✔ B003 expected: tag merging removes only recognized legacy region and system tags (0.1518ms)
+✔ TASK-B-003 TMDB roundtrip rules (0.6541ms)
+▶ region source priority and display (FR-02)
+  ✔ uses recognizable originCountry values instead of conflicting legacy tags (0.1848ms)
+  ✔ falls back to recognized legacy tags when originCountry has no usable value (0.1306ms)
+  ✔ returns one non-ISO unknown sentinel when neither source is recognizable (0.1262ms)
+  ✔ displays unmapped valid codes as their uppercase code (0.097ms)
+  ✔ keeps the existing fixed Chinese buttons working through a thin compatibility wrapper (0.1243ms)
+✔ region source priority and display (FR-02) (0.8364ms)
+▶ region aggregation and stable ordering (FR-04)
+  ✔ counts each record once per region while allowing multi-country contribution (0.2499ms)
+  ✔ uses the exact preferred order, then count, and always places unknown last (0.1504ms)
+  ✔ uses country code as the final deterministic tie-break (6.7062ms)
+✔ region aggregation and stable ordering (FR-04) (7.2325ms)
+ℹ tests 15
+ℹ suites 4
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 123.7352

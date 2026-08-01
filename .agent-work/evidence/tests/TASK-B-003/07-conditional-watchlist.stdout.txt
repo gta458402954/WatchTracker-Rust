@@ -1,0 +1,15 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 185 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 2 tests using 1 worker
+
+  ok 1 [chromium] › tests\b003-roundtrip.spec.ts:191:1 › @conditional-watchlist-boundary local export and import preserve region fields (931ms)
+  ok 2 [chromium] › tests\b003-roundtrip.spec.ts:219:1 › @conditional-watchlist-boundary sync replacement and conflict restore preserve region fields (401ms)
+
+  2 passed (3.1s)

@@ -1,0 +1,14 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 181 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 1 test using 1 worker
+
+  ok 1 [chromium] › tests\b003-roundtrip.spec.ts:37:1 › @expected-settings-modal batch metadata preserves custom tags and normalized countries (1.0s)
+
+  1 passed (2.7s)

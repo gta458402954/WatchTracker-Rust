@@ -1,0 +1,18 @@
+
+> watch-tracker@1.10.0 tauri
+> tauri build
+
+
+> watch-tracker@1.10.0 build
+> tsc -b && vite build
+
+[36mvite v8.2.0 [32mbuilding client environment for production...[36m[39m
+[2Ktransforming...✓ 608 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.48 kB │ gzip:   0.32 kB
+dist/assets/index-FLO5u6y_.css      32.64 kB │ gzip:   6.46 kB
+dist/assets/index-CteigXTe.js      292.75 kB │ gzip:  88.41 kB
+dist/assets/Dashboard-C_Jq6dGV.js  358.00 kB │ gzip: 103.86 kB
+
+[32m✓ built in 578ms[39m

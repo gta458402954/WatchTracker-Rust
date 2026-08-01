@@ -40,3 +40,14 @@ test('invalid top-level payloads and array rows are rejected before replacement'
   assert.throws(() => normalizeImportedRecords({ records: [] }, fixedNow), /无效的 JSON 格式/);
   assert.throws(() => normalizeImportedRecords([[]], fixedNow), /第 1 条记录格式无效/);
 });
+
+test('B003 conditional: import normalization preserves exact country codes and custom tags', () => {
+  const record = normalizeImportedRecord({
+    id: 'b003-import',
+    originCountry: 'GB, XX, CN',
+    contentTags: '律政,自定义,日本料理',
+  }, 0, fixedNow);
+
+  assert.equal(record.originCountry, 'GB, XX, CN');
+  assert.equal(record.contentTags, '律政,自定义,日本料理');
+});

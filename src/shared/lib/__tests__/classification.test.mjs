@@ -4,6 +4,8 @@ import { describe, test } from 'node:test';
 import {
   aggregateRegions,
   compareRegionOptions,
+  classifyTmdb,
+  mergeContentTags,
   normalizeCountryCodes,
   regionCodesOf,
   regionsOf,
@@ -31,6 +33,43 @@ describe('country-code normalization (FR-01)', () => {
   test('keeps CN, HK, and TW distinct and recognizes legacy Chinese labels', () => {
     assert.deepEqual(normalizeCountryCodes('中国大陆, 香港, TW'), ['CN', 'HK', 'TW']);
     assert.equal(countryCodeOfLabel('英国'), 'GB');
+  });
+});
+
+describe('TASK-B-003 TMDB roundtrip rules', () => {
+  test('B003 expected: movie countries reuse normalization and preserve mapped and unmapped codes', () => {
+    const result = classifyTmdb({
+      production_countries: [
+        { iso_3166_1: ' us ' },
+        { iso_3166_1: 'uk' },
+        { iso_3166_1: 'GB' },
+        { iso_3166_1: 'xx' },
+        { iso_3166_1: 'N/A' },
+        { iso_3166_1: 'CN' },
+      ],
+      genres: [{ name: 'Drama' }],
+    }, false);
+
+    assert.equal(result.originCountry, 'US, GB, XX, CN');
+    assert.equal(result.contentTags, '美国,英国,中国大陆');
+  });
+
+  test('B003 expected: TV countries retain CN HK TW separately after trim case and deduplication', () => {
+    const result = classifyTmdb({
+      origin_country: [' cn ', 'hk', 'TW', 'tw', 'UNKNOWN', '12'],
+      genres: [{ name: 'Documentary' }],
+    }, true, '综艺');
+
+    assert.equal(result.originCountry, 'CN, HK, TW');
+    assert.equal(result.contentTags, '中国大陆,中国香港,中国台湾');
+    assert.equal(result.mediaType, '纪录片');
+  });
+
+  test('B003 expected: tag merging removes only recognized legacy region and system tags', () => {
+    assert.equal(
+      mergeContentTags('美国, 律政，中国香港, UK, 自定义, 纪录片, 日本料理', '英国,中国台湾'),
+      '律政,自定义,日本料理,英国,中国台湾',
+    );
   });
 });
 

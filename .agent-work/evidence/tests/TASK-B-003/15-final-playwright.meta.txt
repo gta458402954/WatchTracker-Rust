@@ -1,0 +1,8 @@
+command: npx playwright test
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 23400
+started: 2026-08-01T20:49:36.2118206+08:00
+ended: 2026-08-01T20:49:52.5095446+08:00
+exit_code: 0
+stdout: 15-final-playwright.stdout.txt
+stderr: 15-final-playwright.stderr.txt

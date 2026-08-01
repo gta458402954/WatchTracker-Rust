@@ -1,0 +1,12 @@
+command: git diff --check
+cwd: D:\Project\Projects\WatchTracker-B003
+started: 2026-08-01T20:52:54.9720594+08:00
+warning: in the working copy of 'src-tauri/Cargo.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/features/settings/components/SettingsModal.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/features/watchlist/components/Header.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/shared/lib/__tests__/classification.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/shared/lib/__tests__/importValidation.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/shared/lib/classification.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/fixtures/mockIpc.ts', LF will be replaced by CRLF the next time Git touches it
+ended: 2026-08-01T20:52:55.0186255+08:00
+exit_code: 0

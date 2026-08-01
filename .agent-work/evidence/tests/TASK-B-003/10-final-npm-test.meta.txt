@@ -1,0 +1,8 @@
+command: npm run test
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 24528
+started: 2026-08-01T20:48:50.4257490+08:00
+ended: 2026-08-01T20:48:51.0227276+08:00
+exit_code: 0
+stdout: 10-final-npm-test.stdout.txt
+stderr: 10-final-npm-test.stderr.txt

@@ -1,0 +1,28 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] 
+[WebServer]   VITE v8.2.0  ready in 178 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 15 tests using 1 worker
+
+  ok  1 [chromium] › tests\b003-roundtrip.spec.ts:37:1 › @expected-settings-modal batch metadata preserves custom tags and normalized countries (985ms)
+  ok  2 [chromium] › tests\b003-roundtrip.spec.ts:74:1 › @conditional-record-form new movie preserves all normalized countries and custom tags (637ms)
+  ok  3 [chromium] › tests\b003-roundtrip.spec.ts:102:1 › @conditional-record-form edited TV season preserves countries and custom tags (701ms)
+  ok  4 [chromium] › tests\b003-roundtrip.spec.ts:136:1 › @conditional-webdav-payload schema v2 merge and PUT preserve region fields (329ms)
+  ok  5 [chromium] › tests\b003-roundtrip.spec.ts:171:1 › @conditional-webdav-payload legacy array GET preserves region fields (309ms)
+  ok  6 [chromium] › tests\b003-roundtrip.spec.ts:191:1 › @conditional-watchlist-boundary local export and import preserve region fields (746ms)
+  ok  7 [chromium] › tests\b003-roundtrip.spec.ts:219:1 › @conditional-watchlist-boundary sync replacement and conflict restore preserve region fields (398ms)
+  ok  8 [chromium] › tests\baseline.spec.ts:4:1 › ready empty data renders the normal empty state (295ms)
+  ok  9 [chromium] › tests\baseline.spec.ts:12:1 › initialization failure shows an error, not empty data, and retry recovers (422ms)
+  ok 10 [chromium] › tests\baseline.spec.ts:32:1 › current IPC DTO supports create, update, and delete without permissive fallbacks (737ms)
+  ok 11 [chromium] › tests\regions.spec.ts:39:1 › renders dynamic counts in stable order and filters by code, including aliases and sentinels (1.0s)
+  ok 12 [chromium] › tests\regions.spec.ts:80:1 › media/status scope drives options while search does not, and invalid selection clears without revival (565ms)
+  ok 13 [chromium] › tests\regions.spec.ts:105:1 › dynamic options react to add, edit, delete, and controlled record replacement (5.0s)
+  ok 14 [chromium] › tests\regions.spec.ts:131:1 › hides the region bar for empty data (418ms)
+  ok 15 [chromium] › tests\regions.spec.ts:138:1 › many dynamic regions wrap and every button exposes aria-pressed (721ms)
+
+  15 passed (15.3s)

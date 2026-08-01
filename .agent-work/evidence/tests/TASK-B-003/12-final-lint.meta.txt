@@ -1,0 +1,8 @@
+command: npm run lint
+cwd: D:\Project\Projects\WatchTracker-B003
+pid: 19568
+started: 2026-08-01T20:49:03.5911995+08:00
+ended: 2026-08-01T20:49:09.4245275+08:00
+exit_code: 0
+stdout: 12-final-lint.stdout.txt
+stderr: 12-final-lint.stderr.txt

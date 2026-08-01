@@ -1,0 +1,62 @@
+
+> watch-tracker@1.10.0 test
+> node --test "src/shared/lib/__tests__/*.test.mjs"
+
+▶ country-code normalization (FR-01)
+  ✔ trims, uppercases, splits both comma forms, deduplicates, and retains valid fallback codes (2.6721ms)
+  ✔ filters placeholders and malformed values before accepting two-letter codes (0.305ms)
+  ✔ maps UK to GB before generic two-letter validation (0.2841ms)
+  ✔ keeps CN, HK, and TW distinct and recognizes legacy Chinese labels (0.2749ms)
+✔ country-code normalization (FR-01) (4.8119ms)
+▶ TASK-B-003 TMDB roundtrip rules
+  ✔ B003 expected: movie countries reuse normalization and preserve mapped and unmapped codes (0.4331ms)
+  ✔ B003 expected: TV countries retain CN HK TW separately after trim case and deduplication (0.2617ms)
+  ✔ B003 expected: tag merging removes only recognized legacy region and system tags (0.2736ms)
+✔ TASK-B-003 TMDB roundtrip rules (1.234ms)
+▶ region source priority and display (FR-02)
+  ✔ uses recognizable originCountry values instead of conflicting legacy tags (0.3556ms)
+  ✔ falls back to recognized legacy tags when originCountry has no usable value (0.26ms)
+  ✔ returns one non-ISO unknown sentinel when neither source is recognizable (0.2461ms)
+  ✔ displays unmapped valid codes as their uppercase code (0.1863ms)
+  ✔ keeps the existing fixed Chinese buttons working through a thin compatibility wrapper (0.15ms)
+✔ region source priority and display (FR-02) (1.5229ms)
+▶ region aggregation and stable ordering (FR-04)
+  ✔ counts each record once per region while allowing multi-country contribution (0.3506ms)
+  ✔ uses the exact preferred order, then count, and always places unknown last (0.1922ms)
+  ✔ uses country code as the final deterministic tie-break (9.0908ms)
+✔ region aggregation and stable ordering (FR-04) (9.834ms)
+✔ publicFailureMessage returns a fixed user-safe message (1.0927ms)
+✔ errorCategory exposes only the error type (0.2266ms)
+✔ reportOperationFailure does not log the raw error message (1.2667ms)
+✔ key asynchronous failures produce generic user notifications (0.7096ms)
+▶ region scope and dynamic options
+  ✔ uses only media type and status to define the aggregation scope (1.7232ms)
+  ✔ keeps option counts independent of search, lock, sort, and active region (9.5675ms)
+  ✔ counts multi-country, unknown, and unmapped ISO values and preserves stable order (0.4327ms)
+✔ region scope and dynamic options (12.8505ms)
+▶ combined record filters
+  ✔ combines media type, status, region, search, and lock predicates (0.1791ms)
+  ✔ supports GB normalized from UK, unknown, and unmapped region selection (0.1975ms)
+✔ combined record filters (0.524ms)
+▶ invalid region fallback
+  ✔ uses all immediately and remains all when the old option later returns (0.2475ms)
+✔ invalid region fallback (0.3518ms)
+✔ import normalization preserves region and revision fields (1.56ms)
+✔ missing identifiers and timestamps receive deterministic fallbacks (0.1813ms)
+✔ invalid top-level payloads and array rows are rejected before replacement (0.4376ms)
+✔ B003 conditional: import normalization preserves exact country codes and custom tags (0.1475ms)
+✔ parseSyncInterval accepts the supported range (0.6875ms)
+✔ parseSyncInterval falls back for invalid values (0.1323ms)
+✔ initializeApp returns the loaded application state (0.7459ms)
+✔ initializeApp propagates initialization failures (0.4776ms)
+✔ initialization can be retried after a failed attempt (0.2811ms)
+✔ rejects every non-finite numeric update (0.9718ms)
+✔ accepts finite numbers, nulls and non-numeric fields (0.2077ms)
+ℹ tests 36
+ℹ suites 7
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 190.5302
