@@ -1252,6 +1252,9 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
 
 ```powershell
 git status --short --branch
+$workspaceChanges = git status --porcelain=v1 --untracked-files=all
+$workspaceChanges
+if ($workspaceChanges) { exit 1 }
 git rev-parse HEAD
 git merge-base --is-ancestor 6202f85d86a6e0b8611e6135cec479306a8768fc HEAD
 git diff --quiet
@@ -1263,12 +1266,22 @@ $port4177; if ($port4177) { exit 1 }
 npm ci
 ```
 
-- HEAD 必须是最新 TASK-B-003 合同提交且上述 BASE 必须是其祖先；工作区与暂存区必须干净。若发现与本任务相关的残留进程/4177 监听、Git 条件不符或 `npm ci` 非零，立即停止，不得进入诊断或实现。
+- HEAD 必须是最新 TASK-B-003 合同提交且上述 BASE 必须是其祖先；`$workspaceChanges` 必须为空，否则机械返回非零并立即停止。若发现工作区/暂存区/untracked 内容、与本任务相关的残留进程/4177 监听、Git 条件不符或 `npm ci` 非零，不得进入实现。
 - `npm ci` 整个 Implementation Pass 只执行一次；成功日志同时作为 Final verification 的锁文件安装证据，最终阶段不得重复安装。
 
-#### B. Conditional diagnostics
+#### B. Expected implementation
 
-- 只可先新增/更新 Expected Files 中列明的测试/夹具，不得修改任何业务文件，然后依次运行以下最小诊断：
+- 先新增/更新 Expected Files 中明确列出的测试/夹具，再仅修改两个 Expected business files：`src/shared/lib/classification.ts` 与 `src/features/settings/components/SettingsModal.tsx`。本阶段不得修改任何 Conditional File。
+- Expected Files 实现完成后，只运行以下针对 Expected Files 的最小测试；任一失败立即停止并按普通 Expected implementation 失败处理，不得借此激活 Conditional Files：
+
+```powershell
+node --test --test-name-pattern="B003 expected:" src/shared/lib/__tests__/classification.test.mjs
+npx playwright test tests/b003-roundtrip.spec.ts --grep "@expected-settings-modal"
+```
+
+#### C. Conditional diagnostics
+
+- 只有 B 阶段两个 Expected business files 已按合同完成且最小测试全部通过后，才能依次运行以下最小诊断，用于回答“在 `classification.ts` 和 `SettingsModal.tsx` 已修正后，RecordForm/importValidation/webdav/useWatchList 是否仍然丢字段？”：
 
 ```powershell
 node --test --test-name-pattern="B003 conditional: import normalization" src/shared/lib/__tests__/importValidation.test.mjs
@@ -1278,14 +1291,17 @@ npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-watchlist-
 ```
 
 - 每项仅判断对应 Conditional File 是否必要。任一非零或断言证明需要条件文件时，保存测试名、完整失败输出和退出码，立即停止；不得修改条件文件、不得继续其他诊断/实现/最终验证，TASK-B-003 保持 `READY`，请求合同签发者以新修订提交把该路径提升为 Expected File。
-- 若失败原因不能唯一归属于某个 Conditional File，同样停止并报告，不得自行推断权限。只有全部条件诊断为零且没有条件文件需求，才可进入 Expected Files 范围内的业务实现。
+- 若失败原因不能唯一归属于某个 Conditional File，同样停止并报告，不得自行推断权限。只有全部条件诊断为零且没有条件文件需求，才可进入 Final verification。
 
-#### C. Final verification
+#### D. Final verification
 
-- 实现完成后必须从第一项开始按下列固定顺序核对/执行。第 1 项 `npm ci` 直接引用本次 Preflight 的成功安装日志，不重复运行；其余命令必须重新从头顺序执行：
+Install prerequisite:
+
+- 引用本次 Preflight 唯一一次 `npm ci` 成功日志；Final verification 不重复运行 `npm ci`。
+
+实现与全部条件诊断完成后，Final verification 的实际命令必须从以下第一项开始重新按固定顺序执行：
 
 ```powershell
-npm ci
 node --test src/shared/lib/__tests__/classification.test.mjs
 node --test src/shared/lib/__tests__/importValidation.test.mjs
 npm run test
@@ -1313,11 +1329,11 @@ git diff --check
 - 自定义标签与可识别旧系统地区标签的 before/after 表，证明只清理明确地区标签且非地区标签不被覆盖或误删。
 - 本地 JSON export→import、WebDAV schema v2 与旧数组 payload、同步 merge/PUT/GET、冲突恢复的脱敏字段级 before/after；全部属于 Playwright mock IPC/payload 边界证据，不得表述为真实 WebDAV 或真实桌面证据。
 - 证据等级必须明确：Node 只证明纯函数/导入规范化；Playwright mock 只证明浏览器 UI 与 mock IPC/payload 边界；Tauri build 只证明构建成功。任何一项均不得宣称真实桌面、真实数据库或真实 WebDAV 已验证。
-- Preflight、条件诊断和 Final verification 的完整日志/退出码、Git diff/name-status、变更预算核对、条件诊断结论、任务 PID/4177 端口最终清理结果，以及未启动 app、未创建/访问数据库、未读取凭据或连接 WebDAV 的边界声明。
+- Preflight、Expected implementation 最小测试、Conditional diagnostics 和 Final verification 的完整日志/退出码、Git diff/name-status、变更预算核对、条件诊断结论、任务 PID/4177 端口最终清理结果，以及未启动 app、未创建/访问数据库、未读取凭据或连接 WebDAV 的边界声明。
 
 ### Stop-on-failure Rules
 
-- Preflight、条件诊断或 Final verification 任一命令/断言失败，立即停止对应阶段及全部后续工作，保留完整输出与退出码；不得用后续成功覆盖失败，不得写 AC PASS。
+- Preflight、Expected implementation 最小测试、Conditional diagnostics 或 Final verification 任一命令/断言失败，立即停止对应阶段及全部后续工作，保留完整输出与退出码；不得用后续成功覆盖失败，不得写 AC PASS。
 - 条件诊断或最终验证指向 Conditional File 时，TASK-B-003 必须保持 `READY`，不得修改该文件或标记 `IMPLEMENTED`，只请求合同签发者提交明确提升路径的新合同修订。
 - 需要未列出文件、超过变更预算、需要 Rust/schema/migration/依赖修改，或发现现有 IPC 无法实现 AC 时，只记录最小复现与阻塞并停止，请求重新签发合同。
 - 发现工作树含任务外修改、任何数据库/用户数据/真实凭据可能被访问、任何 WebDAV 服务可能被连接、app 可能被启动或任务进程无法确认退出时，立即停止；不得 reset、clean、stash 或覆盖现场。

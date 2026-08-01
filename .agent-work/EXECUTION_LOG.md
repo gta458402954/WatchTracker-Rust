@@ -681,3 +681,12 @@
 - Runtime boundary correction: B-003 is limited to Node, Playwright browser mock, frontend build and Tauri build. It must not launch Tauri/app.exe, create or access SQLite, connect to real or local WebDAV, or read real credentials. Real desktop/data-directory isolation/final smoke belongs to TASK-B-005.
 - Evidence levels: Node proves pure functions/import normalization; Playwright mock proves browser UI and mock IPC/payload boundaries; Tauri build proves build success only. No layer may claim real desktop, database or WebDAV verification.
 - Scope: contract correction only. No business source, test, dependency, build file, Codex Review or isolated-branch content was modified; no Implementation Pass was executed, pushed or opened as a PR.
+
+### TASK-B-003 execution-stage ordering correction
+
+- Date/remediation base: 2026-08-01, `c9e563105586e6ceb1702da254a32fc0b096fefb`; governance-only follow-up, without amend.
+- Ordered gates: A Preflight; B Expected implementation of tests/fixtures plus only `classification.ts` and `SettingsModal.tsx`; C Conditional diagnostics after those Expected business fixes; D Final verification.
+- Mechanical cleanliness: Preflight captures `git status --porcelain=v1 --untracked-files=all` and exits nonzero when any staged, unstaged or untracked path exists; `git status --short --branch` remains display evidence only.
+- Conditional timing: diagnostics now ask whether RecordForm/importValidation/webdav/useWatchList still lose fields after both Expected business files are corrected. Failure preserves full output/exit code, leaves Conditional Files untouched and TASK-B-003 `READY`, then stops for a signer-authored promotion commit.
+- Install evidence: `npm ci` runs exactly once in Preflight. Final verification names the successful Preflight log as an install prerequisite and its actual command sequence begins with the classification Node test.
+- Scope: contract ordering correction only. No business source, test, dependency, build file, Codex Review or isolated-branch content was modified; no Implementation Pass was executed, pushed or opened as a PR.
