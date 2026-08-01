@@ -711,3 +711,10 @@
 - Runtime boundary: no Tauri/app executable was launched; no SQLite database or real credentials were accessed; no real or local WebDAV service was contacted. Final related-process and port-4177 counts were both zero.
 - Evidence: `.agent-work/evidence/tests/TASK-B-003/implementation-summary.md` and the adjacent per-command stdout/stderr/meta logs. Node evidence proves pure functions/import normalization, Playwright proves browser UI and mock IPC/payload boundaries, and Tauri build proves buildability only.
 - Status: IMPLEMENTED; not accepted. AC-B-005/006 remain NOT RUN pending an independent Verification Pass.
+
+### TASK-B-003 conflict-restore coverage remediation
+
+- Base: `72fa5299461dd139735d0a619c8b717f372d3045`; test-only remediation with zero production or Conditional File changes.
+- Added a UI-level conflict restore assertion and aligned the browser IPC fixture's same-ID insert behavior with SQLite replacement semantics.
+- Direct verification passed: target 1/1, B-003 Playwright 8/8, complete Playwright 16/16, Node 36/36, typecheck, lint, frontend build, and targeted diff check.
+- No desktop app, database, credential, or WebDAV service was used. TASK-B-003 remains IMPLEMENTED pending independent verification.

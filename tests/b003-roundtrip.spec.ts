@@ -216,7 +216,7 @@ test('@conditional-watchlist-boundary local export and import preserve region fi
   ]);
 });
 
-test('@conditional-watchlist-boundary sync replacement and conflict restore preserve region fields', async ({ page }) => {
+test('@conditional-watchlist-boundary sync replacement preserves region fields', async ({ page }) => {
   const local = record('shared', { chineseName: '本地旧版本' });
   const remote = record('shared', {
     chineseName: '云端新版本',
@@ -241,4 +241,58 @@ test('@conditional-watchlist-boundary sync replacement and conflict restore pres
     originCountry: 'HK, TW, GB',
     contentTags: '悬疑,自定义',
   });
+});
+
+test('@conditional-watchlist-boundary conflict restore preserves region fields and clears history', async ({ page }) => {
+  const current = record('conflict-record', {
+    chineseName: '当前保留版本',
+    originCountry: 'CN',
+    contentTags: '当前标签',
+    updatedAt: '2026-03-02T00:00:00.000Z',
+  });
+  const discarded = record('conflict-record', {
+    chineseName: '被覆盖版本',
+    originCountry: 'HK, TW, GB',
+    contentTags: '悬疑,自定义',
+    updatedAt: '2026-03-01T00:00:00.000Z',
+  });
+  const conflict = {
+    id: current.id,
+    kept: 'local',
+    at: '2026-03-03T00:00:00.000Z',
+    discarded,
+  };
+  await setupMockIpc(page, {
+    records: [current],
+    settings: {
+      sync_conflict_history_version: '2',
+      sync_conflicts: JSON.stringify([conflict]),
+    },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: /云端同步/ }).click();
+
+  await expect(page.getByText('被覆盖版本', { exact: true })).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '恢复此版本' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '冲突记录已恢复。' })).toBeVisible();
+  await expect(page.getByText('暂无同步冲突记录')).toBeVisible();
+
+  const snapshot = await mockSnapshot(page);
+  const insert = snapshot.calls.find(call => call.command === 'insert_record');
+  expect(insert?.args.r).toMatchObject({
+    id: current.id,
+    chineseName: '被覆盖版本',
+    originCountry: 'HK, TW, GB',
+    contentTags: '悬疑,自定义',
+  });
+  expect(snapshot.records).toHaveLength(1);
+  expect(snapshot.records[0]).toMatchObject({
+    id: current.id,
+    chineseName: '被覆盖版本',
+    originCountry: 'HK, TW, GB',
+    contentTags: '悬疑,自定义',
+  });
+  expect(snapshot.settings.sync_conflicts).toBe('[]');
 });

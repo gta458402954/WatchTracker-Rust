@@ -52,3 +52,10 @@ Final related-process count and port-4177 listener count were both zero (`18-fin
 - Playwright proves SettingsModal, add/edit paths, local export/import, schema-v2 and legacy-array WebDAV payload, and watchlist merge boundaries using browser mocks only. It does not prove real WebDAV, desktop runtime or database behavior.
 - Tauri build proves compilation and bundling only; it does not prove a launched desktop application.
 - These implementation results support the contracted AC-B-005/006 steps, but both AC conclusions remain NOT RUN until independent verification.
+
+## Conflict-restore coverage remediation
+
+- Base: `72fa5299461dd139735d0a619c8b717f372d3045`.
+- Scope: test-only. `tests/b003-roundtrip.spec.ts` now exercises the actual conflict-history restore action, and `tests/fixtures/mockIpc.ts` models SQLite's same-ID replacement behavior for `insert_record`. Production and Conditional Files were not modified.
+- The first wrapper attempt did not start Playwright because PowerShell rejected its quoting; no test result was inferred from that failure. The resumed direct commands passed: conflict restore 1/1, B-003 Playwright 8/8, complete Playwright 16/16, Node 36/36, typecheck, lint, frontend build, and targeted `git diff --check`.
+- No Tauri/app executable, SQLite database, real credential, or WebDAV service was used. Raw logs from the original Implementation Pass were not changed.
