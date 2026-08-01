@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 与 `TASK-B-002` 已验收；`TASK-B-003` 已单独签发为 READY，B-004/B-005 尚未开放。
+- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001`~`TASK-B-003` 已验收；`TASK-B-004` 已从正式集成线单独签发，B-005 尚未开放。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 - Phase B 后续工作以 `codex/phase-b-integration` 为唯一集成线；B-003~B-005 必须从最新已验收 integration HEAD 逐项签发，整个 Phase B 完成并通过 Gate B 后才向 `main` 提交一次完整 PR。
@@ -16,7 +16,7 @@
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
-- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001` 与 `TASK-B-002` 已 `ACCEPTED`，`TASK-B-003`~`TASK-B-005` 继续等待依赖和单独签发。
+- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001`~`TASK-B-003` 已 `ACCEPTED`，`TASK-B-004` 已 `READY`，B-005 继续等待依赖和单独签发。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text
@@ -1358,15 +1358,29 @@ ACCEPTED — Implementation `72fa529` plus the conflict-restoration regression `
 ## TASK-B-004：建立地区专项单元、组件与 E2E 矩阵
 
 - Phase: B
-- Owner: Antigravity
-- Status: BLOCKED
+- Owner: Codex
+- Status: READY
 - Priority: P1 / High
-- Dependencies: AC-GATE-001, TASK-B-001, TASK-B-002, TASK-B-003
+- Dependencies: AC-GATE-001 PASS, TASK-B-001 ACCEPTED, TASK-B-002 ACCEPTED, TASK-B-003 ACCEPTED
+- BASE: `db6f1ad` (`codex/phase-b-integration` after independent B-003 acceptance)
 - Acceptance Criteria: AC-B-001~007
+- Execution Policy: Codex simplified workflow. The Implementation Pass may mark this task `IMPLEMENTED` only; acceptance requires a clean detached Verification Pass. Existing accepted B-001/B-003 tests are the starting point and must not be duplicated without a demonstrated coverage gap.
 - Expected Files:
-  - `src/shared/lib/__tests__/*`
+  - `src/shared/lib/__tests__/classification.test.mjs`
+  - `src/shared/lib/__tests__/filtering.test.mjs`
+  - `src/shared/lib/__tests__/importValidation.test.mjs`
+  - `tests/regions.spec.ts`
+  - `tests/b003-roundtrip.spec.ts`
   - `tests/fixtures/mockIpc.ts`
-  - `tests/region.spec.ts`（建议新增）
+  - `.agent-work/TASKS.md`（仅本任务状态与 Execution Result）
+  - `.agent-work/OWNERSHIP.md`（仅当前分配）
+  - `.agent-work/EXECUTION_LOG.md`（仅追加实施摘要）
+  - `.agent-work/evidence/tests/TASK-B-004/*`
+- Forbidden Changes:
+  - 任何生产源码、Rust、数据库、依赖、构建配置或 B-005/最终报告。
+  - 新建与 `tests/regions.spec.ts` 重复的 `tests/region.spec.ts`。
+  - merge、cherry-pick、复制或使用 `codex/phase-b-complete`、`dc8308f`、`0f44b76`、`c7d4e0e` 及其 worktree 内容。
+  - 真实数据库、真实凭据、真实 WebDAV/TMDB 服务或桌面应用；这些边界保留给 B-005。
 
 ### Objective
 
@@ -1374,9 +1388,10 @@ ACCEPTED — Implementation `72fa529` plus the conflict-restoration regression `
 
 ### Implementation Requirements
 
-- 夹具含常见代码、多国、重复、UK、旧中文标签、未知和未映射两位代码。
-- E2E 覆盖实际选项集合、CN/HK/TW、GB/UK、多国、未知、组合筛选、增改删及导入/同步动态更新。
-- 明确断言评分/搜索/锁定/排序/current region 不改变基础地区计数。
+- 先建立 REQUEST 7.2/7.3 到现有测试名称的矩阵；只有发现明确缺口时才新增最小测试。
+- 单元矩阵必须覆盖常见代码、多国、重复、UK、旧中文标签、未知、未映射两位代码、source priority、聚合/稳定排序和自定义标签保护。
+- E2E 矩阵必须覆盖实际选项集合、CN/HK/TW、GB/UK、多国、未知、media/status/search/lock 组合、失效选择、空数据、换行/可访问性、增改删、整体替换、导入、同步和冲突恢复。
+- 明确证明 search、lock、排序和 active region 不改变基础地区计数；评分字段不属于当前 UI 筛选器，不得虚构评分筛选。
 - mock IPC 与真实 DTO 一致；不以 mock 替代最终桌面冒烟。
 
 ### Verification
@@ -1386,16 +1401,17 @@ npm run test
 npx playwright test
 npm run typecheck
 npm run lint
+npm run build
 ```
 
 ### Required Evidence
 
-- REQUEST 7.2/7.3 到测试名称映射。
-- Vitest/Playwright 完整日志、截图或 trace。
+- REQUEST 7.2/7.3 到测试名称映射，以及已发现缺口和新增断言说明。
+- Node/Playwright 完整结果摘要；失败时保留 trace，成功时复用现有大量地区布局截图，不重复提交相同截图。
 
 ### Execution Result
 
-BLOCKED — awaits TASK-B-003 acceptance and a separate Codex reissue from the latest accepted `codex/phase-b-integration` HEAD; no implementation is authorized.
+READY — separately authorized by the user after TASK-B-003 independent acceptance. Implementation must start from `codex/phase-b-integration@db6f1ad` and may not use the quarantined parallel line.
 
 ## TASK-B-005：执行地区全量回归并提交验收材料
 
