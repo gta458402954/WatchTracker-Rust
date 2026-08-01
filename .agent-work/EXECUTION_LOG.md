@@ -601,3 +601,34 @@
 - Delivery boundary: consecutive EXE/MSI/NSIS hashes differ and all artifacts remain unsigned. Byte-level reproducibility needs a separately defined release-engineering contract; signing needs an approved certificate and secret flow.
 - Repository boundary: content-identical Cargo stat/EOL noise was cleared by index refresh only. No Phase B or DEFERRED business work, user database access, push or remote CI claim.
 - Evidence: `.agent-work/evidence/review/RESIDUAL-HARDENING.md`.
+
+---
+
+## TASK-B-001 authorization
+
+- Date/base: 2026-08-01, `codex/task-b-001` from protected `main@d7b5f2cd7ceca95f26e000115d9d3bceac463cc8`.
+- Preconditions: Gate A PASS; PR #1 merged with commit history preserved; final `main` CI run `30695201620` passed Frontend and Playwright, Rust checks, and Windows Tauri bundle.
+- Assignment: Owner changed from paused Antigravity to Codex; TASK-B-001 changed from BLOCKED to READY. B-002 through B-005 remain blocked and were not authorized.
+- Current-source audit: stable main has only the old fixed Chinese-region-tag logic and no `countryNames.ts` or region unit test. The preserved recovery snapshot contains a region prototype, but it has known UK ordering, preferred-order, unknown-sentinel, tie-break and obsolete Vitest-entry defects.
+- Contract adjustment: B-001 must selectively port and correct that prototype into the current Node-test baseline; `regionCodesOf` becomes the single domain entry while legacy `regionsOf` remains a thin compatibility wrapper until B-002. Wholesale copying, UI/TMDB work and DEFERRED scope are prohibited.
+- Boundary: authorization documentation only; no business source, dependency, database, user data or runtime behavior changed.
+
+### TASK-B-001 Codex Implementation Pass
+
+- Scope: added centralized country names/aliases, ISO normalization, source-priority extraction, an explicit unknown sentinel, deduplicating aggregation and deterministic preferred/count/name/code ordering.
+- Compatibility: `regionCodesOf` is the only ISO/unknown parser. Existing `regionsOf` delegates to it and maps recognized codes back to the seven legacy Chinese buttons until B-002 changes the UI.
+- Archived prototype corrections: alias mapping now precedes generic two-letter validation (`UK -> GB`); preferred order is `CN,HK,TW,US,JP,KR,GB`; placeholder values are filtered; unknown is explicit; code is the final sorting tie-break; tests use the current Node runner instead of the absent Vitest dependency.
+- Verification: clean `npm ci` audit 0; region Node tests 12/12; complete Node tests 26/26; typecheck PASS; lint PASS; production build PASS (607 modules); baseline Playwright 3/3 PASS.
+- Boundary: no package/lockfile, UI component, TMDB, import/export, WebDAV, Rust, schema, database or DEFERRED change. No application was launched against real user data.
+- Evidence: `.agent-work/evidence/tests/TASK-B-001/implementation-summary.md`.
+- Status: IMPLEMENTED; not accepted. Independent Verification Pass remains mandatory.
+
+### TASK-B-001 Independent Verification and Acceptance
+
+- Reviewed implementation: `b70aa24` from clean detached `D:\Project\Projects\WatchTracker-B001-Verify`.
+- Scope review: only the three authorized domain/test files plus task/evidence documentation changed; no dependency, UI, TMDB, Rust, schema, database or DEFERRED scope entered the implementation.
+- Independent result: `npm ci` audit 0; region Node tests 12/12; complete Node tests 26/26; typecheck/lint/build PASS; baseline Playwright 3/3; three extra read-only boundary assertions PASS.
+- Evidence integrity: one initial ad-hoc boundary command failed at JavaScript parsing because of shell quoting and did not execute product code; the corrected equivalent command exited 0 and is the authoritative boundary result.
+- AC disposition: AC-B-001 PASS. AC-B-002 domain display/unknown and AC-B-004 aggregation/order portions are verified, but both overall criteria retain later UI/combined-filter work and are not prematurely marked PASS.
+- Final status: TASK-B-001 ACCEPTED. B-002 through B-005 remain blocked pending separate authorization.
+- Review: `.agent-work/evidence/review/TASK-B-001-CODEX-REVIEW.md`.

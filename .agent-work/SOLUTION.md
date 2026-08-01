@@ -182,7 +182,7 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 
 ### 阶段 B
 
-- Vitest：所有 FR-01~06 规则、排序、未知、多国、来源优先、自定义标签保护。
+- Node 原生单元测试：所有 FR-01~06 规则、排序、未知、多国、来源优先、自定义标签保护；沿用阶段 A 已建立的 `npm test` 入口，不为 Phase B 重新引入第二套单元测试框架。
 - Hook/组件：计数基础范围和无效选择清理。
 - Playwright：混合数据、CN/HK/TW、GB/UK、多国、未知、组合筛选、动态更新和大量地区布局。
 - 回归：全量前端检查、Playwright，相关 Rust 检查，并确认 import/restore/sync 保留 `originCountry`。
