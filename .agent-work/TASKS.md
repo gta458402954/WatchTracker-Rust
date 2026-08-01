@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。Phase B 尚未签发或启动。
+- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 已单独签发；其余 Phase B 任务尚未开放。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 
@@ -15,7 +15,7 @@
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
-- Phase B：5 个任务；Gate A 前置条件已满足，但当前仍保持 BLOCKED，等待 Owner 单独签发。
+- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001` 已转 `READY`，`TASK-B-002`~`TASK-B-005` 继续等待依赖和单独签发。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text
@@ -1059,49 +1059,55 @@ Evidence is under `.agent-work/evidence/{builds,logs,screenshots,tests}/TASK-A-0
 
 ---
 
-## Phase B：地区动态化专项（Gate A 已 PASS；等待单独签发）
+## Phase B：地区动态化专项（Gate A 已 PASS；TASK-B-001 已单独签发）
 
 ## TASK-B-001：收口地区规范化与聚合领域规则
 
 - Phase: B
-- Owner: Antigravity
-- Status: BLOCKED
+- Owner: Codex
+- Status: READY
 - Priority: P1 / High
-- Dependencies: AC-GATE-001
+- Dependencies: AC-GATE-001（PASS）
 - Acceptance Criteria: AC-B-001, AC-B-002, AC-B-004
+- Authorization Base: `main@d7b5f2cd7ceca95f26e000115d9d3bceac463cc8`
+- Execution Policy: Codex simplified workflow; Implementation Pass may end at `IMPLEMENTED` only, followed by an independent Verification Pass.
 - Expected Files:
   - `src/shared/lib/countryNames.ts`
   - `src/shared/lib/classification.ts`
-  - `src/shared/lib/__tests__/classification.test.ts`
+  - `src/shared/lib/__tests__/classification.test.mjs`
 
 ### Objective
 
-复用当前未提交地区纯函数，修正 UK/GB、占位值、未知地区、固定顺序和最终代码 tie-break，形成唯一领域规则源。
+从保留的恢复现场选择性迁移地区纯函数原型，修正 UK/GB、占位值、未知地区、固定顺序和最终代码 tie-break，在当前稳定主线上形成唯一领域规则源。
 
 ### Implementation Requirements
 
-- 先审计现有 `normalizeCountryCodes/regionsOf/aggregateRegions`，不得新建第二套解析器。
+- 先对照稳定主线的旧固定标签逻辑和保留现场 `codex/current-recovery-snapshot@10ee559` 中的 `normalizeCountryCodes/regionsOf/aggregateRegions` 原型；不得整体复制旧工作区，也不得新建第二套解析器。
+- 旧原型只能选择性迁移：必须修正其 `UK` 处理顺序、错误的优先地区顺序、缺失的未知地区哨兵、缺失的最终代码 tie-break，以及与当前 Node 原生测试入口不兼容的问题。
+- 以 `regionCodesOf` 作为唯一 ISO/未知领域入口；现有 `regionsOf` 在 B-002 接线前只允许作为调用 `regionCodesOf` 的旧中文按钮兼容包装，不得保留独立解析逻辑或让当前固定地区计数回归。
 - 严格按 originCountry 优先、旧标签回退、未知兜底。
 - 过滤 N/A、NA、NULL、UNKNOWN 等；`UK -> GB`；保留其他格式有效两位代码。
 - 固定顺序 `CN,HK,TW,US,JP,KR,GB`；其余数量/名称/代码排序；未知最后。
 - 多国和重复值按需求计数。
+- B-001 只实现纯领域规则和单元测试，不接线动态 UI、TMDB 往返或 DEFERRED 功能。
 
 ### Verification
 
 ```powershell
-npm run test -- src/shared/lib/__tests__/classification.test.ts
+node --test src/shared/lib/__tests__/classification.test.mjs
+npm run test
 npm run typecheck
 npm run lint
 ```
 
 ### Required Evidence
 
-- FR-01/02/04 到单测映射和日志。
-- 现有实现复用/修正说明。
+- FR-01/02/04 到 Node 单元测试名称的映射和完整日志。
+- 保留现场原型的选择性迁移/修正说明。
 
 ### Execution Result
 
-Blocked by Gate A
+READY — User authorized the recommended Phase B sequence on 2026-08-01. Gate A is PASS; protected remote `main@d7b5f2c` and GitHub Actions run `30695201620` are green. Codex reassigned the task from paused Antigravity and audited the archived region prototype before implementation. No business source was changed during authorization.
 
 ## TASK-B-002：完成动态地区选项、筛选状态与界面行为
 

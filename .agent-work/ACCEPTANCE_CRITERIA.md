@@ -405,9 +405,9 @@
   3. 过滤 N/A、NA、NULL、UNKNOWN、空和非两字母值。
   4. 保留未映射但格式有效两位代码。
 - Expected Result: 输出为稳定、去重的大写代码数组，完全符合 FR-01。
-- Required Evidence: Vitest 测试名称与日志。
+- Required Evidence: 当前稳定基线的 Node 原生单元测试名称与日志。
 - Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Evidence: Gate A and protected-main CI are PASS; TASK-B-001 is separately authorized but has not yet been implemented or verified.
 
 ### AC-B-002：地区显示与未知地区正确
 
@@ -422,7 +422,7 @@
 - Expected Result: 三个中国地区互不合并；未知有统一哨兵且不与真实代码冲突。
 - Required Evidence: 单测和 UI 截图。
 - Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Evidence: Gate A and protected-main CI are PASS; the B-001 domain portion is authorized but has not yet been implemented or verified. UI evidence remains outside B-001.
 
 ### AC-B-003：动态选项范围、数量与失效选择正确
 
@@ -451,9 +451,9 @@
   2. 验证地区与 mediaType/status/rating/search/lock 组合。
   3. 验证优先序 `CN,HK,TW,US,JP,KR,GB`，其余数量降序、名称升序、代码升序，未知最后。
 - Expected Result: 每记录每地区最多计一次，多国可贡献多个地区，排序完全稳定。
-- Required Evidence: Vitest/Playwright 日志和期望数据表。
+- Required Evidence: Node 原生单元测试、Playwright 日志和期望数据表。
 - Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Evidence: Gate A and protected-main CI are PASS; the B-001 aggregation/sorting portion is authorized but has not yet been implemented or verified. Combined-filter UI evidence remains outside B-001.
 
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 

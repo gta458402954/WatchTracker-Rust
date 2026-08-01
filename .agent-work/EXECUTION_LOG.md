@@ -601,3 +601,14 @@
 - Delivery boundary: consecutive EXE/MSI/NSIS hashes differ and all artifacts remain unsigned. Byte-level reproducibility needs a separately defined release-engineering contract; signing needs an approved certificate and secret flow.
 - Repository boundary: content-identical Cargo stat/EOL noise was cleared by index refresh only. No Phase B or DEFERRED business work, user database access, push or remote CI claim.
 - Evidence: `.agent-work/evidence/review/RESIDUAL-HARDENING.md`.
+
+---
+
+## TASK-B-001 authorization
+
+- Date/base: 2026-08-01, `codex/task-b-001` from protected `main@d7b5f2cd7ceca95f26e000115d9d3bceac463cc8`.
+- Preconditions: Gate A PASS; PR #1 merged with commit history preserved; final `main` CI run `30695201620` passed Frontend and Playwright, Rust checks, and Windows Tauri bundle.
+- Assignment: Owner changed from paused Antigravity to Codex; TASK-B-001 changed from BLOCKED to READY. B-002 through B-005 remain blocked and were not authorized.
+- Current-source audit: stable main has only the old fixed Chinese-region-tag logic and no `countryNames.ts` or region unit test. The preserved recovery snapshot contains a region prototype, but it has known UK ordering, preferred-order, unknown-sentinel, tie-break and obsolete Vitest-entry defects.
+- Contract adjustment: B-001 must selectively port and correct that prototype into the current Node-test baseline; `regionCodesOf` becomes the single domain entry while legacy `regionsOf` remains a thin compatibility wrapper until B-002. Wholesale copying, UI/TMDB work and DEFERRED scope are prohibited.
+- Boundary: authorization documentation only; no business source, dependency, database, user data or runtime behavior changed.

@@ -51,3 +51,9 @@ Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；
 - 提交必须包含单一任务的相关改动；业务实现与独立验收结论不得伪装成同一步完成。
 - Verification Pass 必须检查提交范围、运行必要测试，并将结论记录为 `ACCEPTED` 或 `CHANGES_REQUESTED`。
 - 涉及真实数据、凭据、外部发布或不可逆操作时，仍需用户明确授权。
+
+## Current Phase B assignment
+
+- `TASK-B-001`: Owner `Codex`; Status `READY`; authorization base `main@d7b5f2cd7ceca95f26e000115d9d3bceac463cc8`.
+- `TASK-B-002`~`TASK-B-005`: not authorized for implementation; remain `BLOCKED` until their task dependencies are accepted and Codex separately reassigns them.
+- Antigravity remains paused. The B-001 Implementation Pass cannot mark the task `ACCEPTED`; an independent Verification Pass is required.
