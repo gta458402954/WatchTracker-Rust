@@ -471,8 +471,8 @@
   3. 更新自动地区标签前后对比用户自定义非地区标签。
 - Expected Result: `originCountry` 不丢多国代码；筛选用代码；自定义标签不被覆盖或误删；不修改 TMDB 搜索接口。
 - Required Evidence: BASE 实际 Node 原生 classification 测试、定向 Playwright 表单保存/更新日志及标签 before/after；不存在的 mapper/store 测试不得作为要求。
-- Result: NOT RUN
-- Evidence: TASK-B-003 is authorized from `codex/phase-b-integration@6202f85d86a6e0b8611e6135cec479306a8768fc` but not implemented or independently verified. Result remains NOT RUN.
+- Result: PASS
+- Evidence: Independent clean detached verification of `c7a332e` passed classification 15/15, the complete Node suite 36/36, targeted B-003 Playwright 8/8 and full Playwright 16/16. Movie/TV/season create and update paths preserve normalized multi-country codes; Settings metadata refresh and RecordForm retain custom tags while removing only recognized system-region tags. The TMDB search contract was not changed. See `.agent-work/evidence/review/TASK-B-003-CODEX-REVIEW.md`.
 
 ### AC-B-006：旧数据、导入恢复同步兼容
 
@@ -487,8 +487,8 @@
   3. 通过导入、备份恢复和同步输入旧记录，核对相同分类且 `originCountry` 不丢。
 - Expected Result: 无破坏性迁移，新旧混合结果可预测一致。
 - Required Evidence: BASE 实际 Node 原生 import 测试与定向 Playwright mock IPC/payload 日志。Node 只证明纯函数/导入规范化，Playwright mock 只证明浏览器与 mock 边界，Tauri build 只证明构建成功；B-003 不得启动或声明验证真实桌面、SQLite 或真实/本地 WebDAV 服务。
-- Result: NOT RUN
-- Evidence: TASK-B-003 is authorized but has not run an Implementation or independent Verification Pass. No partial result is promoted to AC PASS; Result remains NOT RUN.
+- Result: PASS
+- Evidence: Independent verification passed import normalization 4/4 and Playwright coverage for local export/import, WebDAV schema-v2 and legacy-array GET/merge/PUT, sync replacement, conflict restoration and conflict-history clearing. This proves pure-function and browser mock IPC/payload boundaries only; it does not claim a real desktop, SQLite, credential or external WebDAV run. See `.agent-work/evidence/review/TASK-B-003-CODEX-REVIEW.md`.
 
 ### AC-B-007：地区专项自动化与界面流程完整
 

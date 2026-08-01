@@ -1195,7 +1195,7 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
 
 - Phase: B
 - Owner: Codex
-- Status: IMPLEMENTED
+- Status: ACCEPTED
 - Priority: P1 / High
 - Dependencies: AC-GATE-001 PASS, TASK-B-001 ACCEPTED, TASK-B-002 ACCEPTED
 - BASE: `6202f85d86a6e0b8611e6135cec479306a8768fc` (`codex/phase-b-integration` at authorization)
@@ -1353,7 +1353,7 @@ git diff --check
 
 ### Execution Result
 
-IMPLEMENTED — The Implementation Pass preserves normalized multi-country TMDB origin codes and custom tags through the authorized classification, settings batch-update and browser-mock roundtrip boundaries. The first Expected Playwright run recorded exit `1` because the existing settings button lacked an accessible name; after the authorized Header-only recovery, the rerun passed. All four Conditional diagnostics passed without modifying a Conditional File, and every Final verification command exited `0`, including 15/15 full Playwright tests and the Windows Tauri build. Evidence: `.agent-work/evidence/tests/TASK-B-003/implementation-summary.md`. AC-B-005/006 remain NOT RUN and independent verification is still required; this is not acceptance.
+ACCEPTED — Implementation `72fa529` plus the conflict-restoration regression `c7a332e` were independently reviewed from clean detached `D:\Project\Projects\WatchTracker-B003-Verify`. Fresh `npm ci` reported audit 0; classification passed 15/15, import 4/4, the complete Node suite 36/36, targeted B-003 Playwright 8/8 and full Playwright 16/16. Typecheck, lint, frontend build, Windows Tauri EXE/MSI/NSIS build and `git diff --check` passed. No related process, port 4177 listener or worktree change remained. AC-B-005 and AC-B-006 PASS within their documented mock/build evidence boundaries. Review: `.agent-work/evidence/review/TASK-B-003-CODEX-REVIEW.md`. TASK-B-004/B-005 remain blocked until separately authorized.
 
 ## TASK-B-004：建立地区专项单元、组件与 E2E 矩阵
 
