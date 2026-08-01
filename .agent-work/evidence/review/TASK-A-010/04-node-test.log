@@ -1,0 +1,26 @@
+
+> watch-tracker@1.10.0 test
+> node --test "src/shared/lib/__tests__/*.test.mjs"
+
+✔ publicFailureMessage returns a fixed user-safe message (0.7321ms)
+✔ errorCategory exposes only the error type (0.1577ms)
+✔ reportOperationFailure does not log the raw error message (0.7248ms)
+✔ key asynchronous failures produce generic user notifications (0.5358ms)
+✔ import normalization preserves region and revision fields (2.1572ms)
+✔ missing identifiers and timestamps receive deterministic fallbacks (0.3612ms)
+✔ invalid top-level payloads and array rows are rejected before replacement (0.6895ms)
+✔ parseSyncInterval accepts the supported range (0.9528ms)
+✔ parseSyncInterval falls back for invalid values (0.1606ms)
+✔ initializeApp returns the loaded application state (1.0656ms)
+✔ initializeApp propagates initialization failures (0.6401ms)
+✔ initialization can be retried after a failed attempt (0.3767ms)
+✔ rejects every non-finite numeric update (1.2761ms)
+✔ accepts finite numbers, nulls and non-numeric fields (0.2628ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 156.8993

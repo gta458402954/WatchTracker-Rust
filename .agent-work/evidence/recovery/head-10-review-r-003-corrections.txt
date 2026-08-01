@@ -1,0 +1,33 @@
+===============================================================================
+WatchTracker REVIEW-R-003 Corrections & Audit Trail
+Task: TASK-R-003 Remediation
+Target Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Created At: 2026-07-27T22:21:45+08:00
+===============================================================================
+
+1. CORRECTION OF PREVIOUS COMMIT SHA & REPORTING ERRORS
+-------------------------------------------------------------------------------
+- Previous Report Commit SHA Error: 8251e18d6174bb0535f29f0eef2a912e52b2bcad was an uncommitted/invalid SHA.
+- Actual Previous R-003 Commit SHA: 063fd8333347d8da933542ab95ec9a1666ee9efc (parent: b9666b6dd5a795f63b5c42655ac5e315d40b6d0a).
+- Correction: All report entries and evidence trees updated to reflect true git objects.
+
+2. CORRECTION OF RAW LOG FILE PACKAGING (.txt Extension)
+-------------------------------------------------------------------------------
+- Issue: In commit 063fd833, raw `.log` files were excluded due to git ignoring `.log` patterns.
+- Correction: All raw command outputs are saved as `.txt` files in `.agent-work/evidence/recovery/head-raw-*.txt`.
+- Verification: `git ls-tree` after commit confirms all `head-raw-*.txt` files are indexed in Git.
+
+3. CORRECTION OF PLAYWRIGHT FAILURE ATTRIBUTION
+-------------------------------------------------------------------------------
+- Issue: Previous report incorrectly attributed Playwright failure to "missing running application server".
+- Correction: Playwright `webServer` automatically started Vite dev server at http://localhost:5173. 4/4 tests ran and failed due to missing DOM elements (empty state text missing, button.bg-indigo-600 missing). Trace diagnostic logged in `head-11-playwright-failure-diagnostics.txt`.
+
+4. CORRECTION OF RELEASE BINARY AVAILABILITY
+-------------------------------------------------------------------------------
+- Issue: Previous report listed stale/inferred release binary hashes.
+- Correction: Production `npm run tauri build` fails at `beforeBuildCommand` (`npm run build`) with Exit Code 1 / 2. No release binary or installer exists under target/release for commit 29ea3a4. User CANNOT launch any release executable.
+
+5. PROCESS TREE CLEANUP & REAL DATABASE ISOLATION
+-------------------------------------------------------------------------------
+- All leaked processes (Tauri CLI node, Vite node, cargo, debug app.exe) were forcefully killed using taskkill. 0 processes remain.
+- Real user databases verified pre-test and post-test: 100% MATCH.

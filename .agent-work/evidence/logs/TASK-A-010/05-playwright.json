@@ -1,0 +1,8 @@
+{
+  "Step": 5,
+  "Command": "npx playwright test",
+  "StartedAtUtc": "2026-07-29T16:17:10.2456724Z",
+  "EndedAtUtc": "2026-07-29T16:17:14.8453937Z",
+  "DurationMs": 4600.0,
+  "ExitCode": 0
+}

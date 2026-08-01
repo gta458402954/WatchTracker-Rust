@@ -1,0 +1,111 @@
+===============================================================================
+TASK-A-001 ENVIRONMENT AUDIT LOG
+Execution Workdir: D:\Project\Projects\WatchTracker-Recovery
+===============================================================================
+-------------------------------------------------------------------------------
+COMMAND: node --version
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery
+START TIME: 2026-07-27T23:45:31.9183024+08:00
+END TIME: 2026-07-27T23:45:31.9791916+08:00
+DURATION: 0.0608892 seconds
+EXIT CODE: 0
+STDOUT:
+v24.18.0
+
+STDERR:
+
+-------------------------------------------------------------------------------
+COMMAND: npm --version
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery
+START TIME: 2026-07-27T23:45:31.9853475+08:00
+END TIME: 2026-07-27T23:45:32.2505598+08:00
+DURATION: 0.2652123 seconds
+EXIT CODE: 0
+STDOUT:
+11.16.0
+
+STDERR:
+
+-------------------------------------------------------------------------------
+COMMAND: rustc --version
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery\src-tauri
+START TIME: 2026-07-27T23:45:32.2508221+08:00
+END TIME: 2026-07-27T23:45:32.3070258+08:00
+DURATION: 0.0562037 seconds
+EXIT CODE: 0
+STDOUT:
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+
+STDERR:
+
+-------------------------------------------------------------------------------
+COMMAND: cargo --version
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery\src-tauri
+START TIME: 2026-07-27T23:45:32.3072933+08:00
+END TIME: 2026-07-27T23:45:32.3737537+08:00
+DURATION: 0.0664604 seconds
+EXIT CODE: 0
+STDOUT:
+cargo 1.97.1 (c980f4866 2026-06-30)
+
+STDERR:
+
+-------------------------------------------------------------------------------
+COMMAND: git --version
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery
+START TIME: 2026-07-27T23:45:32.3740650+08:00
+END TIME: 2026-07-27T23:45:32.4260232+08:00
+DURATION: 0.0519582 seconds
+EXIT CODE: 0
+STDOUT:
+git version 2.55.0.windows.3
+
+STDERR:
+
+-------------------------------------------------------------------------------
+COMMAND: npm ls --depth=0
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery
+START TIME: 2026-07-27T23:45:32.4262888+08:00
+END TIME: 2026-07-27T23:45:33.1178259+08:00
+DURATION: 0.6915371 seconds
+EXIT CODE: 0
+STDOUT:
+watch-tracker@1.10.0 D:\Project\Projects\WatchTracker-Recovery
++-- @eslint/js@10.0.1
++-- @tauri-apps/api@2.11.0
++-- @tauri-apps/cli@2.11.2
++-- @tauri-apps/plugin-shell@2.3.5
++-- @types/node@24.12.4
++-- @types/react-dom@19.2.3
++-- @types/react@19.2.14
++-- @vitejs/plugin-react@6.0.2
++-- autoprefixer@10.5.0
++-- eslint-plugin-react-hooks@7.1.1
++-- eslint-plugin-react-refresh@0.5.2
++-- eslint@10.4.0
++-- globals@17.6.0
++-- postcss@8.5.14
++-- react-dom@19.2.6
++-- react@19.2.6
++-- recharts@3.9.2
++-- tailwindcss@3.4.19
++-- typescript-eslint@8.59.3
++-- typescript@6.0.3
+`-- vite@8.0.13
+
+
+STDERR:
+
+-------------------------------------------------------------------------------
+COMMAND: cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
+WORKING DIRECTORY: D:\Project\Projects\WatchTracker-Recovery
+START TIME: 2026-07-27T23:45:33.1181854+08:00
+END TIME: 2026-07-27T23:45:33.1857108+08:00
+DURATION: 0.0675254 seconds
+EXIT CODE: 0
+STDOUT:
+{"packages":[{"name":"app","version":"1.10.0","id":"path+file:///D:/Project/Projects/WatchTracker-Recovery/src-tauri#app@1.10.0","license":"","license_file":null,"description":"Portable movie and series watch tracker","source":null,"dependencies":[{"name":"aes-gcm","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.10.3","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"base64","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.22","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"chrono","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.4","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":["serde"],"target":null,"registry":null},{"name":"fern","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.6","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"infer","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.22.0","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"log","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.4","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"machine-uid","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.6.0","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"reqwest","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.12","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":["json","native-tls-vendored"],"target":null,"registry":null},{"name":"rusqlite","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.32","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":["bundled"],"target":null,"registry":null},{"name":"serde","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^1.0","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":["derive"],"target":null,"registry":null},{"name":"serde_json","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^1.0","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"sha2","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.10.9","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"tauri","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^2.11.1","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"tauri-plugin-shell","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^2","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"thiserror","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^2.0.19","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"urlencoding","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^2.1","kind":null,"rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null},{"name":"tauri-build","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^2.6.1","kind":"build","rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null}],"targets":[{"kind":["staticlib","cdylib","rlib"],"crate_types":["staticlib","cdylib","rlib"],"name":"app_lib","src_path":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\src\\lib.rs","edition":"2021","doc":true,"doctest":true,"test":true},{"kind":["bin"],"crate_types":["bin"],"name":"app","src_path":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\src\\main.rs","edition":"2021","doc":true,"doctest":false,"test":true},{"kind":["custom-build"],"crate_types":["bin"],"name":"build-script-build","src_path":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\build.rs","edition":"2021","doc":false,"doctest":false,"test":false}],"features":{},"manifest_path":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\Cargo.toml","metadata":null,"publish":null,"authors":["Mark"],"categories":[],"keywords":[],"readme":null,"repository":"","homepage":null,"documentation":null,"edition":"2021","links":null,"default_run":null,"rust_version":"1.77.2"}],"workspace_members":["path+file:///D:/Project/Projects/WatchTracker-Recovery/src-tauri#app@1.10.0"],"workspace_default_members":["path+file:///D:/Project/Projects/WatchTracker-Recovery/src-tauri#app@1.10.0"],"resolve":null,"target_directory":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\target","build_directory":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\target","version":1,"workspace_root":"D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri","metadata":null}
+
+STDERR:
+
+===============================================================================

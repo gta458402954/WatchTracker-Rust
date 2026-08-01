@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { WatchRecord } from '../../../shared/types';
+import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
   getAllRecordsAsync,
   insertRecord,
@@ -10,12 +10,11 @@ import {
 import {
   syncToWebDAV,
   hasCreds,
-  markRecordDeleted,
-  clearRecordDeletion,
   type SyncResult,
 } from '../../../shared/lib/webdav';
+import { publicFailureMessage, reportOperationFailure } from '../../../shared/lib/feedback';
 
-export function useWatchList(syncInterval = 30) {
+export function useWatchList(syncInterval = 30, onBackgroundError?: (message: string) => void) {
   const [records, setRecords] = useState<WatchRecord[]>([]);
   const [isSyncPaused, setIsSyncPaused] = useState(false);
   const recordsRef = useRef<WatchRecord[]>([]);
@@ -69,12 +68,16 @@ export function useWatchList(syncInterval = 30) {
     syncTimerRef.current = setTimeout(async () => {
       syncTimerRef.current = null;
       try {
-        if (await hasCreds()) await runSync();
+        if (await hasCreds()) {
+          const result = await runSync();
+          if (!result.ok) onBackgroundError?.(publicFailureMessage('自动同步'));
+        }
       } catch (error) {
-        console.error('[Sync] Automatic sync failed:', error);
+        reportOperationFailure('Sync.Automatic', error);
+        onBackgroundError?.(publicFailureMessage('自动同步'));
       }
     }, intervalRef.current * 1000);
-  }, [isSyncPaused, runSync]);
+  }, [isSyncPaused, onBackgroundError, runSync]);
 
   const toggleSyncPause = useCallback(() => {
     setIsSyncPaused(previous => {
@@ -103,19 +106,16 @@ export function useWatchList(syncInterval = 30) {
     autoSyncDebounced();
   }, [autoSyncDebounced]);
 
-  const updateRecord = useCallback(async (id: string, updates: Partial<WatchRecord>) => {
-    const syncedUpdates = { ...updates, updatedAt: new Date().toISOString() };
-    await clearRecordDeletion(id);
-    await dbUpdateRecord(id, syncedUpdates);
+  const updateRecord = useCallback(async (id: string, updates: UpdateWatchRecord) => {
+    const persisted = await dbUpdateRecord(id, updates);
     revisionRef.current++;
-    const updated = recordsRef.current.map(record => record.id === id ? { ...record, ...syncedUpdates } : record);
+    const updated = recordsRef.current.map(record => record.id === id ? persisted : record);
     recordsRef.current = updated;
     setRecords(updated);
     autoSyncDebounced();
   }, [autoSyncDebounced]);
 
   const deleteRecord = useCallback(async (id: string) => {
-    await markRecordDeleted(id);
     await dbDeleteRecord(id);
     revisionRef.current++;
     const updated = recordsRef.current.filter(record => record.id !== id);
@@ -138,7 +138,6 @@ export function useWatchList(syncInterval = 30) {
 
   const restoreRecord = useCallback(async (record: WatchRecord) => {
     const restored = { ...record, updatedAt: new Date().toISOString() };
-    await clearRecordDeletion(restored.id);
     await insertRecord(restored);
     revisionRef.current++;
     const updated = recordsRef.current.some(item => item.id === restored.id)

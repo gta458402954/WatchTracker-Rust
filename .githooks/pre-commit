@@ -1,0 +1,11 @@
+#!/bin/sh
+if [ -z "$CODEX_TASK_CONTRACT" ] || [ -z "$CODEX_CONTRACT_BYTES_SHA256" ] || [ -z "$CODEX_TASK_ID" ] || [ -z "$CODEX_GOVERNANCE_ROOT" ]; then
+  echo "SAFE_COMMIT_REQUIRED: direct git commit is forbidden for executor tasks." >&2
+  exit 24
+fi
+
+pwsh -NoProfile -File "$CODEX_GOVERNANCE_ROOT/.agent-work/tools/PRECOMMIT_SCOPE_CHECK.ps1" \
+  -ContractPath "$CODEX_TASK_CONTRACT" \
+  -ExpectedContractBytesSha256 "$CODEX_CONTRACT_BYTES_SHA256" \
+  -ExpectedTaskId "$CODEX_TASK_ID" >&2
+exit $?

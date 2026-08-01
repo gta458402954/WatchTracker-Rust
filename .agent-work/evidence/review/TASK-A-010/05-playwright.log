@@ -1,0 +1,22 @@
+[WebServer] 
+[WebServer] > watch-tracker@1.10.0 dev
+[WebServer] > vite --host 127.0.0.1 --port 4177 --strictPort
+[WebServer] 
+[WebServer] (node:3576) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]   VITE v8.0.13  ready in 171 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://127.0.0.1:4177/
+
+Running 3 tests using 1 worker
+
+(node:20412) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok 1 [chromium] › tests\baseline.spec.ts:4:1 › ready empty data renders the normal empty state (306ms)
+[WebServer] 00:38:20 [vite] (client) [console.error] [App.Initialize] operation failed {"errorCategory":"Error"}
+[WebServer] 00:38:20 [vite] (client) [console.error] [App.Initialize] operation failed {"errorCategory":"Error"}
+  ok 2 [chromium] › tests\baseline.spec.ts:12:1 › initialization failure shows an error, not empty data, and retry recovers (362ms)
+  ok 3 [chromium] › tests\baseline.spec.ts:32:1 › current IPC DTO supports create, update, and delete without permissive fallbacks (724ms)
+
+  3 passed (3.4s)

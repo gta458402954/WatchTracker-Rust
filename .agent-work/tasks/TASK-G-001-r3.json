@@ -1,0 +1,102 @@
+{
+  "schema_version": 2,
+  "contract_id": "TASK-G-001-r3",
+  "task_id": "TASK-G-001",
+  "owner": "CODEX",
+  "supersedes": "TASK-G-001-r2",
+  "previous_contract_bytes_sha256": "3EFEE88ACF16142FC33FD157840255801EC93264B239EF17792C06CC91051A12",
+  "authorization_reason": "Freeze the P0 governance boundary required before TASK-A-002 may be signed.",
+  "repository": {
+    "repository_id": "eb0c26e7-a964-48df-8729-def18675d6e7",
+    "expected_root_name": "WatchTracker-Governance",
+    "expected_worktree": "D:/Project/Projects/WatchTracker-Governance",
+    "expected_common_git_dir": "D:/Project/Projects/WatchTracker-GitHub-Source/.git",
+    "expected_remote": "https://github.com/gta458402954/WatchTracker-Rust.git",
+    "expected_branch": "codex/governance-tools",
+    "expected_base": "572c06be1c09f3a96beb7a0f98f966067724d2c3",
+    "allow_detached_head": false
+  },
+  "governance": {
+    "root": "D:/Project/Projects/WatchTracker-Governance",
+    "expected_commit": "572c06be1c09f3a96beb7a0f98f966067724d2c3",
+    "require_clean": true,
+    "bootstrap": true,
+    "tool_sha256": {}
+  },
+  "workspace_policy": {
+    "allowed_modified_files": [
+      ".agent-work/tasks/TASK-G-001-r3.json",
+      ".agent-work/schemas/task-contract.schema.json",
+      ".agent-work/schemas/control-error.schema.json",
+      ".agent-work/schemas/session-state.schema.json",
+      ".agent-work/schemas/safe-commit-receipt.schema.json",
+      ".agent-work/tools/*.ps1",
+      ".githooks/pre-commit",
+      ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      ".agent-work/evidence/governance/TASK-G-001-r3-*.json",
+      ".agent-work/EXECUTION_LOG.md"
+    ],
+    "allowed_generated_paths": [".agent-work/evidence/generated/TASK-G-001/**", ".agent-work/evidence/captured/TASK-G-001/**"],
+    "forbidden_modified_files": ["src/**", "src-tauri/**", "package.json", "package-lock.json", ".agent-work/ACCEPTANCE_CRITERIA.md", ".agent-work/REVIEW_FEEDBACK.md", ".agent-work/RECOVERY_DECISION.md", ".agent-work/TASKS.md"],
+    "monitored_roots": [".agent-work", "src", "src-tauri"],
+    "conditional_files": []
+  },
+  "commit_policy": {
+    "allowed_staged_files": [
+      ".agent-work/tasks/TASK-G-001-r3.json",
+      ".agent-work/schemas/task-contract.schema.json",
+      ".agent-work/schemas/control-error.schema.json",
+      ".agent-work/schemas/session-state.schema.json",
+      ".agent-work/schemas/safe-commit-receipt.schema.json",
+      ".agent-work/tools/*.ps1",
+      ".githooks/pre-commit",
+      ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      ".agent-work/evidence/governance/TASK-G-001-r3-*.json",
+      ".agent-work/EXECUTION_LOG.md"
+    ],
+    "required_staged_files": [
+      ".agent-work/tasks/TASK-G-001-r3.json",
+      ".agent-work/schemas/task-contract.schema.json",
+      ".agent-work/schemas/control-error.schema.json",
+      ".agent-work/schemas/session-state.schema.json",
+      ".agent-work/schemas/safe-commit-receipt.schema.json",
+      ".agent-work/tools/Common.ps1",
+      ".agent-work/tools/ANTIGRAVITY_TASK_RUNNER.ps1",
+      ".agent-work/tools/PRECOMMIT_SCOPE_CHECK.ps1",
+      ".agent-work/tools/SAFE_COMMIT.ps1",
+      ".agent-work/tools/VERIFY_ATTESTATION.ps1",
+      ".githooks/pre-commit",
+      ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      ".agent-work/evidence/governance/TASK-G-001-r3-red-team.json",
+      ".agent-work/EXECUTION_LOG.md"
+    ],
+    "forbidden_staged_files": ["src/**", "src-tauri/**", "package.json", "package-lock.json"],
+    "protected_files": [".agent-work/ACCEPTANCE_CRITERIA.md", ".agent-work/REVIEW_FEEDBACK.md", ".agent-work/RECOVERY_DECISION.md", ".agent-work/TASKS.md", ".agent-work/tasks/TASK-G-001.json", ".agent-work/tasks/TASK-G-001-r1.json", ".agent-work/tasks/TASK-G-001-r2.json"],
+    "executor_summary_files": [".agent-work/EXECUTION_LOG.md"],
+    "protected_regions": []
+  },
+  "change_budget": {
+    "max_files": 18,
+    "max_insertions": 2600,
+    "max_deletions": 900,
+    "max_binary_changes": 0,
+    "forbid_file_rewrite": false,
+    "preserve_encoding": true,
+    "preserve_line_endings": true
+  },
+  "steps": [],
+  "evidence": {
+    "root": ".agent-work/evidence",
+    "environment_allowlist": ["TEMP"],
+    "sensitive_names": ["TMDB_API_KEY", "WEBDAV_PASSWORD", "ACCESS_TOKEN"],
+    "forbid_sensitive_command_line": true,
+    "capture_policy": "REDACT_AT_INGRESS",
+    "redaction_rules_version": 1
+  },
+  "locking": {
+    "scope": "WORKTREE",
+    "stale_lock_requires_recovery": true
+  },
+  "forbidden_phrases": ["已完整实现", "所有功能正常", "测试全部通过", "可以安全合并", "已验收"],
+  "waivers": []
+}

@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "task_id": "TASK-G-001",
+  "contract_path": ".agent-work/tasks/TASK-G-001.json",
+  "contract_sha256": "0DF74F0F1933A1EA9B228DC5599292CFA9CED54FCDDEEEA7DAD9C8789AFC985D",
+  "generated_at_utc": "2026-07-27T16:30:44.0143737Z",
+  "files": [
+    {
+      "path": ".agent-work/evidence/governance/TASK-G-001-red-team.json",
+      "size": 3951,
+      "sha256": "EC73D76F97F026AC828492FC1EF0EB6DCE663A8ED8F3E234C16B3FBAF55DB5B9",
+      "creation_time_utc": "2026-07-27T16:21:36.1558165Z",
+      "last_write_time_utc": "2026-07-27T16:30:16.5242192Z"
+    },
+    {
+      "path": ".agent-work/evidence/governance/TASK-G-001-session-disposition.json",
+      "size": 1456,
+      "sha256": "E7D726BE4CB1F60EC58922EB293F04AB9F51D7807385C2DB4592E33391CBFB9B",
+      "creation_time_utc": "2026-07-27T16:27:40.5641580Z",
+      "last_write_time_utc": "2026-07-27T16:30:34.7129875Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/21f57fd8-6ac9-4eb8-bdf5-166f530e3958/postflight.json",
+      "size": 7553,
+      "sha256": "73AE2A511799C739A75AC960B6ACB96B2E0B3C86F34C8EF4BC9CBB787BFB586D",
+      "creation_time_utc": "2026-07-27T16:25:38.7517888Z",
+      "last_write_time_utc": "2026-07-27T16:25:38.7527899Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/21f57fd8-6ac9-4eb8-bdf5-166f530e3958/preflight.json",
+      "size": 7092,
+      "sha256": "9B4BB092116327C1FD52CC01D7912CE98226BA24996C12032FD8AE9924AC08CE",
+      "creation_time_utc": "2026-07-27T16:25:38.0988606Z",
+      "last_write_time_utc": "2026-07-27T16:25:38.0988606Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/21f57fd8-6ac9-4eb8-bdf5-166f530e3958/task-summary.json",
+      "size": 373,
+      "sha256": "723BDAC7312521E9CD3CD6B2676C2C771F9CE58EA17138E870FE81E8679D14B3",
+      "creation_time_utc": "2026-07-27T16:25:38.7583007Z",
+      "last_write_time_utc": "2026-07-27T16:25:38.7583007Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/8a6781e0-768b-44ca-9cd4-a3bb06a7f109/postflight.json",
+      "size": 10842,
+      "sha256": "B4EEBC3D9D91AE7DBDEE1B08CC55AE17C7AD83829D011AB01EB13C01436557BF",
+      "creation_time_utc": "2026-07-27T16:28:34.1210297Z",
+      "last_write_time_utc": "2026-07-27T16:28:34.1210297Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/8a6781e0-768b-44ca-9cd4-a3bb06a7f109/preflight.json",
+      "size": 10415,
+      "sha256": "9C1F2AB0DC7C0A42F101883D48899CD733FEE9BC26A70BB31476CCF01041C43B",
+      "creation_time_utc": "2026-07-27T16:28:33.4327227Z",
+      "last_write_time_utc": "2026-07-27T16:28:33.4342293Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/8a6781e0-768b-44ca-9cd4-a3bb06a7f109/task-summary.json",
+      "size": 373,
+      "sha256": "F1E398100626478A85F60808A17EA0E90029832558A0ED18B9B6B0F10703740C",
+      "creation_time_utc": "2026-07-27T16:28:34.1285482Z",
+      "last_write_time_utc": "2026-07-27T16:28:34.1295475Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/ab1d1071-d19e-4e4a-be2b-93df0235c192/postflight.json",
+      "size": 9194,
+      "sha256": "7CD09D69A532894D65DDCC72512C489744B154208831C9A43E4D2944A02FB0B9",
+      "creation_time_utc": "2026-07-27T16:27:24.9184074Z",
+      "last_write_time_utc": "2026-07-27T16:27:24.9184074Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/ab1d1071-d19e-4e4a-be2b-93df0235c192/preflight.json",
+      "size": 8768,
+      "sha256": "1785B87C811629E22770C951404D6CC86650DC58F3657CD387B4052907A2BC50",
+      "creation_time_utc": "2026-07-27T16:27:24.2925521Z",
+      "last_write_time_utc": "2026-07-27T16:27:24.2935506Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/ab1d1071-d19e-4e4a-be2b-93df0235c192/task-summary.json",
+      "size": 373,
+      "sha256": "7A57905561298A510062372FF6B3DF73A18626F37151CDE0F95A5C0C98C3CBB8",
+      "creation_time_utc": "2026-07-27T16:27:24.9273747Z",
+      "last_write_time_utc": "2026-07-27T16:27:24.9283704Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/e4a865f2-207b-4b17-8e0b-e62dec21bc68/postflight.json",
+      "size": 12124,
+      "sha256": "465013E07C564B77D98A93DDA3F9C4750029AFB35498537E341F820C05EA0F09",
+      "creation_time_utc": "2026-07-27T16:30:24.0428737Z",
+      "last_write_time_utc": "2026-07-27T16:30:24.0438771Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/e4a865f2-207b-4b17-8e0b-e62dec21bc68/preflight.json",
+      "size": 11697,
+      "sha256": "770507A91E063E7BD557ECEA46C8A9093C56EC4A890E976840B95AA6D54B72E0",
+      "creation_time_utc": "2026-07-27T16:30:23.4083384Z",
+      "last_write_time_utc": "2026-07-27T16:30:23.4083384Z"
+    },
+    {
+      "path": ".agent-work/evidence/generated/TASK-G-001/e4a865f2-207b-4b17-8e0b-e62dec21bc68/task-summary.json",
+      "size": 373,
+      "sha256": "DD74CA729F3633A026F693CF665CBAC490C2E6689FA2C3734A8A2C715A83E1A1",
+      "creation_time_utc": "2026-07-27T16:30:24.0498763Z",
+      "last_write_time_utc": "2026-07-27T16:30:24.0508758Z"
+    }
+  ]
+}

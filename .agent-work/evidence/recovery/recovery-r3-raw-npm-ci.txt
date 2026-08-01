@@ -1,0 +1,22 @@
+===============================================================================
+Command: npm ci
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:18:09.4010294+08:00
+End Time: 2026-07-27T23:18:20.7549896+08:00
+Duration: 11.3539602 seconds
+Exit Code: 0
+===============================================================================
+RAW STDOUT / STDERR:
+
+added 257 packages, and audited 258 packages in 11s
+
+61 packages are looking for funding
+  run `npm fund` for details
+
+4 vulnerabilities (1 low, 3 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+

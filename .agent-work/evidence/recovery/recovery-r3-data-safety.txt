@@ -1,0 +1,56 @@
+===============================================================================
+RECOVERY R3 REAL DATABASE SAFETY AND ISOLATED DATABASE VERIFICATION
+Verification Time: 2026-07-27T23:28:04.7164030+08:00
+===============================================================================
+R3 RAW PRE-HASH LOG NOTE:
+R3 did not separately save a raw pre-hash log file.
+Reference values prior to R3 are from Codex second re-verification commit 63ced15.
+Values below are recalculated on disk during R3 summary correction.
+-------------------------------------------------------------------------------
+REAL USER DATABASES HASH VERIFICATION:
+KEY: PublicRelease
+PATH: D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db
+SIZE: 36864 bytes
+LAST_WRITE: 2026-07-25T22:46:34.7063956+08:00
+CURRENT HASH: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+REF PRE-R3 HASH (63ced15): D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+R-001 BACKUP HASH: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+MATCH REF PRE-R3: True
+MATCH R-001 BACKUP: True
+-------------------------------------------------------------------------------
+KEY: AppData
+PATH: C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db
+SIZE: 622592 bytes
+LAST_WRITE: 2026-07-26T19:38:08.4486970+08:00
+CURRENT HASH: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+REF PRE-R3 HASH (63ced15): BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+R-001 BACKUP HASH: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+MATCH REF PRE-R3: True
+MATCH R-001 BACKUP: True
+-------------------------------------------------------------------------------
+KEY: Portable
+PATH: D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db
+SIZE: 1277952 bytes
+LAST_WRITE: 2026-07-27T22:28:12.6545099+08:00
+CURRENT HASH: 9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50
+REF PRE-R3 HASH (63ced15): 9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50
+R-001 BACKUP HASH: 6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE
+MATCH REF PRE-R3: True
+MATCH R-001 BACKUP: False
+-------------------------------------------------------------------------------
+ISOLATED DATABASE & DATA DIRECTORY VERIFICATION:
+ISOLATED DEBUG DB PATH: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db
+ISOLATED DEBUG DB SIZE: 28672 bytes
+ISOLATED DEBUG DB LAST_WRITE: 2026-07-27T23:18:38.0281048+08:00
+ISOLATED DEBUG DB SHA256: 1EBF47B252E0FF7512F8CFC406AEE86D9593D737059062D9BC17AE862F02C0B2
+ISOLATED RELEASE DATA DIR PATH: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data
+ISOLATED RELEASE DATA DIR EXISTS: True
+ISOLATED RELEASE DATA DIR CONTAINS DB: False
+NOTE: Isolated release data directory exists, but release UI has not been executed.
+-------------------------------------------------------------------------------
+SAFETY DECLARATIONS:
+1. All three real user databases (AppData, Portable, PublicRelease) matched their pre-R3 reference values 100%.
+2. Portable active database hash differs from R-001 backup due to prior TASK-R-002 testing (~22:28); R3 caused 0 changes.
+3. Debug isolated database path is completely distinct from all real user databases and R-001 backup.
+4. Real user databases were NOT read, restored, replaced, or modified.
+===============================================================================

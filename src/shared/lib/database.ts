@@ -1,36 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
-import { WatchRecord } from '../types';
+import { UpdateWatchRecord, WatchRecord } from '../types';
 import { errorMessage, TmdbMedia, TmdbSearchResponse } from './classification';
+import { assertValidUpdateNumbers } from './updateValidation';
 
 export async function getAllRecordsAsync(): Promise<WatchRecord[]> {
   return invoke('get_all_records');
 }
 
 export async function insertRecord(record: WatchRecord): Promise<void> {
-  try {
-    await invoke('insert_record', { r: record });
-  } catch (error) {
-    console.error('[DB] Insert record failed:', error);
-    throw error;
-  }
+  await invoke('insert_record', { r: record });
 }
 
-export async function updateRecord(id: string, updates: Partial<WatchRecord>): Promise<void> {
-  try {
-    await invoke('update_record', { id, updates });
-  } catch (error) {
-    console.error('[DB] Update record failed:', error);
-    throw error;
-  }
+export async function updateRecord(id: string, updates: UpdateWatchRecord): Promise<WatchRecord> {
+  assertValidUpdateNumbers(updates);
+  return invoke<WatchRecord>('update_record', { id, updates });
 }
 
 export async function deleteRecord(id: string): Promise<void> {
-  try {
-    await invoke('delete_record', { id });
-  } catch (error) {
-    console.error('[DB] Delete record failed:', error);
-    throw error;
-  }
+  await invoke('delete_record', { id });
 }
 
 export async function replaceAllRecords(records: WatchRecord[]): Promise<void> {

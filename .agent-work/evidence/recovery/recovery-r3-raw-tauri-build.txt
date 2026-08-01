@@ -1,0 +1,47 @@
+===============================================================================
+Command: npm run tauri build
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:18:54.6161775+08:00
+End Time: 2026-07-27T23:20:15.8932436+08:00
+Duration: 81.2770661 seconds
+Exit Code: 0
+===============================================================================
+RAW STDOUT:
+
+> watch-tracker@1.10.0 tauri
+> tauri build
+
+
+> watch-tracker@1.10.0 build
+> tsc -b && vite build
+
+[36mvite v8.0.13 [32mbuilding client environment for production...[36m[39m
+[2Ktransforming...鉁?601 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.48 kB 鈹?gzip:   0.33 kB
+dist/assets/index-BKpl4LZy.css      31.78 kB 鈹?gzip:   6.30 kB
+dist/assets/index-IM6zwU64.js      285.57 kB 鈹?gzip:  85.47 kB
+dist/assets/Dashboard-CxJR4aNk.js  358.34 kB 鈹?gzip: 103.95 kB
+
+[32m鉁?built in 829ms[39m
+
+
+RAW STDERR:
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+   Compiling app v1.10.0 (D:\Project\Projects\WatchTracker-Recovery\src-tauri)
+    Finished `release` profile [optimized] target(s) in 55.90s
+       Built application at: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe
+        Info Patching D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe with bundle type information: msi
+        Info Target: x64
+     Running candle for "D:\\Project\\Projects\\WatchTracker-Recovery\\src-tauri\\target\\release\\wix\\x64\\main.wxs"
+     Running light to produce D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi
+        Info Patching D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe with bundle type information: nsis
+        Info Target: x64
+     Running makensis to produce D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe
+    Finished 2 bundles at:
+        D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi
+        D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe
+
+

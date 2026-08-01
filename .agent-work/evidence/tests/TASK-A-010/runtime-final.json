@@ -1,0 +1,35 @@
+{
+  "runtime_root": "D:\\Project\\Projects\\WatchTracker-A010-Runtime-20260730",
+  "final_related_process_count": 0,
+  "fixtures": [
+    {
+      "name": "empty",
+      "database": "D:\\Project\\Projects\\WatchTracker-A010-Runtime-20260730\\empty\\data\\watchtracker.db",
+      "db_version": 18,
+      "record_count": 0,
+      "legacy_column_count": 0
+    },
+    {
+      "name": "current",
+      "database": "D:\\Project\\Projects\\WatchTracker-A010-Runtime-20260730\\current\\data\\watchtracker.db",
+      "db_version": 18,
+      "record_count": 2,
+      "legacy_column_count": 0,
+      "records": [
+        "seed-current-1|当前电影|电影|已看",
+        "seed-current-2|当前剧集|剧集|在看"
+      ]
+    },
+    {
+      "name": "upgrade",
+      "database": "D:\\Project\\Projects\\WatchTracker-A010-Runtime-20260730\\upgrade\\data\\watchtracker.db",
+      "db_version": 18,
+      "record_count": 2,
+      "legacy_column_count": 0,
+      "records": [
+        "seed-current-1|当前电影|电影|已看",
+        "seed-current-2|当前剧集|剧集|在看"
+      ]
+    }
+  ]
+}

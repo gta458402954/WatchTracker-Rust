@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Safe Commit receipt",
+  "type": "object",
+  "required": ["schema_version", "task_id", "commit", "parent", "tree", "implementation_base", "contract_bytes_sha256", "runner_session_id", "safe_commit_version", "committed_files", "governance_commit", "tool_sha256", "commit_trailers_verified"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "task_id": { "type": "string" },
+    "commit": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+    "parent": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+    "tree": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+    "implementation_base": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+    "contract_path": { "type": "string" },
+    "contract_bytes_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "contract_normalized_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "evidence_manifest_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+    "runner_session_id": { "type": "string" },
+    "safe_commit_version": { "const": 2 },
+    "committed_files": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "governance_commit": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" },
+    "tool_sha256": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" } },
+    "commit_trailers_verified": { "type": "boolean" },
+    "created_at_utc": { "type": "string", "format": "date-time" }
+  }
+}

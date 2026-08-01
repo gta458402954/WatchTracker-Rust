@@ -1,0 +1,32 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e User Manual Desktop Verification
+Task: TASK-R-002
+Candidate: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Application: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\release\app.exe
+Recorded By: Codex from direct user confirmation
+Date: 2026-07-27 (Australia/Perth)
+===============================================================================
+
+USER-CONFIRMED RESULTS
+-------------------------------------------------------------------------------
+1. Create: PASS.
+2. Read: PASS.
+3. Update: PASS.
+4. Delete: PASS.
+5. Restart persistence after update: PASS; data remained after restart.
+6. Delete persistence: PASS; deleted data remained absent after restart.
+7. Media type change and classification: PASS; the item was classified correctly.
+
+POST-TEST PROCESS CHECK
+-------------------------------------------------------------------------------
+Codex independently checked running processes after the user's report. No
+Stable-Verify release/debug app.exe, Tauri, Vite or Cargo process remained.
+
+LIMITATION AND FINAL INTERPRETATION
+-------------------------------------------------------------------------------
+No genuine application screenshot was supplied with the user's confirmation.
+The direct user attestation replaces the previously invalid generated placeholder
+images for the manual behavior result. Automated evidence separately records that
+`cargo fmt -- --check` returned exit code 1 on unchanged legacy source. Therefore
+the candidate is functionally reproducible but is not an entirely green
+source-quality baseline.

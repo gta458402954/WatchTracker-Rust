@@ -1,0 +1,8 @@
+{
+  "Source": "D:\\Project\\Projects\\WatchTracker-A009\\src-tauri\\target\\release\\app.exe",
+  "Copy": "D:\\Project\\Projects\\WatchTracker-A009-Smoke\\app.exe",
+  "SourceSHA256": "78BC6F76EE003888E62725E8BC84F47784DA13CDF0B95DD382E4D4777D963513",
+  "CopySHA256": "78BC6F76EE003888E62725E8BC84F47784DA13CDF0B95DD382E4D4777D963513",
+  "DataDirectory": "D:\\Project\\Projects\\WatchTracker-A009-Smoke\\data",
+  "CreatedAtUtc": "2026-07-29T15:49:43.9833339Z"
+}

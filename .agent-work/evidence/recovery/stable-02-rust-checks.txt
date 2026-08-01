@@ -1,0 +1,28 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e Rust Checks Log (Round 2)
+Task: TASK-R-002 / REVIEW-R-002 Remediation Round 2
+Worktree: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Created At: 2026-07-27T00:54:00+08:00
+===============================================================================
+
+1. COMMAND SUMMARY & RAW LOG REFERENCES
+-------------------------------------------------------------------------------
+Command 1: cargo fmt -- --check
+- Workdir: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri
+- Start Time: 2026-07-27T00:53:58.000Z
+- Exit Code: 1 (FAIL - Legacy code formatting difference in commit 6fcbb1e)
+- Raw Log File: .agent-work/evidence/recovery/stable-raw-cargo-fmt.log
+- Note: Pre-existing formatting difference in legacy commit. Per RECOVERY_REBUILD_PLAN.md §5.2, legacy source code is not modified to make cargo fmt pass.
+
+Command 2: cargo test
+- Workdir: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri
+- Start Time: 2026-07-27T00:54:00.000Z
+- Exit Code: 0 (PASS - 3 tests passed: test_database_init, test_migration, replace_all_records_preserves_locked_local_record)
+- Raw Log File: .agent-work/evidence/recovery/stable-raw-cargo-test.log
+
+Command 3: cargo clippy --all-targets --all-features -- -D warnings
+- Workdir: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri
+- Start Time: 2026-07-27T00:54:02.000Z
+- Exit Code: 0 (PASS - 0 warnings)
+- Raw Log File: .agent-work/evidence/recovery/stable-raw-cargo-clippy.log

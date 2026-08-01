@@ -1,0 +1,166 @@
+{
+  "phase": "preflight",
+  "captured_at_utc": "2026-07-27T16:25:37.3850960Z",
+  "session_offset_ms": 229,
+  "head": "912c6307ad1cb46875f7c158a91fb6a1a16c3c8a",
+  "branch": "codex/governance-tools",
+  "porcelain_v2": "1 .M N... 100644 100644 100644 aedfce46d787ab371eb1c9384d16090592531069 aedfce46d787ab371eb1c9384d16090592531069 .agent-work/EXECUTION_LOG.md\n1 .M N... 100644 100644 100644 ceb76d9080090ec2eb5754a441021b5b471442a9 ceb76d9080090ec2eb5754a441021b5b471442a9 .agent-work/TASKS.md\n? .agent-work/OWNERSHIP.md\n? .agent-work/REPOSITORY_ID\n? .agent-work/evidence/governance/TASK-G-001-red-team.json\n? .agent-work/schemas/task-contract.schema.json\n? .agent-work/tasks/TASK-G-001.json\n? .agent-work/tests/governance/RED_TEAM_TESTS.ps1\n? .agent-work/tools/ANTIGRAVITY_TASK_RUNNER.ps1\n? .agent-work/tools/Common.ps1\n? .agent-work/tools/EVIDENCE_MANIFEST.ps1\n? .agent-work/tools/PRECOMMIT_SCOPE_CHECK.ps1\n? .agent-work/tools/SAFE_COMMIT.ps1\n? .agent-work/tools/VERIFY_ATTESTATION.ps1\n? .githooks/pre-commit",
+  "ignored": "1 .M N... 100644 100644 100644 aedfce46d787ab371eb1c9384d16090592531069 aedfce46d787ab371eb1c9384d16090592531069 .agent-work/EXECUTION_LOG.md\n1 .M N... 100644 100644 100644 ceb76d9080090ec2eb5754a441021b5b471442a9 ceb76d9080090ec2eb5754a441021b5b471442a9 .agent-work/TASKS.md\n? .agent-work/OWNERSHIP.md\n? .agent-work/REPOSITORY_ID\n? .agent-work/evidence/governance/\n? .agent-work/schemas/\n? .agent-work/tasks/\n? .agent-work/tests/\n? .agent-work/tools/\n? .githooks/",
+  "staged": [],
+  "files": [
+    {
+      "path": ".agent-work/evidence/governance/TASK-G-001-red-team.json",
+      "fingerprint": {
+        "sha256": "ECC8EBA126BF4F313D8E1D1BC7D95441E5C761C9FAE63316DC70829E51F752EE",
+        "size": 3951,
+        "bom": "NONE",
+        "line_endings": "MIXED"
+      }
+    },
+    {
+      "path": ".agent-work/EXECUTION_LOG.md",
+      "fingerprint": {
+        "sha256": "F976732A96983E97FEE26BBD6BAFF3CE3508A50144060B99FB2B84C874376522",
+        "size": 27283,
+        "bom": "NONE",
+        "line_endings": "MIXED"
+      }
+    },
+    {
+      "path": ".agent-work/OWNERSHIP.md",
+      "fingerprint": {
+        "sha256": "045C7D5DEF7B56A1255ABD2CACDD9C7DCDAF80F354C5D24475593FE38B2773BF",
+        "size": 2066,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/REPOSITORY_ID",
+      "fingerprint": {
+        "sha256": "73A6DC28F82347BBC0119461E57157391F574C2A187DD1DC9F9169B0C85802D5",
+        "size": 37,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/schemas/task-contract.schema.json",
+      "fingerprint": {
+        "sha256": "DE8B0CCD579B9138CFF866F284AEF47963811F87B2F52448DEAC206E48CE9D7C",
+        "size": 5869,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/TASKS.md",
+      "fingerprint": {
+        "sha256": "CB23A6A70526F9E85EDF2AAD500494C8D994C9A67A7C255CCCD37DD986FCE506",
+        "size": 55231,
+        "bom": "NONE",
+        "line_endings": "MIXED"
+      }
+    },
+    {
+      "path": ".agent-work/tasks/TASK-G-001.json",
+      "fingerprint": {
+        "sha256": "6679DB5CB33F05612080029A3AA90A7113E69CC9E161C224A2DA9989EAC3DCF3",
+        "size": 3666,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tests/governance/RED_TEAM_TESTS.ps1",
+      "fingerprint": {
+        "sha256": "8AF330E2CDDC6969B38C8EDB0E544F360EA11F0C3A3017FDA37466AF46178488",
+        "size": 13911,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tools/ANTIGRAVITY_TASK_RUNNER.ps1",
+      "fingerprint": {
+        "sha256": "C2A10BB89DDC91407A76F3A9D1B39BA87E537507F1B74673729BCC801CB0A5AC",
+        "size": 9422,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tools/Common.ps1",
+      "fingerprint": {
+        "sha256": "3254147A89CA95920319D927BE60EE01527F9FE12C779A7FDFF24216A38D0030",
+        "size": 7130,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tools/EVIDENCE_MANIFEST.ps1",
+      "fingerprint": {
+        "sha256": "EA09F5BE3CAF1C6B2ECB36C50BF492A0998C9F19783F4F02827707F3474EDCD7",
+        "size": 1579,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tools/PRECOMMIT_SCOPE_CHECK.ps1",
+      "fingerprint": {
+        "sha256": "AF40ADC434E5CFB23B4A20B2FFA5A43A0E1FA2A8BBEFF8AC24868CC585164C89",
+        "size": 6664,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tools/SAFE_COMMIT.ps1",
+      "fingerprint": {
+        "sha256": "3DC580F5F6FFB0BF1ACAD31BB198C11FD0FBB09E8D530A2F4C97208D2905D3DE",
+        "size": 3622,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".agent-work/tools/VERIFY_ATTESTATION.ps1",
+      "fingerprint": {
+        "sha256": "6B9957DFE21751E4F50C5A282FA86F7C7AA758C61DDB750185AEA33886068C0D",
+        "size": 1939,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    },
+    {
+      "path": ".githooks/pre-commit",
+      "fingerprint": {
+        "sha256": "AADC2970BA06E89323953CE4224AADAB708CC47C2BF9EFD077C7C069058852B4",
+        "size": 352,
+        "bom": "NONE",
+        "line_endings": "LF"
+      }
+    }
+  ],
+  "processes": [],
+  "environment": {
+    "PATH": {
+      "is_set": true,
+      "value": "C:\\Program Files\\PowerShell\\7;C:\\Users\\markp\\.codex\\tmp\\arg0\\codex-arg0eU8kHO;C:\\Users\\markp\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\bin\\override;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\PowerShell\\7\\;C:\\Users\\markp\\scoop\\apps\\temurin17-jdk\\current\\bin;C:\\Users\\markp\\scoop\\apps\\rustup-msvc\\current\\.cargo\\bin;C:\\Users\\markp\\scoop\\apps\\nodejs-lts\\current\\bin;C:\\Users\\markp\\scoop\\apps\\nodejs-lts\\current;C:\\Users\\markp\\scoop\\apps\\git\\current\\cmd;C:\\Users\\markp\\scoop\\shims;C:\\Users\\markp\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\markp\\AppData\\Local\\Android\\Sdk\\platform-tools;C:\\Users\\markp\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\bin\\fallback;C:\\Users\\markp\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\git\\cmd;C:\\Users\\markp\\AppData\\Local\\OpenAI\\Codex\\bin\\3e42d49ad3e35a50;C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0\\app\\resources"
+    },
+    "TEMP": {
+      "is_set": true,
+      "value": "C:\\Users\\markp\\AppData\\Local\\Temp"
+    },
+    "TMP": {
+      "is_set": true,
+      "value": "C:\\Users\\markp\\AppData\\Local\\Temp"
+    },
+    "NODE_ENV": {
+      "is_set": false,
+      "value": null
+    }
+  }
+}

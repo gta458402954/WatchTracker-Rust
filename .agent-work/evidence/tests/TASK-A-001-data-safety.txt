@@ -1,0 +1,32 @@
+===============================================================================
+TASK-A-001 DATA SAFETY & TEST ISOLATION STRATEGY
+Execution Workdir: D:\Project\Projects\WatchTracker-Recovery
+Temporary Test Root Directory: D:\Project\Projects\WatchTracker-TestData\TASK-A-001
+Execution Time: 2026-07-27T23:45:55.4153892+08:00
+===============================================================================
+1. REAL USER DATABASE SAFETY STATEMENT:
+本任务未打开、未复制、未修改真实活动数据库；这里只引用此前已经记录的路径和 Hash。
+-------------------------------------------------------------------------------
+2. REAL USER DATABASE REFERENCE VALUES (GATE R FINAL EVIDENCE):
+   - AppData Active Database:
+     Path: C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db
+     SHA-256 Reference: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+   - Portable Active Database:
+     Path: D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db
+     SHA-256 Reference: 9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50
+   - Public Release Active Database:
+     Path: D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db
+     SHA-256 Reference: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+-------------------------------------------------------------------------------
+3. ISOLATED TEST ROOT & FIXTURE DIRECTORY STRUCTURE:
+   - Temporary Test Root: D:\Project\Projects\WatchTracker-TestData\TASK-A-001 (Created as empty directory structure only; 0 DB files copied)
+   - Debug Portable Target Data Dir: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data
+   - Release Portable Target Data Dir: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data
+-------------------------------------------------------------------------------
+4. FUTURE TESTING DATA ISOLATION STRATEGY:
+   - Strategy 1 (Synthetic Empty DB): All automated unit & integration tests must generate synthetic empty databases in isolated temporary directories.
+   - Strategy 2 (Synthetic Legacy Fixtures): Schema migration tests must construct synthetic old-schema SQLite fixtures in test temp dirs.
+   - Strategy 3 (Per-Test Temp Dirs): Each test suite run must allocate a uniquely named isolated temporary directory.
+   - Strategy 4 (AppData Fallback Prevention): Test teardowns must verify that no test run falls back to or writes into C:\Users\markp\AppData\Roaming\com.watchtracker.desktop.
+   - Strategy 5 (Real DB Prohibition): Prohibition of using real user database copies in automated or manual testing unless explicitly authorized by Owner in writing.
+===============================================================================

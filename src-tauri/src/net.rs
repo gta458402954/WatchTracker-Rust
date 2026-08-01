@@ -1,10 +1,9 @@
+use crate::app_paths::AppPaths;
 use reqwest::Client;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use tauri::AppHandle;
-use tauri::Manager;
 
 pub async fn search_tmdb(
     api_key: String,
@@ -287,36 +286,12 @@ pub async fn get_tmdb_detail(
 }
 
 pub async fn download_poster(
-    app_handle: &AppHandle,
+    paths: &AppPaths,
     poster_path: String,
     proxy: Option<String>,
 ) -> Result<bool, String> {
     if poster_path.is_empty() {
         return Ok(false);
-    }
-
-    // 优先检查可执行文件同级目录下的 data 文件夹
-    let app_dir = if let Ok(exe_path) = std::env::current_exe() {
-        let exe_dir = exe_path.parent().unwrap_or(&PathBuf::new()).to_path_buf();
-        let portable_dir = exe_dir.join("data");
-        if portable_dir.exists() {
-            portable_dir
-        } else {
-            app_handle
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-        }
-    } else {
-        app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-    };
-
-    let poster_dir = app_dir.join("posters");
-    if !poster_dir.exists() {
-        fs::create_dir_all(&poster_dir).map_err(|e| e.to_string())?;
     }
 
     let file_name = PathBuf::from(&poster_path)
@@ -325,7 +300,7 @@ pub async fn download_poster(
         .ok_or("Invalid path")?
         .to_string();
 
-    let local_path = poster_dir.join(&file_name);
+    let local_path = paths.poster_file(&file_name)?;
     if local_path.exists() {
         return Ok(true);
     }

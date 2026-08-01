@@ -1,0 +1,7 @@
+{
+  "Command": "cargo fmt -- --check",
+  "StartedAtUtc": "2026-07-29T16:20:28.0945327Z",
+  "EndedAtUtc": "2026-07-29T16:20:28.2737752Z",
+  "DurationMs": 179.0,
+  "ExitCode": 0
+}

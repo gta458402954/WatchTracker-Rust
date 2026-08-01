@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Governance runner session state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "session_id", "state", "previous_state", "sequence", "updated_at_utc"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "task_id": { "type": "string" },
+    "session_id": { "type": "string", "format": "uuid" },
+    "state": { "enum": ["CREATED", "PREFLIGHT_PASSED", "RUNNING", "EVIDENCE_FINALIZED", "TEMP_INDEX_VALIDATED", "REAL_INDEX_STAGED", "COMMIT_CREATED", "RECEIPT_CREATED", "VERIFIED", "FAILED", "INTERRUPTED", "COMMIT_CREATED_RECEIPT_FAILED"] },
+    "previous_state": { "type": ["string", "null"] },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "updated_at_utc": { "type": "string", "format": "date-time" },
+    "details": { "type": "object" }
+  }
+}

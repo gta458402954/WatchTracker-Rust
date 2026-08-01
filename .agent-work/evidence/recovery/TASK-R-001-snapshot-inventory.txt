@@ -1,0 +1,131 @@
+===============================================================================
+WatchTracker Recovery Snapshot Inventory (TASK-R-001)
+Created At: 2026-07-27
+Executor: Antigravity (Gemini 3.6 Flash)
+===============================================================================
+
+1. GIT REPOSITORY STATUS & COMMITS
+-------------------------------------------------------------------------------
+Remote:
+origin	https://github.com/gta458402954/WatchTracker-Rust.git (fetch)
+origin	https://github.com/gta458402954/WatchTracker-Rust.git (push)
+
+Current Branch: main
+HEAD Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Ahead / Behind: 0 / 17 (Ahead of origin/main by 17 commits)
+
+17 Local Commits (origin/main..HEAD):
+29ea3a4 refactor: implement atomic SQLite transactions for DB operations and migrate state to Zustand
+3887324 refactor(rust): add SyncCommit and ImportMode DTOs for atomic transactions
+56cc62b fix(sync): route batch updates through zustand store to prevent sync data loss
+16c8922 test: add Playwright E2E testing framework and dashboard spec
+93b8f7c refactor(core): decouple RecordForm props & migrate sync merge engine to Rust
+ac26566 build(deps): install zustand
+4bdfa92 feat(store): migrate to Zustand and implement optimistic UI updates
+a86aec9 perf(net): introduce global reqwest client cache for connection pooling
+7b0ddb4 refactor(error_handling): completely migrate away from map_err(to_string) and use typed AppError
+8130100 fix(tauri): translate camelCase keys to snake_case in update_record
+ed3ff3b refactor(db): migrate all sqlite columns to snake_case
+085406e chore: stop tracking portable exe build artifacts
+2098324 fix: converge locked records and remove sync races & redundant traffic
+f608fc6 fix: harden sync consistency and data boundaries
+3ae5bf4 refactor: decompose SettingsModal & RecordForm; add Vitest unit tests
+def114e feat: add conflict-safe dual-end WebDAV sync (ETag + vector clock)
+eda30dc Refactor: Extract App.tsx domain rules and Filter Hook
+
+2. CONTROLLED MODIFIED FILES (31 Files)
+-------------------------------------------------------------------------------
+ M eslint.config.js
+ M src-tauri/src/auth.rs
+ M src-tauri/src/commands.rs
+ M src-tauri/src/db.rs
+ M src-tauri/src/db_atomic_delete.rs
+ M src-tauri/src/db_atomic_helpers.rs
+ M src-tauri/src/db_atomic_import.rs
+ M src-tauri/src/db_atomic_restore.rs
+ M src-tauri/src/db_atomic_sync.rs
+ M src-tauri/src/db_atomic_tests.rs
+ M src-tauri/src/db_atomic_update.rs
+ M src-tauri/src/error.rs
+ M src-tauri/src/lib.rs
+ M src-tauri/src/merge.rs
+ M src-tauri/src/models.rs
+ M src-tauri/src/net.rs
+ M src/features/settings/components/SettingsCategoriesTab.tsx
+ M src/features/settings/components/SettingsModal.tsx
+ M src/features/settings/components/SettingsSyncTab.tsx
+ M src/features/settings/components/SettingsToolsTab.tsx
+ M src/features/watchlist/components/StatsBar.tsx
+ M src/shared/hooks/useFilteredRecords.ts
+ M src/shared/lib/__tests__/classification.test.ts
+ M src/shared/lib/__tests__/webdav.test.ts
+ M src/shared/lib/classification.ts
+ M src/shared/lib/database.ts
+ M src/shared/lib/webdav.ts
+ M src/shared/types/index.ts
+ M src/store/useWatchListStore.ts
+ M tests/fixtures/mockIpc.ts
+ M vite.config.ts
+
+3. UNTRACKED FILES (Explicit Source / Tests / Docs / .agent-work)
+-------------------------------------------------------------------------------
+?? .agent-work/
+?? AI_COLLABORATION_WORKFLOW.md
+?? REMAINING_ISSUES.md
+?? docs/REFACTOR_ATOMIC_API.md
+?? implementation_plan.md
+?? src/shared/lib/countryNames.ts
+?? task.md
+?? tests/payload.spec.ts
+?? walkthrough.md
+
+4. DIFF STAT SUMMARY
+-------------------------------------------------------------------------------
+ eslint.config.js                                   |   2 +-
+ src-tauri/src/auth.rs                              |  24 +-
+ src-tauri/src/commands.rs                          | 241 ++-------
+ src-tauri/src/db.rs                                | 113 +---
+ src-tauri/src/db_atomic_delete.rs                  |  26 +-
+ src-tauri/src/db_atomic_helpers.rs                 |  62 ++-
+ src-tauri/src/db_atomic_import.rs                  | 266 +++++++--
+ src-tauri/src/db_atomic_restore.rs                 |  35 +-
+ src-tauri/src/db_atomic_sync.rs                    | 217 ++++++--
+ src-tauri/src/db_atomic_tests.rs                   | 595 ++++++++++++++++++++-
+ src-tauri/src/db_atomic_update.rs                  | 143 ++---
+ src-tauri/src/error.rs                             |   8 +-
+ src-tauri/src/lib.rs                               |  23 +-
+ src-tauri/src/merge.rs                             | 100 +++-
+ src-tauri/src/models.rs                            | 102 +++-
+ src-tauri/src/net.rs                               |  60 ++-
+ .../settings/components/SettingsCategoriesTab.tsx  |  13 +-
+ src/features/settings/components/SettingsModal.tsx |   5 +-
+ .../settings/components/SettingsSyncTab.tsx        |  14 +-
+ .../settings/components/SettingsToolsTab.tsx       |   3 +-
+ src/features/watchlist/components/StatsBar.tsx     |  15 +-
+ src/shared/hooks/useFilteredRecords.ts             |   5 +-
+ src/shared/lib/__tests__/classification.test.ts    | 138 +++--
+ src/shared/lib/__tests__/webdav.test.ts            |  10 +
+ src/shared/lib/classification.ts                   | 128 ++++-
+ src/shared/lib/database.ts                         |  25 +-
+ src/shared/lib/webdav.ts                           | 185 ++-----
+ src/shared/types/index.ts                          |  22 +
+ src/store/useWatchListStore.ts                     |  79 +--
+ tests/fixtures/mockIpc.ts                          | 161 ++++--
+ vite.config.ts                                     |   1 +
+ 31 files changed, 1907 insertions(+), 914 deletions(-)
+
+5. TOOLCHAIN VERSIONS
+-------------------------------------------------------------------------------
+Node.js: v24.18.0
+npm: 11.16.0
+rustc: 1.97.1 (8bab26f4f 2026-07-14)
+cargo: 1.97.1 (c980f4866 2026-06-30)
+git: 2.55.0.windows.3
+
+6. DATA EXCLUSION CHECK
+-------------------------------------------------------------------------------
+- Databases (.db / .sqlite): Excluded (none present in repository working copy).
+- User credentials / tokens (.env, WebDAV passwords, TMDB keys): Verified absent from snapshot files.
+- Personal data / User logs: Excluded.
+- node_modules, build targets, dist-build: Excluded / ignored.
+- Only source code, test suites, documentation, and .agent-work files are included in the WIP recovery snapshot.

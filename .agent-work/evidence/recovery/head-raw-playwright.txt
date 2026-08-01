@@ -1,0 +1,110 @@
+===============================================================================
+Command: npx playwright test
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify
+Start Time: 2026-07-27T12:17:57.6749052+08:00
+End Time: 2026-07-27T12:18:35.8513165+08:00
+Exit Code: 1
+===============================================================================
+RAW STDOUT / STDERR:
+
+Running 4 tests using 4 workers
+
+[1/4] [chromium] 鈥?tests\dashboard.spec.ts:63:3 鈥?Dashboard E2E 鈥?should delete a record
+[2/4] [chromium] 鈥?tests\dashboard.spec.ts:18:3 鈥?Dashboard E2E 鈥?should add a new record
+[3/4] [chromium] 鈥?tests\dashboard.spec.ts:13:3 鈥?Dashboard E2E 鈥?should render empty state correctly
+[4/4] [chromium] 鈥?tests\dashboard.spec.ts:39:3 鈥?Dashboard E2E 鈥?should edit an existing record
+  1) [chromium] 鈥?tests\dashboard.spec.ts:13:3 鈥?Dashboard E2E 鈥?should render empty state correctly 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: locator('text=杩樻病鏈夎褰曪紝蹇幓娣诲姞鍚э紒').first()
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 5000ms
+      - waiting for locator('text=杩樻病鏈夎褰曪紝蹇幓娣诲姞鍚э紒').first()
+
+
+      12 |
+      13 |   test('should render empty state correctly', async ({ page }) => {
+    > 14 |     await expect(page.locator('text=杩樻病鏈夎褰曪紝蹇幓娣诲姞鍚э紒').first()).toBeVisible();
+         |                                                             ^
+      15 |     await expect(page.locator('text=娣诲姞绗竴鏉¤褰?).first()).toBeVisible();
+      16 |   });
+      17 |
+        at D:\Project\Projects\WatchTracker-Head-Verify\tests\dashboard.spec.ts:14:61
+
+    Error Context: test-results\dashboard-Dashboard-E2E-should-render-empty-state-correctly-chromium\error-context.md
+
+
+  2) [chromium] 鈥?tests\dashboard.spec.ts:18:3 鈥?Dashboard E2E 鈥?should add a new record 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    Test timeout of 30000ms exceeded.
+
+    Error: locator.click: Test timeout of 30000ms exceeded.
+    Call log:
+      - waiting for locator('button.bg-indigo-600').first()
+
+
+      18 |   test('should add a new record', async ({ page }) => {
+      19 |     // Click the "+" or "娣诲姞" button in header
+    > 20 |     await page.locator('button.bg-indigo-600').first().click();
+         |                                                        ^
+      21 |
+      22 |     // Wait for RecordForm to appear
+      23 |     await expect(page.locator('text=娣诲姞鏂拌褰?)).toBeVisible();
+        at D:\Project\Projects\WatchTracker-Head-Verify\tests\dashboard.spec.ts:20:56
+
+    Error Context: test-results\dashboard-Dashboard-E2E-should-add-a-new-record-chromium\error-context.md
+
+
+  3) [chromium] 鈥?tests\dashboard.spec.ts:39:3 鈥?Dashboard E2E 鈥?should edit an existing record 鈹€鈹€鈹€鈹€
+
+    Test timeout of 30000ms exceeded.
+
+    Error: locator.click: Test timeout of 30000ms exceeded.
+    Call log:
+      - waiting for locator('button.bg-indigo-600').first()
+
+
+      39 |   test('should edit an existing record', async ({ page }) => {
+      40 |     // Inject a record first by triggering the form
+    > 41 |     await page.locator('button.bg-indigo-600').first().click();
+         |                                                        ^
+      42 |     await page.fill('input[placeholder="璇疯緭鍏ヤ腑鏂囧悕绉?]', '鍒濆鐢靛奖');
+      43 |     await page.click('button[type="submit"]');
+      44 |     await expect(page.locator('text=鍒濆鐢靛奖').first()).toBeVisible();
+        at D:\Project\Projects\WatchTracker-Head-Verify\tests\dashboard.spec.ts:41:56
+
+    Error Context: test-results\dashboard-Dashboard-E2E-should-edit-an-existing-record-chromium\error-context.md
+
+
+  4) [chromium] 鈥?tests\dashboard.spec.ts:63:3 鈥?Dashboard E2E 鈥?should delete a record 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    Test timeout of 30000ms exceeded.
+
+    Error: locator.click: Test timeout of 30000ms exceeded.
+    Call log:
+      - waiting for locator('button.bg-indigo-600').first()
+
+
+      63 |   test('should delete a record', async ({ page }) => {
+      64 |     // Inject a record
+    > 65 |     await page.locator('button.bg-indigo-600').first().click();
+         |                                                        ^
+      66 |     await page.fill('input[placeholder="璇疯緭鍏ヤ腑鏂囧悕绉?]', '瑕佸垹闄ょ殑鐢靛奖');
+      67 |     await page.click('button[type="submit"]');
+      68 |     await expect(page.locator('text=瑕佸垹闄ょ殑鐢靛奖').first()).toBeVisible();
+        at D:\Project\Projects\WatchTracker-Head-Verify\tests\dashboard.spec.ts:65:56
+
+    Error Context: test-results\dashboard-Dashboard-E2E-should-delete-a-record-chromium\error-context.md
+
+
+  4 failed
+    [chromium] 鈥?tests\dashboard.spec.ts:13:3 鈥?Dashboard E2E 鈥?should render empty state correctly 
+    [chromium] 鈥?tests\dashboard.spec.ts:18:3 鈥?Dashboard E2E 鈥?should add a new record 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    [chromium] 鈥?tests\dashboard.spec.ts:39:3 鈥?Dashboard E2E 鈥?should edit an existing record 鈹€鈹€鈹€鈹€鈹€
+    [chromium] 鈥?tests\dashboard.spec.ts:63:3 鈥?Dashboard E2E 鈥?should delete a record 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+

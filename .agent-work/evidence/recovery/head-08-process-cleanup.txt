@@ -1,0 +1,28 @@
+===============================================================================
+WatchTracker HEAD Candidate 29ea3a4 Process Cleanup Evidence Log
+Task: TASK-R-003 Remediation
+Worktree: D:\Project\Projects\WatchTracker-Head-Verify
+Target Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Completed At: 2026-07-27T22:20:22+08:00
+===============================================================================
+
+1. PRE-CLEANUP LEAKED PROCESS INVENTORY
+-------------------------------------------------------------------------------
+1. Node.js (Tauri CLI): PID 13828 / 31084 ("node" "...\tauri.js" dev)
+2. Node.js (Vite Server): PID 17680 / 31568 ("node" "...\vite.js")
+3. Cargo Compiler: PID 29832 ("cargo" run ...)
+4. Debug Binary: PID 15800 / 30880 (target\debug\app.exe)
+
+2. TERMINATION EXECUTION
+-------------------------------------------------------------------------------
+Termination Commands:
+- taskkill /PID 31084 /T /F
+- taskkill /PID 31568 /T /F
+- taskkill /PID 29832 /T /F
+- taskkill /PID 30880 /T /F
+
+3. POST-CLEANUP PROCESS INVENTORY VERIFICATION (3 SECONDS SLEEP PASS)
+-------------------------------------------------------------------------------
+Filter Query: Win32_Process matching D:\Project\Projects\WatchTracker-Head-Verify
+Remaining Processes Count: ZERO (0)
+Verification Result: PASS - No app.exe, Tauri CLI, Vite, cargo run, or hanging processes remain for Head-Verify.

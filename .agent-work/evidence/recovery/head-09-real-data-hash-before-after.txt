@@ -1,0 +1,30 @@
+===============================================================================
+WatchTracker Real Database Pre-Test and Post-Test SHA-256 Hash Verification (HEAD 29ea3a4)
+Task: TASK-R-003
+Target Commit: 29ea3a4fc82eeb5e0bcfda58d3f23fd97ed44006
+Created At: 2026-07-27T12:18:18+08:00
+===============================================================================
+
+1. REAL APPDATA DATABASE
+-------------------------------------------------------------------------------
+Path: C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db
+File Length: 622,592 bytes
+Pre-Test SHA-256:  BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+Post-Test SHA-256: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+Verification Result: MATCH (True) - 100% UNTOUCHED
+
+2. REAL PORTABLE DATABASE
+-------------------------------------------------------------------------------
+Path: D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db
+File Length: 1,277,952 bytes
+Pre-Test SHA-256:  6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE
+Post-Test SHA-256: 6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE
+Verification Result: MATCH (True) - 100% UNTOUCHED
+
+3. REAL PUBLIC RELEASE DATABASE
+-------------------------------------------------------------------------------
+Path: D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db
+File Length: 36,864 bytes
+Pre-Test SHA-256:  D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+Post-Test SHA-256: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+Verification Result: MATCH (True) - 100% UNTOUCHED

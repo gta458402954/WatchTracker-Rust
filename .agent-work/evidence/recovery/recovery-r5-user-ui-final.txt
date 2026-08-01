@@ -1,0 +1,55 @@
+TASK: TASK-R-005 final user UI and Gate R verification
+BASE: af4fb9ee6cce6d8de1be3549d681986fa6c0b1ca
+Verification time: 2026-07-27T23:42:07.7846415+08:00
+Worktree: D:\Project\Projects\WatchTracker-Recovery
+
+USER-REPORTED UI RESULTS
+- Startup: PASS
+- Create and read: PASS
+- Update: PASS
+- Media-type classification: PASS
+- Restart persistence: PASS
+- Delete: PASS
+- Deleted item remains absent after restart: PASS
+- Credential-free local use: PASS
+- Exceptions: none reported
+
+INDEPENDENT PROCESS CHECK
+Command:
+Get-CimInstance Win32_Process | Where-Object {
+  ($_.Name -match '^(app|WatchTracker|cargo|rustc|clippy|tauri|node|npm|pnpm|cmd)') -and
+  ($_.CommandLine -like '*WatchTracker-Recovery*')
+} | Select-Object ProcessId, Name, CommandLine
+
+Execution result: no rows (0 Recovery-related processes).
+
+RELEASE ISOLATED DATABASE
+Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\data\watchtracker.db
+Size: 28672 bytes
+LastWriteTime: 2026-07-27T23:38:52.2030159+08:00
+SHA-256: 13C94E692D8ADD898DECE851559C4D0DFA60567E796496A56367015959C1EAD9
+
+READ-ONLY REAL-DATABASE HASH CHECK
+The following Get-FileHash results match the pre-UI reference values. This proves that no disk-content change was detected; it does not claim that no read access occurred.
+
+Path: C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db
+Size: 622592 bytes
+LastWriteTime: 2026-07-26T19:38:08.4486970+08:00
+SHA-256: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+
+Path: D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db
+Size: 1277952 bytes
+LastWriteTime: 2026-07-27T22:28:12.6545099+08:00
+SHA-256: 9A42C90EA102B3128A295460DD76E66126855D4E8C06A104679C106DC80C2B50
+
+Path: D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db
+Size: 36864 bytes
+LastWriteTime: 2026-07-25T22:46:34.7063956+08:00
+SHA-256: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+
+FINAL DISPOSITION
+- TASK-R-005: ACCEPTED
+- REVIEW-R-005: CLOSED
+- AC-R-005: PASS
+- AC-GATE-R: PASS
+- TASK-A-001: READY

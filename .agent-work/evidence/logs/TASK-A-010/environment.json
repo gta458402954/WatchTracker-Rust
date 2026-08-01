@@ -1,0 +1,10 @@
+{
+  "CapturedAtUtc": "2026-07-29T16:16:04.2673618Z",
+  "GitHEAD": "5d720349447f4084f046269cab689f89092e2726",
+  "Branch": "codex/task-a-010",
+  "Node": "v24.18.0",
+  "Npm": "11.16.0",
+  "Rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "Cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "Git": "git version 2.55.0.windows.3"
+}

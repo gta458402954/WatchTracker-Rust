@@ -1,0 +1,7 @@
+{
+  "Command": "npm ci",
+  "StartedAtUtc": "2026-07-29T16:16:17.8944128Z",
+  "EndedAtUtc": "2026-07-29T16:16:25.3546635Z",
+  "DurationMs": 7460.0,
+  "ExitCode": 0
+}

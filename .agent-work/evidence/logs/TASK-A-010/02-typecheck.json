@@ -1,0 +1,7 @@
+{
+  "Command": "npm run typecheck",
+  "StartedAtUtc": "2026-07-29T16:16:50.7977032Z",
+  "EndedAtUtc": "2026-07-29T16:16:53.1126529Z",
+  "DurationMs": 2315.0,
+  "ExitCode": 0
+}

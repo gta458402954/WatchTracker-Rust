@@ -1,0 +1,32 @@
+[
+  {
+    "Path": "C:\\Users\\markp\\AppData\\Roaming\\com.watchtracker.desktop\\watchtracker.db",
+    "LengthBefore": 622592,
+    "LengthAfter": 622592,
+    "LastWriteTimeUtcBefore": "2026-07-26T11:38:08.4486970Z",
+    "LastWriteTimeUtcAfter": "2026-07-26T11:38:08.4486970Z",
+    "SHA256Before": "BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7",
+    "SHA256After": "BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7",
+    "ExactMatch": true
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-Rust-Portable\\data\\watchtracker.db",
+    "LengthBefore": 1277952,
+    "LengthAfter": 1277952,
+    "LastWriteTimeUtcBefore": "2026-07-28T15:05:48.5978059Z",
+    "LastWriteTimeUtcAfter": "2026-07-28T15:05:48.5978059Z",
+    "SHA256Before": "52E6B56CF062CFF35902ABF859AEC0A065C6CBBD6D73AE8200F1C811BCAA6B80",
+    "SHA256After": "52E6B56CF062CFF35902ABF859AEC0A065C6CBBD6D73AE8200F1C811BCAA6B80",
+    "ExactMatch": true
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-Public-Release\\data\\watchtracker.db",
+    "LengthBefore": 36864,
+    "LengthAfter": 36864,
+    "LastWriteTimeUtcBefore": "2026-07-25T14:46:34.7063956Z",
+    "LastWriteTimeUtcAfter": "2026-07-25T14:46:34.7063956Z",
+    "SHA256Before": "D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE",
+    "SHA256After": "D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE",
+    "ExactMatch": true
+  }
+]

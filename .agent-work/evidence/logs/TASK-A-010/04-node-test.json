@@ -1,0 +1,7 @@
+{
+  "Command": "npm run test",
+  "StartedAtUtc": "2026-07-29T16:16:59.7783536Z",
+  "EndedAtUtc": "2026-07-29T16:17:00.3611840Z",
+  "DurationMs": 583.0,
+  "ExitCode": 0
+}

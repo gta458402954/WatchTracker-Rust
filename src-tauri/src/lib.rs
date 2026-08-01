@@ -1,33 +1,21 @@
+mod app_paths;
 mod auth;
 mod commands;
 mod db;
+mod db_atomic_crud;
+mod db_atomic_helpers;
+mod db_atomic_update;
 mod error;
 mod models;
 mod net;
 
-use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+mod db_atomic_tests;
+
+use app_paths::AppPaths;
 use tauri::Manager;
 
-fn setup_logging(app_handle: &tauri::AppHandle) -> Result<(), String> {
-    // 优先使用便携式 data 目录
-    let app_dir = if let Ok(exe_path) = std::env::current_exe() {
-        let exe_dir = exe_path.parent().unwrap_or(&PathBuf::new()).to_path_buf();
-        let portable_dir = exe_dir.join("data");
-        if portable_dir.exists() {
-            portable_dir
-        } else {
-            app_handle.path().app_data_dir().unwrap_or_default()
-        }
-    } else {
-        app_handle.path().app_data_dir().unwrap_or_default()
-    };
-
-    if !app_dir.exists() {
-        std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
-    }
-
-    let log_path = app_dir.join("app.log");
-
+fn setup_logging(paths: &AppPaths) -> Result<(), String> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -40,7 +28,12 @@ fn setup_logging(app_handle: &tauri::AppHandle) -> Result<(), String> {
         })
         .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
-        .chain(fern::log_file(log_path).map_err(|e| e.to_string())?)
+        .chain(fern::log_file(paths.log()).map_err(|error| {
+            format!(
+                "Could not open the application log at {}: {error}",
+                paths.log().display()
+            )
+        })?)
         .apply()
         .map_err(|e| e.to_string())?;
 
@@ -57,74 +50,62 @@ pub fn run() {
 
             // `poster://` 只应访问海报目录中的单个文件。拒绝目录、绝对路径和
             // `..`，避免来自导入数据的 posterPath 跳出 posters 目录。
-            let mut components = Path::new(file_name).components();
-            let is_safe_file_name = matches!(components.next(), Some(Component::Normal(_)))
-                && components.next().is_none();
-            if !is_safe_file_name {
+            let paths = context.app_handle().state::<AppPaths>();
+            let full_path = match paths.poster_file(file_name) {
+                Ok(path) => path,
+                Err(_) => {
+                    return tauri::http::Response::builder()
+                        .status(400)
+                        .body(Vec::new())
+                        .unwrap();
+                }
+            };
+
+            if !full_path.is_file() {
                 return tauri::http::Response::builder()
-                    .status(400)
+                    .status(404)
                     .body(Vec::new())
                     .unwrap();
             }
 
-            // 优先检查可执行文件同级目录下的 data 文件夹
-            let app_dir = if let Ok(exe_path) = std::env::current_exe() {
-                let exe_dir = exe_path
-                    .parent()
-                    .unwrap_or(&std::path::PathBuf::new())
-                    .to_path_buf();
-                let portable_dir = exe_dir.join("data");
-                if portable_dir.exists() {
-                    portable_dir
-                } else {
-                    context
-                        .app_handle()
-                        .path()
-                        .app_data_dir()
-                        .unwrap_or_default()
+            let content = match std::fs::read(&full_path) {
+                Ok(content) => content,
+                Err(_) => {
+                    return tauri::http::Response::builder()
+                        .status(500)
+                        .body(Vec::new())
+                        .unwrap();
                 }
-            } else {
-                context
-                    .app_handle()
-                    .path()
-                    .app_data_dir()
-                    .unwrap_or_default()
             };
+            let mime_type = infer::get(&content)
+                .map(|file_type| file_type.mime_type())
+                .unwrap_or_else(|| match full_path.extension().and_then(|extension| extension.to_str()) {
+                    Some("png") | Some("PNG") => "image/png",
+                    Some("webp") | Some("WEBP") => "image/webp",
+                    Some("gif") | Some("GIF") => "image/gif",
+                    _ => "image/jpeg",
+                });
 
-            let full_path = app_dir.join("posters").join(file_name);
-
-            if full_path.exists() {
-                let content = std::fs::read(&full_path).unwrap_or_default();
-                let mime_type = infer::get(&content)
-                    .map(|t| t.mime_type())
-                    .unwrap_or_else(|| {
-                        match full_path.extension().and_then(|e| e.to_str()) {
-                            Some("png") | Some("PNG") => "image/png",
-                            Some("webp") | Some("WEBP") => "image/webp",
-                            Some("gif") | Some("GIF") => "image/gif",
-                            _ => "image/jpeg",
-                        }
-                    });
-
-                tauri::http::Response::builder()
-                    .header("Content-Type", mime_type)
-                    .body(content)
-                    .unwrap()
-            } else {
-                tauri::http::Response::builder()
-                    .status(404)
-                    .body(Vec::new())
-                    .unwrap()
-            }
+            tauri::http::Response::builder()
+                .header("Content-Type", mime_type)
+                .body(content)
+                .unwrap()
         })
         .setup(|app| {
-            // 初始化日志
-            let _ = setup_logging(app.handle());
-            log::info!("Application starting up (Portable Mode)...");
+            let paths = AppPaths::resolve(app.handle())?;
+            setup_logging(&paths)?;
+            log::info!(
+                "Application starting with {} data root: {} (database: {}, posters: {}, backups: {})",
+                paths.mode().as_str(),
+                paths.root().display(),
+                paths.database().display(),
+                paths.posters().display(),
+                paths.backups().display()
+            );
 
-            // 初始化数据库
-            let db_state = db::init(app.handle())?;
+            let db_state = db::init(&paths)?;
 
+            app.manage(paths);
             app.manage(db_state);
             Ok(())
         })

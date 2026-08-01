@@ -1,0 +1,85 @@
+===============================================================================
+TASK-A-001 ORIGINAL FAILURE & QUALITY GATE MATRIX (FINAL REVISED)
+Execution Workdir: D:\Project\Projects\WatchTracker-Recovery
+Baseline Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Matrix Date: 2026-07-28T00:02:46.1818281+08:00
+===============================================================================
+NOTE: This matrix is established strictly from accepted Gate R evidence files.
+No commands (npm, cargo, tauri, playwright) were re-executed during TASK-A-001.
+-------------------------------------------------------------------------------
+GATE 1: DEPENDENCY INSTALLATION (npm ci)
+  - Command: npm ci
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-npm-ci.txt
+  - Existing Exit Code: 0
+  - Status: PASS
+  - Historical Debt: No
+  - Re-verification Task: TASK-A-002 (Wave 0/1)
+-------------------------------------------------------------------------------
+GATE 2: FRONTEND LINTING (npm run lint)
+  - Command: npm run lint
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-lint.txt
+  - Existing Exit Code: 0
+  - Status: PASS
+  - Historical Debt: No
+  - Re-verification Task: TASK-A-002 (Wave 0/1)
+-------------------------------------------------------------------------------
+GATE 3: FRONTEND BUILD (npm run build)
+  - Command: npm run build
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-frontend-build.txt
+  - Existing Exit Code: 0
+  - Status: PASS
+  - Historical Debt: No
+  - Re-verification Task: TASK-A-003 (Wave 2/3)
+-------------------------------------------------------------------------------
+GATE 4: RUST FORMATTING CHECK (cargo fmt -- --check)
+  - Command: cargo fmt -- --check
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-cargo-fmt.txt
+  - Existing Exit Code: 1
+  - Status: FAIL — inherited historical formatting debt
+  - Historical Debt: Yes (Inherited from 6fcbb1e; not modified in TASK-A-001)
+  - Re-verification Tasks: TASK-A-003 (First Slice), TASK-A-007 (Continuous Quality Gate), TASK-A-010 (Phase A Final Gate)
+-------------------------------------------------------------------------------
+GATE 5: RUST UNIT TESTS (cargo test)
+  - Command: cargo test
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-cargo-test.txt
+  - Existing Exit Code: 0
+  - Status: PASS (3 unit tests pass)
+  - Historical Debt: No
+  - Re-verification Task: TASK-A-006 (Wave 2/3/4)
+-------------------------------------------------------------------------------
+GATE 6: RUST LINTING & CLIPPY (cargo clippy --all-targets --all-features -- -D warnings)
+  - Command: cargo clippy --all-targets --all-features -- -D warnings
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-cargo-clippy.txt
+  - Existing Exit Code: 0
+  - Status: PASS (0 warnings)
+  - Historical Debt: No
+  - Re-verification Task: TASK-A-006 / TASK-A-007
+-------------------------------------------------------------------------------
+GATE 7: TAURI DEV APPLICATION STARTUP (npm run tauri dev)
+  - Command: npm run tauri dev
+  - Evidence Files: .agent-work/evidence/recovery/recovery-r3-raw-tauri-dev.stdout.txt & stderr.txt
+  - Raw Exit Code: 1
+  - Command Result: TERMINATED / EXIT 1
+  - Termination Reason: 启动观察 15 秒后主动 taskkill 终止进程树
+  - Startup Health Check: PASS
+  - Isolated Debug DB Creation: PASS (target/debug/data/watchtracker.db generated, size 28,672 bytes)
+  - Status: TERMINATED / EXIT 1 (Startup Health Check: PASS, Isolated DB Creation: PASS)
+  - Historical Debt: No
+  - Re-verification Tasks: TASK-A-002 (First Re-verification), TASK-A-006 (Database & Offline E2E), TASK-A-010 (Phase A Final Gate)
+-------------------------------------------------------------------------------
+GATE 8: TAURI RELEASE PACKAGING (npm run tauri build)
+  - Command: npm run tauri build
+  - Evidence File: .agent-work/evidence/recovery/recovery-r3-raw-tauri-build.txt & recovery-r3-post-exit-artifacts.txt
+  - Existing Exit Code: 0
+  - Status: PASS (app.exe, MSI, NSIS compiled)
+  - Historical Debt: No
+  - Re-verification Task: TASK-A-009 (Wave 5)
+-------------------------------------------------------------------------------
+GATE 9: PLAYWRIGHT E2E TESTS (npx playwright test)
+  - Command: npx playwright test
+  - Evidence File: .agent-work/evidence/recovery/stable-13-user-manual-verification.txt
+  - Existing Exit Code: N/A (E2E framework in 6fcbb1e was unconfigured; E2E replaced by verified manual UI test)
+  - Status: BLOCKED / NOT CONFIGURED IN STABLE BASELINE
+  - Historical Debt: Yes (Requires setup in Wave 0/1)
+  - Re-verification Tasks: TASK-A-007 (Framework & Regression Implementation), TASK-A-010 (Phase A Final Re-verification)
+===============================================================================

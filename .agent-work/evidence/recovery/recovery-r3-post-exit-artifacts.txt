@@ -1,0 +1,29 @@
+===============================================================================
+RECOVERY R3 POST-EXIT RELEASE ARTIFACTS DOUBLE-PASS HASH VERIFICATION
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Verification Time: 2026-07-27T23:28:03.9649709+08:00
+===============================================================================
+PATH: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\app.exe
+NAME: app.exe
+SIZE: 15313920 bytes
+LAST_WRITE: 2026-07-27T23:20:15.8447986+08:00
+SHA256_PASS1: 965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733
+SHA256_PASS2: 965F986E74A936EFF85510286F368C19311C103E691AFF42C7A15F6CD619F733
+MATCH: True
+-------------------------------------------------------------------------------
+PATH: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\msi\WatchTracker_1.10.0_x64_en-US.msi
+NAME: WatchTracker_1.10.0_x64_en-US.msi
+SIZE: 5677056 bytes
+LAST_WRITE: 2026-07-27T23:19:58.6670000+08:00
+SHA256_PASS1: C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D
+SHA256_PASS2: C2A14521D53750373EF3D7795FCFF974D5F47A44B60E3DF7521BFB313E43A55D
+MATCH: True
+-------------------------------------------------------------------------------
+PATH: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\release\bundle\nsis\WatchTracker_1.10.0_x64-setup.exe
+NAME: WatchTracker_1.10.0_x64-setup.exe
+SIZE: 3984091 bytes
+LAST_WRITE: 2026-07-27T23:20:15.8001601+08:00
+SHA256_PASS1: A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991
+SHA256_PASS2: A2288F603BDE1D48F9CCE4C12F7EBF69E92F4051481CD4896EF6DF354FF25991
+MATCH: True
+-------------------------------------------------------------------------------

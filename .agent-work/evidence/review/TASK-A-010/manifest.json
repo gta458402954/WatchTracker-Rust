@@ -1,0 +1,126 @@
+{
+  "Task": "TASK-A-010",
+  "ReviewedCommit": "64e9a533c98713026d1f60be562bc3e0fb55fccc",
+  "Files": [
+    {
+      "Name": "00-npm-ci.json",
+      "Length": 147,
+      "Sha256": "B6AC52E94657FC1EAA18699F04D92F159F0731692F947023A56D7427BD24FD5C"
+    },
+    {
+      "Name": "00-npm-ci.log",
+      "Length": 240,
+      "Sha256": "58DF9C6820121B2789681088698DC5C4462ACF23DBFFDC6B234828F085B54843"
+    },
+    {
+      "Name": "01-npm-build.json",
+      "Length": 150,
+      "Sha256": "9C6C811435D83BE5B7B7E690068522458005F1A4F9B3E6A62E69816EB98DD2CA"
+    },
+    {
+      "Name": "01-npm-build.log",
+      "Length": 500,
+      "Sha256": "1EBB85DFE8FF442DBADAB1AB1759EBAADF8F441EE4DC69BEECB2CAFDD755DAC5"
+    },
+    {
+      "Name": "02-typecheck.json",
+      "Length": 150,
+      "Sha256": "39F16CD3E28C5E818577F073A54197251FFF61358F85DD7E00E1AC8BB05DA5AF"
+    },
+    {
+      "Name": "02-typecheck.log",
+      "Length": 57,
+      "Sha256": "4445C2E88C52013A5E5C2CCBD37E86238F338AB010B6316A1F81AAEC22C3375B"
+    },
+    {
+      "Name": "03-lint.json",
+      "Length": 145,
+      "Sha256": "03F289388075457B8F1C0FF47A8A42BBA86EAD8B40F84A85FB89667966CD18CE"
+    },
+    {
+      "Name": "03-lint.log",
+      "Length": 45,
+      "Sha256": "060A3589B5614C6F66DEA7BF5843D2FD128B7D53A9EABE3102718C25D8273FC6"
+    },
+    {
+      "Name": "04-node-test.json",
+      "Length": 150,
+      "Sha256": "2B19CEC09E9140B8D87DC0FDB84AAC3236628ECC381DC0BA46B83934E4191A58"
+    },
+    {
+      "Name": "04-node-test.log",
+      "Length": 1188,
+      "Sha256": "430C49CA3658FADDEC8249D98F2A416F1171DA9ABD2960552F24213AF597AD73"
+    },
+    {
+      "Name": "05-playwright.json",
+      "Length": 151,
+      "Sha256": "8B03D50FB1B98E15DF715ABA24E1AB961CEF6A63D7D46FA5B477D2B668001140"
+    },
+    {
+      "Name": "05-playwright.log",
+      "Length": 1286,
+      "Sha256": "5986AA3981CF8B871DF96BE7394D5521097547EB5562EAC1762AE44BCEDB4DAB"
+    },
+    {
+      "Name": "06-tauri-build.json",
+      "Length": 152,
+      "Sha256": "9E204A271D4188A475EAB7ABDEE4ED778DA80AF56607A53872D842A823414953"
+    },
+    {
+      "Name": "06-tauri-build.log",
+      "Length": 12465,
+      "Sha256": "6308ABE0F200CBDB2C0DD49C76D5A04C54B4053B5A38EE78BF0941D3F296D3EA"
+    },
+    {
+      "Name": "07-cargo-fmt.json",
+      "Length": 150,
+      "Sha256": "7B84BBC83FE87FA3E56E2B27358763773F5733098CD563B6CE45324814EF9757"
+    },
+    {
+      "Name": "07-cargo-fmt.log",
+      "Length": 0,
+      "Sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "Name": "08-cargo-clippy.json",
+      "Length": 153,
+      "Sha256": "1C556C91388B398B9C0FFC1BF731879E7233439164601D60AD1C750BE27A6DBD"
+    },
+    {
+      "Name": "08-cargo-clippy.log",
+      "Length": 10332,
+      "Sha256": "FAA90F0B4410584C2134D09CC8C7D7D7F3A52288E92FCB090BE7BDAF767CAA2D"
+    },
+    {
+      "Name": "09-cargo-test.json",
+      "Length": 151,
+      "Sha256": "313DE7FA6E042204F5D9B526A9D9AA3B181CCD0456CAA701C8C033FB8CFF2D52"
+    },
+    {
+      "Name": "09-cargo-test.log",
+      "Length": 11615,
+      "Sha256": "197043C904F002A1CED3434BAEDFC9333D96CEEE8944482797DF10BB7673E133"
+    },
+    {
+      "Name": "artifacts.json",
+      "Length": 1003,
+      "Sha256": "D0681A7F7D7D23307F6849AFEFAA0F2DE2E0303FE034D6130154600BD58E4637"
+    },
+    {
+      "Name": "verification-final.json",
+      "Length": 1316,
+      "Sha256": "C44A7BF8C087DCBCC6B5B57CF23E55B84589A617CCE37DAA245B4EDD4B801BC6"
+    },
+    {
+      "Name": "verify-empty-startup.jpg",
+      "Length": 45339,
+      "Sha256": "79C6690D01B4ADDE4DE75FA12645AC39AD3E11396FDB6BB65A49306F1F3AEC57"
+    },
+    {
+      "Name": "verify-smoke-app.log",
+      "Length": 372,
+      "Sha256": "672A9A2489689625DB3CBE42401E77F5752C2660A85E119DD3B013257EBF2F8C"
+    }
+  ]
+}

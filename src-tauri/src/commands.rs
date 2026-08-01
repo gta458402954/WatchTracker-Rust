@@ -1,115 +1,107 @@
+use crate::app_paths::AppPaths;
 use crate::db::{self, DbState};
-use crate::models::WatchRecord;
+use crate::models::{UpdateWatchRecord, WatchRecord};
 use crate::{auth, net};
 use serde_json::Value;
 use tauri::State;
 
 #[tauri::command]
 pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
     Ok(db::get_all_records(&conn)?)
 }
 
 #[tauri::command]
 pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-    Ok(db::insert_record(&conn, r)?)
+    let mut conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    crate::db_atomic_crud::insert_record_atomic(&mut conn, r)
 }
 
 #[tauri::command]
-pub fn update_record(state: State<DbState>, id: String, updates: Value) -> Result<(), crate::error::AppError> {
+pub fn update_record(
+    state: State<DbState>,
+    id: String,
+    updates: UpdateWatchRecord,
+    actor_id: Option<String>,
+) -> Result<WatchRecord, crate::error::AppError> {
     log::info!("[Commands] update_record called for id: {}", id);
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-
-    let obj = updates.as_object().ok_or_else(|| crate::error::AppError::General("Updates must be an object".to_string()))?;
-    if obj.is_empty() {
-        return Ok(());
-    }
-
-    let allowed_columns = [
-        "originalName", "chineseName", "progress", "totalEpisodes", "status", "platform",
-        "rating", "startDate", "endDate", "notes", "createdAt", "movieProgress",
-        "movieDuration", "releaseYear", "posterPath", "updatedAt", "imdbId", "isLocked",
-        "genres", "originCountry", "imdbRating", "tmdbStatus", "interestLevel",
-        "episodeRuntime", "mediaType", "contentTags"
-    ];
-
-    let mut set_clauses = Vec::new();
-    let mut params: Vec<rusqlite::types::Value> = Vec::new();
-
-    for (k, v) in obj {
-        if !allowed_columns.contains(&k.as_str()) {
-            continue;
-        }
-        set_clauses.push(format!("{} = ?", k));
-        
-        let param = match v {
-            Value::Null => rusqlite::types::Value::Null,
-            Value::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
-            Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    rusqlite::types::Value::Integer(i)
-                } else if let Some(f) = n.as_f64() {
-                    rusqlite::types::Value::Real(f)
-                } else {
-                    rusqlite::types::Value::Null
-                }
-            },
-            Value::String(s) => rusqlite::types::Value::Text(s.clone()),
-            _ => rusqlite::types::Value::Text(v.to_string()),
-        };
-        params.push(param);
-    }
-
-    if set_clauses.is_empty() {
-        return Ok(());
-    }
-
-    let sql = format!(
-        "UPDATE records SET {} WHERE id = ?",
-        set_clauses.join(", ")
-    );
-
-    params.push(rusqlite::types::Value::Text(id));
-
-    conn.execute(&sql, rusqlite::params_from_iter(params))?;
-
-    Ok(())
+    let mut conn = state
+        .conn
+        .lock()
+        .map_err(|error| crate::error::AppError::ConcurrencyError(error.to_string()))?;
+    crate::db_atomic_update::update_record_atomic(
+        &mut conn,
+        &id,
+        &updates,
+        actor_id.as_deref().unwrap_or("local"),
+    )
 }
 
 #[tauri::command]
 pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-    Ok(db::delete_record(&conn, id)?)
+    let mut conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    crate::db_atomic_crud::delete_record_atomic(&mut conn, &id)
 }
 
 #[tauri::command]
-pub fn replace_all_records(state: State<DbState>, records: Vec<WatchRecord>) -> Result<(), crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
-    Ok(db::replace_all_records(&conn, records)?)
+pub fn replace_all_records(
+    state: State<DbState>,
+    records: Vec<WatchRecord>,
+) -> Result<(), crate::error::AppError> {
+    let mut conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    crate::db_atomic_crud::replace_all_records_atomic(&mut conn, records)
 }
 
 #[tauri::command]
 pub fn vacuum_db(state: State<DbState>) -> Result<(), crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
     Ok(db::vacuum_db(&conn)?)
 }
 
 #[tauri::command]
-pub fn get_setting(state: State<DbState>, key: String) -> Result<Option<String>, crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+pub fn get_setting(
+    state: State<DbState>,
+    key: String,
+) -> Result<Option<String>, crate::error::AppError> {
+    let conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
     Ok(db::get_setting(&conn, key)?)
 }
 
 #[tauri::command]
-pub fn set_setting(state: State<DbState>, key: String, value: String) -> Result<(), crate::error::AppError> {
-    let conn = state.conn.lock().map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+pub fn set_setting(
+    state: State<DbState>,
+    key: String,
+    value: String,
+) -> Result<(), crate::error::AppError> {
+    let conn = state
+        .conn
+        .lock()
+        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
     Ok(db::set_setting(&conn, key, value)?)
 }
 
 #[tauri::command]
 pub fn encrypt(text: String, tag: Option<String>) -> Result<String, crate::error::AppError> {
-    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds")).map_err(crate::error::AppError::General)
+    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds"))
+        .map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
@@ -155,11 +147,13 @@ pub async fn get_tmdb_detail(
 
 #[tauri::command]
 pub async fn download_poster(
-    app: tauri::AppHandle,
+    paths: State<'_, AppPaths>,
     path: String,
     proxy: Option<String>,
 ) -> Result<bool, crate::error::AppError> {
-    net::download_poster(&app, path, proxy).await.map_err(crate::error::AppError::General)
+    net::download_poster(&paths, path, proxy)
+        .await
+        .map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]
@@ -172,10 +166,16 @@ pub async fn webdav_request(
     proxy: Option<String>,
 ) -> Result<Value, crate::error::AppError> {
     if !matches!(method.as_str(), "GET" | "PUT" | "MKCOL") {
-        return Err(crate::error::AppError::General("Unsupported WebDAV method".to_string()));
+        return Err(crate::error::AppError::General(
+            "Unsupported WebDAV method".to_string(),
+        ));
     }
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(crate::error::AppError::General("Invalid WebDAV URL".to_string()));
+        return Err(crate::error::AppError::General(
+            "Invalid WebDAV URL".to_string(),
+        ));
     }
-    net::webdav_request(&method, &url, &username, &password, body, proxy).await.map_err(crate::error::AppError::General)
+    net::webdav_request(&method, &url, &username, &password, body, proxy)
+        .await
+        .map_err(crate::error::AppError::General)
 }

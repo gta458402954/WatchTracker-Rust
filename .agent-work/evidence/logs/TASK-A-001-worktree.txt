@@ -1,0 +1,36 @@
+===============================================================================
+TASK-A-001 WORKTREE BASELINE SNAPSHOT
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Execution Time: 2026-07-27T23:45:14.2603543+08:00
+===============================================================================
+[COMMAND: git rev-parse HEAD]
+11e5492bfcba584ff29d24ee7bfc857d789f7920
+
+[COMMAND: git branch --show-current]
+codex/rebuild-from-stable
+
+[COMMAND: git status --short --branch]
+## codex/rebuild-from-stable
+ M src-tauri/Cargo.toml
+?? .agent-work/evidence/recovery/recovery-raw-cargo-clippy.txt
+?? .agent-work/evidence/recovery/recovery-raw-cargo-test.txt
+?? .agent-work/evidence/recovery/recovery-raw-tauri-build.txt
+
+[COMMAND: git rev-list --left-right --count origin/main...HEAD]
+0	10
+
+[COMMAND: git diff --stat]
+
+
+[COMMAND: git diff]
+
+
+[COMMAND: git diff --name-status 11e5492bfcba584ff29d24ee7bfc857d789f7920..HEAD]
+
+
+[COMMAND: git diff --stat 11e5492bfcba584ff29d24ee7bfc857d789f7920..HEAD]
+
+
+[COMMAND: git diff 11e5492bfcba584ff29d24ee7bfc857d789f7920..HEAD]
+
+

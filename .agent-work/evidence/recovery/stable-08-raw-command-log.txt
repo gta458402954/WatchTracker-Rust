@@ -1,0 +1,19 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e Raw Log Index
+Task: TASK-R-002 / REVIEW-R-002 Remediation Round 2
+Worktree: D:\Project\Projects\WatchTracker-Stable-Verify
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Created At: 2026-07-27T00:54:40+08:00
+===============================================================================
+
+All command executions in this round redirected stdout and stderr directly to un-edited raw log files:
+
+1. npm ci: .agent-work/evidence/recovery/stable-raw-npm-ci.log (Exit Code: 0)
+2. npm run lint: .agent-work/evidence/recovery/stable-raw-lint.log (Exit Code: 0)
+3. npm run build: .agent-work/evidence/recovery/stable-raw-frontend-build.log (Exit Code: 0)
+4. cargo fmt -- --check: .agent-work/evidence/recovery/stable-raw-cargo-fmt.log (Exit Code: 1)
+5. cargo test: .agent-work/evidence/recovery/stable-raw-cargo-test.log (Exit Code: 0)
+6. cargo clippy: .agent-work/evidence/recovery/stable-raw-cargo-clippy.log (Exit Code: 0)
+7. npm run tauri dev (Stdout): .agent-work/evidence/recovery/stable-raw-tauri-dev.stdout.log (Parent PID: 11096, Child App PID: 21976)
+8. npm run tauri dev (Stderr): .agent-work/evidence/recovery/stable-raw-tauri-dev.stderr.log
+9. npm run tauri build: .agent-work/evidence/recovery/stable-raw-tauri-build.log (Exit Code: 0)

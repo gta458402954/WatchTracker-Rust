@@ -1,0 +1,21 @@
+===============================================================================
+Command: npm ci
+Workdir: D:\Project\Projects\WatchTracker-Head-Verify
+Start Time: 2026-07-27T12:16:54.6561245+08:00
+End Time: 2026-07-27T12:17:23.7691980+08:00
+Exit Code: 0
+===============================================================================
+RAW STDOUT / STDERR:
+
+added 287 packages, and audited 288 packages in 26s
+
+71 packages are looking for funding
+  run `npm fund` for details
+
+4 vulnerabilities (1 low, 3 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+

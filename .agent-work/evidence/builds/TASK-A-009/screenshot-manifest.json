@@ -1,0 +1,44 @@
+[
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\01-startup.jpg",
+    "Length": 51888,
+    "LastWriteTimeUtc": "2026-07-29T15:54:05.9464755Z",
+    "SHA256": "D1141FB9AD61995D9F69D8FAE53DE65CBDD27231624627478A1FD6B454AA21CD"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\02-created.jpg",
+    "Length": 43520,
+    "LastWriteTimeUtc": "2026-07-29T15:54:44.3186939Z",
+    "SHA256": "150D5BA84EB6443A76725EB4438D199BC87ECD8AD58C21112987C16EC7DE413E"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\03-updated-and-reclassified.jpg",
+    "Length": 44781,
+    "LastWriteTimeUtc": "2026-07-29T15:56:47.7449968Z",
+    "SHA256": "9B1C24B581840C3E060E3AA3B68C4D46EC952CB1ACBD2D974D4A87D0A10E87F9"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\04-after-restart.jpg",
+    "Length": 43937,
+    "LastWriteTimeUtc": "2026-07-29T15:57:21.5090389Z",
+    "SHA256": "A4FFA6F8665D7823F24C6F56B3AC5079424B04C04101F6336F4D14DF5659A3B8"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\05-deleted.jpg",
+    "Length": 44546,
+    "LastWriteTimeUtc": "2026-07-29T15:58:38.4208230Z",
+    "SHA256": "60359F79997E864A95F3105750AF784A5EDDFDD2C52A5D7D8AC8D29FD7450D45"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\06-empty-after-delete-restart.jpg",
+    "Length": 43693,
+    "LastWriteTimeUtc": "2026-07-29T15:59:06.3404198Z",
+    "SHA256": "69D525CD77F26642FB8FAF0A7010B77E566FD2757B3D977B20B63AD95B3065ED"
+  },
+  {
+    "Path": "D:\\Project\\Projects\\WatchTracker-A009\\.agent-work\\evidence\\screenshots\\TASK-A-009\\07-verification-build-startup.jpg",
+    "Length": 44493,
+    "LastWriteTimeUtc": "2026-07-29T16:06:33.0711490Z",
+    "SHA256": "8689D1C18E19218CB5801F8E2192C26F473FBCD4665FE4CA06AA9A4ECD751D4F"
+  }
+]

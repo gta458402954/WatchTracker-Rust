@@ -1,0 +1,81 @@
+===============================================================================
+WatchTracker Stable Candidate 6fcbb1e Leaked Process Cleanup Evidence Log
+Task: TASK-R-002 Process Cleanup & Status Alignment
+Worktree: D:\Project\Projects\WatchTracker-Stable-Verify
+Target Commit: 6fcbb1e0ae851c554c905676ee9164bfb3ea303e
+Completed At: 2026-07-27T01:01:45+08:00
+===============================================================================
+
+1. PRE-CLEANUP STABLE-VERIFY PROCESS INVENTORY
+-------------------------------------------------------------------------------
+1. Process PID: 16984
+   Parent PID: 25448
+   Name: pwsh.exe
+   Executable Path: C:\Program Files\PowerShell\7\pwsh.exe
+   Command Line: pwsh -Command "$env:Path += ... stable-raw-tauri-dev.stdout.log ..."
+   Description: Hanging background log-collection PowerShell script waiting on redirected stdout pipe.
+
+2. Process PID: 28876
+   Parent PID: 28036
+   Name: node.exe
+   Executable Path: C:\Users\markp\scoop\apps\nodejs-lts\current\node.exe
+   Command Line: "node" "D:\Project\Projects\WatchTracker-Stable-Verify\node_modules\@tauri-apps\cli\tauri.js" dev
+   Description: Tauri CLI dev server process.
+
+3. Process PID: 30360
+   Parent PID: 15568
+   Name: node.exe
+   Executable Path: C:\Users\markp\scoop\apps\nodejs-lts\current\node.exe
+   Command Line: "node" "D:\Project\Projects\WatchTracker-Stable-Verify\node_modules\vite\bin\vite.js"
+   Description: Vite frontend dev server process.
+
+4. Process PID: 3100
+   Parent PID: 30452
+   Name: app.exe
+   Executable Path: D:\Project\Projects\WatchTracker-Stable-Verify\src-tauri\target\debug\app.exe
+   Command Line: "target\debug\app.exe"
+   Description: Debug build application binary.
+
+5. Process PID: 8004
+   Parent PID: 28876
+   Name: cargo.exe
+   Executable Path: C:\Users\markp\scoop\apps\rustup-msvc\current\.cargo\bin\cargo.exe
+   Command Line: "cargo" run --no-default-features --color always --
+   Description: Cargo runner process spawned by Tauri CLI.
+
+6. Process PID: 30452
+   Parent PID: 8004
+   Name: cargo.exe
+   Executable Path: C:\Users\markp\scoop\persist\rustup-msvc\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\cargo.exe
+   Command Line: "cargo.exe" run --no-default-features --color always --
+   Description: Rustup toolchain cargo compiler runner process.
+
+2. TERMINATION COMMANDS EXECUTED
+-------------------------------------------------------------------------------
+1. `taskkill /PID 28876 /T /F`
+   - Terminated Tauri CLI node tree, transitively killing child processes cargo.exe (8004, 30452), app.exe (3100), and vite node.exe (30360).
+2. `Stop-Process -Id 16984 -Force`
+   - Cleanly stopped hanging log collection pwsh process.
+
+3. POST-CLEANUP PROCESS VERIFICATION (3 SECONDS SLEEP PASS)
+-------------------------------------------------------------------------------
+Filter Query: Win32_Process matching D:\Project\Projects\WatchTracker-Stable-Verify
+Remaining Processes Count: ZERO (0)
+Verification Result: PASS - No app.exe, Tauri CLI, Vite, cargo run, or hanging PowerShell processes remain for Stable-Verify.
+
+4. REAL DATABASE FINAL POST-CLEANUP SHA-256 HASHES
+-------------------------------------------------------------------------------
+- AppData DB (C:\Users\markp\AppData\Roaming\com.watchtracker.desktop\watchtracker.db):
+  SHA-256: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7 (MATCH: True)
+- Portable DB (D:\Project\Projects\WatchTracker-Rust-Portable\data\watchtracker.db):
+  SHA-256: 6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE (MATCH: True)
+- Public Release DB (D:\Project\Projects\WatchTracker-Public-Release\data\watchtracker.db):
+  SHA-256: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE (MATCH: True)
+
+5. MAIN REPOSITORY GIT STATUS & RAW DEV LOG CHANGE CHECK
+-------------------------------------------------------------------------------
+- Branch: codex/current-recovery-snapshot
+- `git status --short --branch`: Clean (`## codex/current-recovery-snapshot`)
+- `git diff --stat`: Clean (0 diffs)
+- `stable-raw-tauri-dev.stdout.log` change status: Untouched after commit 19f2bd1.
+- `stable-raw-tauri-dev.stderr.log` change status: Untouched after commit 19f2bd1.

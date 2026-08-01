@@ -1,0 +1,27 @@
+===============================================================================
+Command: npm run tauri dev (STDOUT)
+Workdir: D:\Project\Projects\WatchTracker-Recovery
+Start Time: 2026-07-27T23:18:33.0100991+08:00
+End Time: 2026-07-27T23:18:49.2583634+08:00
+Duration: 16.2482643 seconds
+Exit Code: 1 (Terminated via taskkill /T /F after 15s run)
+Parent PID: 11860 | Tauri CLI PID: 19548 | Vite PID: 24276 | Cargo PID: None | App PID: 13196
+App Executable Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\app.exe
+Isolated Debug DB Path: D:\Project\Projects\WatchTracker-Recovery\src-tauri\target\debug\data\watchtracker.db (Exists: True, Size: 28672 bytes, Non-Zero: True)
+Log Error Checks: no_such_column=False, Database_error=False, startup_failure=False, panic=False
+===============================================================================
+RAW STDOUT:
+
+> watch-tracker@1.10.0 tauri
+> tauri dev
+
+
+> watch-tracker@1.10.0 dev
+> vite
+
+
+  [32m[1mVITE[22m v8.0.13[39m  [2mready in [0m[1m243[22m[2m[0m ms[22m
+
+  [32m鉃?[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2026-07-27][23:18:37][app_lib][INFO] Application starting up (Portable Mode)...
+

@@ -5,12 +5,21 @@ node_modules/
 # 编译产物
 dist/
 dist-ssr/
+dist-build/
 *.local
 target/
 
 # Tauri 相关
 src-tauri/target/
 src-tauri/gen/
+
+# 测试报告与本地发布副本
+playwright-report/
+test-results/
+blob-report/
+/WatchTracker-Portable.exe
+/*.msi
+/*-setup.exe
 
 # 个人数据与日志（严禁上传）
 data/

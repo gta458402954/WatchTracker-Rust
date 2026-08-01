@@ -1,0 +1,53 @@
+===============================================================================
+WatchTracker Executable and Data Locations & Physical Backup (TASK-R-001 / REVIEW-R-001)
+Created At: 2026-07-27
+Executor: Antigravity (Gemini 3.6 Flash)
+===============================================================================
+
+1. PHYSICAL BACKUP LOCATION
+-------------------------------------------------------------------------------
+Backup Root Path: D:\Project\Backups\WatchTracker-2026-07-27
+Backup Notes: D:\Project\Backups\WatchTracker-2026-07-27\recovery-notes\RECOVERY.md
+Total Files in Backup: 4,853 files
+Total Size: 1,872,228,723 bytes (~1.87 GB)
+
+2. OLD RUNNABLE EXECUTABLES (Golden Baseline Binaries)
+-------------------------------------------------------------------------------
+Executable 1: Portable Release Binary
+- Source Path: D:\Project\Projects\WatchTracker-Rust-Portable\watch-tracker.exe
+- Backup Path: D:\Project\Backups\WatchTracker-2026-07-27\working-build\portable-release\watch-tracker.exe
+- File Size: 15,324,672 bytes (14.6 MB)
+- Last Modified: 2026-07-26 19:36:10
+- SHA-256: 21580EE5F51414967733D0F8F83A6A9061FFD97EDE6229256FA07C74B0D08741
+- Status: Physical backup created. SHA-256 match verified (100%).
+
+Executable 2: Public Release Binary
+- Source Path: D:\Project\Projects\WatchTracker-Public-Release\WatchTracker.exe
+- Backup Path: D:\Project\Backups\WatchTracker-2026-07-27\working-build\public-release\WatchTracker.exe
+- File Size: 15,205,888 bytes (14.5 MB)
+- Last Modified: 2026-07-25 22:41:17
+- SHA-256: FFA6B9F9AFBB7B579A8492ED411F0B3ED9DE9335BAC60349D7CBCCEC6B12EC89
+- Status: Physical backup created. SHA-256 match verified (100%).
+
+3. USER DATA DIRECTORIES & BACKUPS
+-------------------------------------------------------------------------------
+User Data 1: System AppData
+- Source Path: C:\Users\markp\AppData\Roaming\com.watchtracker.desktop
+- Backup Path: D:\Project\Backups\WatchTracker-2026-07-27\user-data\appdata
+- Key File: watchtracker.db (622,592 bytes)
+- Key SHA-256: BF96F204F9B73E2C30CE6C6DFCFA5F1D2FA9C5D1BB89D3BF245797B716893CF7
+- Status: Physical backup created. SHA-256 match verified (100%). Real DB untouched/unmodified.
+
+User Data 2: Portable Data
+- Source Path: D:\Project\Projects\WatchTracker-Rust-Portable\data
+- Backup Path: D:\Project\Backups\WatchTracker-2026-07-27\user-data\portable
+- Key File: watchtracker.db (1,277,952 bytes)
+- Key SHA-256: 6BE63EF3C34EAB5E53F1C76028E2EB6BB4114486F9486852C19DA650AFE300BE
+- Status: Physical backup created. SHA-256 match verified (100%). Real DB untouched/unmodified.
+
+User Data 3: Public Release Data
+- Source Path: D:\Project\Projects\WatchTracker-Public-Release\data
+- Backup Path: D:\Project\Backups\WatchTracker-2026-07-27\user-data\public-release-data
+- Key File: watchtracker.db (36,864 bytes)
+- Key SHA-256: D466C6649851DF8023E79FD595B180B066266F2FD153BFEF8CAAAE11F0EC82DE
+- Status: Physical backup created. SHA-256 match verified (100%). Real DB untouched/unmodified.

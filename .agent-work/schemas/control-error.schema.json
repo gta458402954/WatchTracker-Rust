@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Governance control error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "passed", "exit_code", "rule", "phase", "task_id", "details"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "passed": { "const": false },
+    "exit_code": { "type": "integer", "minimum": 10, "maximum": 99 },
+    "rule": { "type": "string", "minLength": 1 },
+    "phase": { "type": "string", "minLength": 1 },
+    "task_id": { "type": ["string", "null"] },
+    "path": { "type": ["string", "null"] },
+    "details": { "type": "object" }
+  }
+}

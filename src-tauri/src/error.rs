@@ -5,7 +5,7 @@ use thiserror::Error;
 pub enum AppError {
     #[error("Database error: {0}")]
     DbError(#[from] rusqlite::Error),
-    
+
     #[error("Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
 

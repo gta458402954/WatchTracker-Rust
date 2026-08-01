@@ -2,13 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { WatchRecord, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
-import { classifyTmdb, errorMessage, mediaTypeOf, mergeContentTags, TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
+import { classifyTmdb, mediaTypeOf, mergeContentTags, TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
+import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
   onSave: (data: Omit<WatchRecord, 'id' | 'createdAt'>) => Promise<boolean | void> | boolean | void;
   onDelete?: (id: string) => void;
   onClose: () => void;
+  onNotify?: (tone: NoticeTone, message: string) => void;
 }
 
 const isAlwaysEpisodic = (mediaType: MediaType | null | undefined) => mediaType === '剧集' || mediaType === '综艺';
@@ -43,7 +45,7 @@ function smartProgress(raw: string): string {
   return t;
 }
 
-export default function RecordForm({ record, onSave, onDelete, onClose }: RecordFormProps) {
+export default function RecordForm({ record, onSave, onDelete, onClose, onNotify }: RecordFormProps) {
   const [form, setForm] = useState<Omit<WatchRecord, 'id' | 'createdAt'>>(
     record
       ? {
@@ -92,6 +94,13 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<TmdbMedia[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  function downloadPosterInBackground(poster: string) {
+    void downloadPosterAsync(poster).catch(error => {
+      reportOperationFailure('RecordForm.DownloadPoster', error);
+      onNotify?.('warning', '元数据已保留，但海报下载失败，可以稍后重试。');
+    });
+  }
   const [showResults, setShowResults] = useState(false);
   const [seasons, setSeasons] = useState<TmdbSeason[]>([]);
   const [selectedSeries, setSelectedSeries] = useState<TmdbMedia | null>(null);
@@ -104,12 +113,13 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     try {
       const decrypted = await safeDecrypt(encrypted);
       if (decrypted === '__ERR_DECRYPT_VERSION_MISMATCH__' || decrypted === '__ERR_DECRYPT_FAILED__') {
-        console.warn('[TMDB] API Key unavailable (decryption failed).');
+        onNotify?.('warning', 'TMDB 密钥格式已过期，请在设置中重新保存。');
         return null;
       }
       return decrypted;
-    } catch (e) {
-      console.error('[TMDB] Decryption failed:', e);
+    } catch (error) {
+      reportOperationFailure('RecordForm.DecryptTmdbKey', error);
+      onNotify?.('warning', 'TMDB 密钥无法读取，请在设置中重新保存。');
       return null;
     }
   }
@@ -140,12 +150,13 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     try {
       const result = await searchTmdbAsync({ apiKey, query, language: 'zh-CN' });
       if (!result.success) {
-        setSearchError(result.error || '搜索失败');
+        setSearchError(publicFailureMessage('搜索 TMDB'));
         return;
       }
       setSearchResults(result.results ?? []);
     } catch (error) {
-      setSearchError(errorMessage(error) || '未知搜索错误');
+      reportOperationFailure('RecordForm.SearchTmdb', error);
+      setSearchError(publicFailureMessage('搜索 TMDB'));
     } finally {
       setIsSearching(false);
     }
@@ -175,7 +186,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
       });
 
       if (!result.success || !result.data) {
-        setSearchError(result.error || '获取详情失败');
+        setSearchError(publicFailureMessage('获取 TMDB 详情'));
         return;
       }
       const detail = result.data;
@@ -187,7 +198,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
         const year = targetSeason.air_date ? targetSeason.air_date.split('-')[0] : (detail.first_air_date?.split('-')[0] || null);
         const poster = targetSeason.poster_path || detail.poster_path || null;
 
-        if (poster) void downloadPosterAsync(poster).catch(error => console.error('[TMDB] Poster download failed:', error));
+        if (poster) downloadPosterInBackground(poster);
 
         const query = form.imdbId || form.chineseName || form.originalName || '';
 
@@ -247,7 +258,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
       const poster = detail.poster_path || item.poster_path || null;
 
       // 触发后台下载海报
-      if (poster) void downloadPosterAsync(poster).catch(error => console.error('[TMDB] Poster download failed:', error));
+      if (poster) downloadPosterInBackground(poster);
 
       const classification = classifyTmdb(detail, isTV, form.mediaType);
       const originCountry = classification.originCountry;
@@ -294,8 +305,10 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
 
       setForm(prev => ({ ...prev, ...updates }));
       setShowResults(false);
-    } catch (err) {
-      console.error('[TMDB] Detail error:', err);
+    } catch (error) {
+      reportOperationFailure('RecordForm.SelectTmdbResult', error);
+      setSearchError(publicFailureMessage('读取 TMDB 详情'));
+      onNotify?.('error', publicFailureMessage('读取 TMDB 详情'));
     }
   }
 
@@ -308,7 +321,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose }: Record
     const poster = season.poster_path || selectedSeries.poster_path || null;
 
     // 触发后台下载海报
-    if (poster) void downloadPosterAsync(poster).catch(error => console.error('[TMDB] Poster download failed:', error));
+    if (poster) downloadPosterInBackground(poster);
 
     const classification = classifyTmdb(selectedSeries, true, form.mediaType);
     const originCountry = classification.originCountry;
