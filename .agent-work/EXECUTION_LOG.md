@@ -718,3 +718,11 @@
 - Added a UI-level conflict restore assertion and aligned the browser IPC fixture's same-ID insert behavior with SQLite replacement semantics.
 - Direct verification passed: target 1/1, B-003 Playwright 8/8, complete Playwright 16/16, Node 36/36, typecheck, lint, frontend build, and targeted diff check.
 - No desktop app, database, credential, or WebDAV service was used. TASK-B-003 remains IMPLEMENTED pending independent verification.
+# 2026-08-01 — TASK-B-004 Implementation Pass
+
+- BASE/contract: `9255c8f`; branch/worktree: `codex/task-b-004` / `D:\Project\Projects\WatchTracker-B004`.
+- Audited REQUEST 7.2/7.3 against accepted Node and Playwright tests; no production-code gap was found.
+- Added UI assertions in `tests/regions.spec.ts` for option-count independence from search, sorting, locked/unlocked cycling and active-region selection.
+- The first targeted Playwright run failed because `locator('select')` matched four controls. It was corrected to the banner combobox; the rerun passed 5/5.
+- Final implementation checks: `npm ci` audit 0; Node 36/36; Playwright 16/16; typecheck, lint, build and `git diff --check` PASS.
+- No real database, credential, external service or desktop application was accessed; no production file, dependency, mock fixture or quarantined branch content was used.

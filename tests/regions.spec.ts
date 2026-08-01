@@ -79,18 +79,29 @@ test('renders dynamic counts in stable order and filters by code, including alia
 
 test('media/status scope drives options while search does not, and invalid selection clears without revival', async ({ page }) => {
   const records = [
-    record('CN 未看电影', 'CN'),
+    record('CN 未看电影', 'CN', { isLocked: true }),
     record('FR 已看电影', 'FR', { status: '已看' }),
     record('CN 已看剧集', 'CN', { status: '已看', mediaType: '剧集' }),
   ];
   await setupMockIpc(page, { records });
   await page.goto('/');
 
+  const initialOptions = await page.getByLabel('地区筛选').getByRole('button').allTextContents();
   await page.getByPlaceholder('搜索电影、剧集...').fill('不存在');
-  await expect(await regionButton(page, '中国大陆')).toContainText('2');
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
   await page.getByPlaceholder('搜索电影、剧集...').fill('');
 
+  await page.getByRole('banner').getByRole('combobox').selectOption('rating');
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
+
+  await page.getByTitle('显示全部').click();
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
+  await page.getByTitle('仅显示已锁定').click();
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
+  await page.getByTitle('仅显示未锁定').click();
+
   await (await regionButton(page, '法国')).click();
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
   await page.getByRole('button', { name: /^未看 1$/ }).click();
   await expect(page.getByText('CN 未看电影', { exact: true })).toBeVisible();
   await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^法国 / })).toHaveCount(0);

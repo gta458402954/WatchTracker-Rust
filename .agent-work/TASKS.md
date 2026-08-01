@@ -1359,7 +1359,7 @@ ACCEPTED — Implementation `72fa529` plus the conflict-restoration regression `
 
 - Phase: B
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: P1 / High
 - Dependencies: AC-GATE-001 PASS, TASK-B-001 ACCEPTED, TASK-B-002 ACCEPTED, TASK-B-003 ACCEPTED
 - BASE: `db6f1ad` (`codex/phase-b-integration` after independent B-003 acceptance)
@@ -1411,7 +1411,7 @@ npm run build
 
 ### Execution Result
 
-READY — separately authorized by the user after TASK-B-003 independent acceptance. Implementation must start from `codex/phase-b-integration@db6f1ad` and may not use the quarantined parallel line.
+IMPLEMENTED — The Implementation Pass audited REQUEST 7.2/7.3 against the accepted B-001~B-003 tests, recorded the complete mapping in `.agent-work/evidence/tests/TASK-B-004/matrix.md`, and added only the missing UI assertions that search, sort, lock-state cycling and active-region selection do not alter the base option set. The first targeted run exposed an over-broad `select` locator and exited 1; after narrowing it to the banner combobox, targeted regions passed 5/5. Fresh install audit 0, Node 36/36, full Playwright 16/16, typecheck, lint, build and diff check passed. No production, fixture, dependency or quarantined-line content changed. Awaiting independent Verification Pass; this is not acceptance.
 
 ## TASK-B-005：执行地区全量回归并提交验收材料
 
