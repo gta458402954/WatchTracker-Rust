@@ -107,7 +107,9 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 
 ### 地区筛选
 
-`records -> mediaType/status scope -> regionsOf(record) -> aggregateRegions -> stable options`；列表结果再依次应用 mediaType/status/region/search/rating/lock/sort。当前地区不会反向影响地区选项数量。
+`records -> mediaType/status scope -> regionCodesOf(record) -> aggregateRegions -> stable options`；列表结果再依次应用 mediaType/status/region/search/rating/lock/sort。当前地区不会反向影响地区选项数量。
+
+TASK-B-002 接线时内部选择使用 `CountryCode | 'all'`。App memoize mediaType/status scope 与 `RegionOption[]`，StatsBar 只消费已生成选项，以 `label` 显示、以 `code` 作为筛选值和 React key。若选择在新 scope 中失效，本次渲染先使用派生的有效选择 `all`，随后把实际 state 清理为 `all`；未来同代码重新出现时不得恢复旧选择。
 
 ## 6. 文件变更计划
 
@@ -123,12 +125,13 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 | `src-tauri/src/db_atomic_*.rs`, `models.rs` | 审计/最小修改 | 复用既有原子实现，补契约和回滚缺口 |
 | `src/shared/lib/classification.ts` | 修改 | 地区规范化、未知、排序、聚合规则 |
 | `src/shared/lib/countryNames.ts` | 修改 | 固定名称、别名、优先序和类型 |
-| `src/shared/hooks/useFilteredRecords.ts` | 修改 | ISO/未知筛选及组合筛选回归 |
+| `src/shared/lib/filtering.ts` | 新增 | TASK-B-002 的 mediaType/status scope、组合筛选与失效选择纯函数；复用 classification 的唯一地区规则 |
+| `src/shared/lib/__tests__/filtering.test.mjs` | 新增 | Node 原生 scope、计数独立性、组合筛选与失效回退测试 |
 | `src/features/watchlist/components/StatsBar.tsx` | 修改 | 稳定动态选项、布局、ARIA，不保留失效选项 |
-| `src/features/settings/components/SettingsCategoriesTab.tsx` | 修改 | 正确的 originCountry 优先说明及动态统计 |
+| `src/features/settings/components/SettingsModal.tsx` | 条件修改 | TASK-B-002 仅可更新 originCountry 主源/contentTags 旧数据回退说明文字 |
 | `src/shared/lib/tmdbMapper.ts`, `RecordForm.tsx`, `SettingsToolsTab.tsx` | 审计/最小修改 | 多国保存和自定义标签保护 |
 | `src/shared/lib/__tests__/*` | 修改/新增 | 阶段 A/B 单元和集成回归 |
-| `tests/*`, `tests/fixtures/mockIpc.ts` | 修改/新增 | 初始化错误、CRUD、地区 E2E 和 mock 契约 |
+| `tests/regions.spec.ts`, `tests/fixtures/mockIpc.ts` | 修改/新增 | TASK-B-002 动态地区 UI、失效选择、布局、ARIA 与严格 mock 契约 |
 | `src-tauri/src/*_tests.rs` 或现有测试模块 | 修改/新增 | migration、setting、原子失败和路径测试 |
 | `README.md` | 修改 | Windows 前置、运行构建、数据目录、离线行为 |
 | `docs/REFACTOR_ATOMIC_API.md` | 重写 | 当前真实原子 API 契约与恢复限制 |
@@ -213,5 +216,5 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 5. TASK-A-001 在恢复分支建立 Wave 0~5 迁移基线；后续 A 任务只选择性移植当前快照中的必要实现。
 6. TASK-A-004 已按旧治理方案完成统一路径；用户确认只有可执行文件旁预先存在 `data/` 时才进入便携模式。
 7. TASK-A-004 `ACCEPTED` 后切换到简化流程。TASK-A-005 及后续任务由 Codex Implementation Pass 实施并正常提交，再由独立 Verification Pass 复核；不再要求 JSON 合同、Runner、Safe Commit、Receipt 或 Attestation。
-8. Gate A 通过后，Codex 再将 B 任务按依赖转 READY；当前 B 全部保持 BLOCKED。
+8. Gate A 已通过；B-001 已验收，B-002 已从 `origin/main@b6f3091` 单独重新签发为 READY。B-003~B-005 继续保持 BLOCKED，必须按依赖另行签发。
 9. 阶段 B 完成后由 Codex独立验收并生成地区报告；两阶段通过后才生成综合报告。

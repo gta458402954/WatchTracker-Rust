@@ -412,6 +412,7 @@
 ### AC-B-002：地区显示与未知地区正确
 
 - Requirement: FR-02。
+- Task Allocation: TASK-B-001 已承担并通过领域名称、未映射代码与未知哨兵规则；TASK-B-002 仅承担剩余 UI 显示与筛选验证。
 - Priority: Must
 - Verification Type: Automated / Inspection
 - Preconditions: Gate A 通过。
@@ -422,11 +423,12 @@
 - Expected Result: 三个中国地区互不合并；未知有统一哨兵且不与真实代码冲突。
 - Required Evidence: 单测和 UI 截图。
 - Result: NOT RUN
-- Evidence: TASK-B-001 independently verifies fixed names, unmapped-code self display and a collision-free unknown sentinel through the single `regionCodesOf` path. The UI screenshot portion remains NOT RUN and keeps the overall criterion open for B-002/B-004.
+- Evidence: TASK-B-001 independently verifies fixed names, unmapped-code self display and a collision-free unknown sentinel through the single `regionCodesOf` path. TASK-B-002 is responsible only for the remaining UI display/filter evidence. Result remains NOT RUN; no UI PASS is claimed by contract authorization.
 
 ### AC-B-003：动态选项范围、数量与失效选择正确
 
 - Requirement: FR-03、NFR 6.1。
+- Task Allocation: TASK-B-002 负责 records、mediaType、status、动态选项/数量和失效选择的实现与直接验证。
 - Priority: Must
 - Verification Type: Automated / Manual
 - Preconditions: Gate A 通过，混合数据夹具。
@@ -438,11 +440,12 @@
 - Expected Result: 只显示当前 mediaType/status 范围内实际存在项；无 0 数量和不可见幽灵状态；聚合无不必要重复全量计算。
 - Required Evidence: 纯函数/Hook/组件测试、E2E 截图。
 - Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Evidence: Gate A and TASK-B-001 are accepted; TASK-B-002 is authorized but not implemented. Result remains NOT RUN.
 
 ### AC-B-004：地区统计、筛选与稳定排序正确
 
 - Requirement: FR-04。
+- Task Allocation: TASK-B-001 已承担并通过聚合计数与稳定排序领域规则；TASK-B-002 仅承担组合筛选 UI 部分，后续 TASK-B-004 汇总专项矩阵。
 - Priority: Must
 - Verification Type: Automated
 - Preconditions: Gate A 通过。
@@ -453,7 +456,7 @@
 - Expected Result: 每记录每地区最多计一次，多国可贡献多个地区，排序完全稳定。
 - Required Evidence: Node 原生单元测试、Playwright 日志和期望数据表。
 - Result: NOT RUN
-- Evidence: TASK-B-001 independently verifies per-record deduplication, multi-country contribution and exact preferred/count/name/code/unknown-last ordering. Combined filters and region Playwright scenarios remain NOT RUN, so the overall criterion stays open for B-002/B-004.
+- Evidence: TASK-B-001 independently verifies per-record deduplication, multi-country contribution and exact preferred/count/name/code/unknown-last ordering. TASK-B-002 combined-filter UI evidence remains NOT RUN, so the overall criterion stays open; no PASS is claimed by contract authorization.
 
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 
@@ -488,6 +491,7 @@
 ### AC-B-007：地区专项自动化与界面流程完整
 
 - Requirement: 测试要求 7.2、7.3、NFR 6.3。
+- Task Allocation: 保留给后续 TASK-B-004/TASK-B-005 综合验收；TASK-B-002 不对整个 AC-B-007 负责，也不得提前关闭该标准。
 - Priority: Must
 - Verification Type: Automated / Manual
 - Preconditions: AC-B-001~006 实现完成。
