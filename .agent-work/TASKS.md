@@ -1065,7 +1065,7 @@ Evidence is under `.agent-work/evidence/{builds,logs,screenshots,tests}/TASK-A-0
 
 - Phase: B
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: P1 / High
 - Dependencies: AC-GATE-001（PASS）
 - Acceptance Criteria: AC-B-001, AC-B-002, AC-B-004
@@ -1107,7 +1107,7 @@ npm run lint
 
 ### Execution Result
 
-READY — User authorized the recommended Phase B sequence on 2026-08-01. Gate A is PASS; protected remote `main@d7b5f2c` and GitHub Actions run `30695201620` are green. Codex reassigned the task from paused Antigravity and audited the archived region prototype before implementation. No business source was changed during authorization.
+IMPLEMENTED — Codex selectively migrated and corrected the archived region prototype into `countryNames.ts`, `normalizeCountryCodes`, the single `regionCodesOf` domain path, stable `aggregateRegions`, and a thin legacy `regionsOf` UI wrapper. Node region tests pass 12/12; the complete Node suite passes 26/26; typecheck, lint, build and baseline Playwright 3/3 pass. Evidence: `.agent-work/evidence/tests/TASK-B-001/implementation-summary.md`. Independent Verification Pass is required before `ACCEPTED`; B-002 through B-005 remain blocked.
 
 ## TASK-B-002：完成动态地区选项、筛选状态与界面行为
 

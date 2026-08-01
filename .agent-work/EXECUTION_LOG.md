@@ -612,3 +612,13 @@
 - Current-source audit: stable main has only the old fixed Chinese-region-tag logic and no `countryNames.ts` or region unit test. The preserved recovery snapshot contains a region prototype, but it has known UK ordering, preferred-order, unknown-sentinel, tie-break and obsolete Vitest-entry defects.
 - Contract adjustment: B-001 must selectively port and correct that prototype into the current Node-test baseline; `regionCodesOf` becomes the single domain entry while legacy `regionsOf` remains a thin compatibility wrapper until B-002. Wholesale copying, UI/TMDB work and DEFERRED scope are prohibited.
 - Boundary: authorization documentation only; no business source, dependency, database, user data or runtime behavior changed.
+
+### TASK-B-001 Codex Implementation Pass
+
+- Scope: added centralized country names/aliases, ISO normalization, source-priority extraction, an explicit unknown sentinel, deduplicating aggregation and deterministic preferred/count/name/code ordering.
+- Compatibility: `regionCodesOf` is the only ISO/unknown parser. Existing `regionsOf` delegates to it and maps recognized codes back to the seven legacy Chinese buttons until B-002 changes the UI.
+- Archived prototype corrections: alias mapping now precedes generic two-letter validation (`UK -> GB`); preferred order is `CN,HK,TW,US,JP,KR,GB`; placeholder values are filtered; unknown is explicit; code is the final sorting tie-break; tests use the current Node runner instead of the absent Vitest dependency.
+- Verification: clean `npm ci` audit 0; region Node tests 12/12; complete Node tests 26/26; typecheck PASS; lint PASS; production build PASS (607 modules); baseline Playwright 3/3 PASS.
+- Boundary: no package/lockfile, UI component, TMDB, import/export, WebDAV, Rust, schema, database or DEFERRED change. No application was launched against real user data.
+- Evidence: `.agent-work/evidence/tests/TASK-B-001/implementation-summary.md`.
+- Status: IMPLEMENTED; not accepted. Independent Verification Pass remains mandatory.
