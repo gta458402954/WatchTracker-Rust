@@ -7,6 +7,7 @@ test('ready empty data renders the normal empty state', async ({ page }) => {
 
   await expect(page.getByText('还没有记录，快去添加吧！')).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByTestId('build-commit')).toHaveText(/^git (?:[0-9a-f]{7,40}|unknown)$/);
 });
 
 test('initialization failure shows an error, not empty data, and retry recovers', async ({ page }) => {

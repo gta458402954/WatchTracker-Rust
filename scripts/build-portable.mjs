@@ -1,0 +1,28 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+
+function git(...args) {
+  return execFileSync('git', args, { encoding: 'utf8' }).trim();
+}
+
+const status = git('status', '--porcelain');
+if (status) {
+  console.error('便携版打包已取消：Git 工作区存在未提交修改。请先检查并提交本地 Git。');
+  console.error(status);
+  process.exit(1);
+}
+
+const commit = git('rev-parse', '--short=8', 'HEAD');
+console.log(`正在从 Git 提交 ${commit} 构建便携版。`);
+
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const result = spawnSync(npmCommand, ['run', 'tauri', 'build'], {
+  stdio: 'inherit',
+  env: { ...process.env, WATCHTRACKER_GIT_COMMIT: commit },
+});
+
+if (result.error) {
+  console.error(result.error.message);
+  process.exit(1);
+}
+
+process.exit(result.status ?? 1);

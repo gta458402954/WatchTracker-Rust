@@ -1,5 +1,10 @@
 import type { MediaType, Status, WatchRecord } from '../types/index.ts';
-import { aggregateRegions, mediaTypeOf, regionCodesOf, type RegionOption } from './classification.ts';
+import {
+  aggregateRegions,
+  mediaTypeOf,
+  regionCodesForTopFilter,
+  type RegionOption,
+} from './classification.ts';
 import type { RegionFilter } from './countryNames.ts';
 
 export type MediaTypeFilter = MediaType | 'all';
@@ -49,7 +54,7 @@ export function filterRecords(
   const query = filters.searchText.trim().toLocaleLowerCase();
 
   return recordsInRegionScope(records, filters.mediaType, filters.status).filter(record => {
-    if (filters.region !== 'all' && !regionCodesOf(record).includes(filters.region)) return false;
+    if (filters.region !== 'all' && !regionCodesForTopFilter(record).includes(filters.region)) return false;
     if (filters.lock === 'locked' && !record.isLocked) return false;
     if (filters.lock === 'unlocked' && record.isLocked) return false;
     if (!query) return true;

@@ -757,7 +757,7 @@ export default function SettingsModal({
                   <span className="text-2xl">🌐</span>
                   <div>
                     <h4 className="font-bold text-gray-800">标准地区标签</h4>
-                    <p className="text-[11px] text-gray-400">顶部地区筛选优先读取国家代码；旧中文地区标签仅在国家代码缺失时回退使用。</p>
+                    <p className="text-[11px] text-gray-400">顶部地区筛选只读取每条记录的第一个国家代码；旧中文地区标签仅在国家代码缺失时回退使用。</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">

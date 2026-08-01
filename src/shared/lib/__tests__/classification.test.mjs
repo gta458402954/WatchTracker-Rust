@@ -8,6 +8,7 @@ import {
   mergeContentTags,
   normalizeCountryCodes,
   regionCodesOf,
+  regionCodesForTopFilter,
   regionsOf,
 } from '../classification.ts';
 import {
@@ -92,6 +93,18 @@ describe('region source priority and display (FR-02)', () => {
     assert.equal(countryLabelOf('XX'), 'XX');
   });
 
+  test('displays BY as Belarus in Chinese', () => {
+    assert.deepEqual(regionCodesOf({ originCountry: 'BY', contentTags: null }), ['BY']);
+    assert.equal(countryLabelOf('BY'), '白俄罗斯');
+    assert.equal(countryCodeOfLabel('白俄罗斯'), 'BY');
+  });
+
+  test('uses only the first country of each record for the top filter', () => {
+    const record = { originCountry: 'US, CN, GB, BY, FR', contentTags: null };
+    assert.deepEqual(regionCodesOf(record), ['US', 'CN', 'GB', 'BY', 'FR']);
+    assert.deepEqual(regionCodesForTopFilter(record), ['US']);
+  });
+
   test('keeps the existing fixed Chinese buttons working through a thin compatibility wrapper', () => {
     assert.deepEqual(regionsOf({ originCountry: 'US', contentTags: null }), ['美国']);
     assert.deepEqual(regionsOf({ originCountry: 'FR', contentTags: '美国' }), []);
@@ -99,7 +112,7 @@ describe('region source priority and display (FR-02)', () => {
 });
 
 describe('region aggregation and stable ordering (FR-04)', () => {
-  test('counts each record once per region while allowing multi-country contribution', () => {
+  test('counts each record once using only its first country', () => {
     const options = aggregateRegions([
       { originCountry: 'FR, DE, FR', contentTags: null },
       { originCountry: 'FR', contentTags: null },
@@ -107,7 +120,6 @@ describe('region aggregation and stable ordering (FR-04)', () => {
 
     assert.deepEqual(options, [
       { code: 'FR', label: '法国', count: 2 },
-      { code: 'DE', label: '德国', count: 1 },
     ]);
   });
 

@@ -51,9 +51,10 @@ test('renders dynamic counts in stable order and filters by code, including alia
 
   const buttons = page.getByLabel('地区筛选').getByRole('button');
   await expect(buttons).toHaveText([
-    '中国大陆 1', '中国香港 1', '中国台湾 1', '英国 2',
-    '德国 1', '法国 1', 'XX 1', '未知地区 1',
+    '中国大陆 1', '中国香港 1', '中国台湾 1', '英国 1',
+    '法国 1', 'XX 1', '未知地区 1',
   ]);
+  await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^德国 / })).toHaveCount(0);
 
   await (await regionButton(page, '中国大陆')).click();
   await expect(page.getByText('大陆记录', { exact: true })).toBeVisible();
@@ -67,7 +68,7 @@ test('renders dynamic counts in stable order and filters by code, including alia
   for (const [label, visibleNames] of [
     ['中国香港', ['香港英国合拍']],
     ['中国台湾', ['台湾记录']],
-    ['英国', ['香港英国合拍', '英国别名记录']],
+    ['英国', ['英国别名记录']],
     ['未知地区', ['未知记录']],
     ['XX', ['未映射记录']],
   ] as const) {
@@ -146,6 +147,13 @@ test('hides the region bar for empty data', async ({ page }) => {
   await expect(page.getByLabel('地区筛选')).toHaveCount(0);
 });
 
+test('displays BY with its Chinese country name', async ({ page }) => {
+  await setupMockIpc(page, { records: [record('白俄罗斯记录', 'BY')] });
+  await page.goto('/');
+
+  await expect(await regionButton(page, '白俄罗斯')).toHaveText('白俄罗斯 1');
+});
+
 test('many dynamic regions wrap and every button exposes aria-pressed', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 900 });
   const codes = ['CN', 'HK', 'TW', 'US', 'JP', 'KR', 'GB', 'FR', 'DE', 'IT', 'ES', 'CA', 'AU', 'BR', 'XX'];
@@ -163,8 +171,19 @@ test('many dynamic regions wrap and every button exposes aria-pressed', async ({
   expect(rows.length).toBeGreaterThan(1);
   for (const button of await buttons.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
 
-  await group.screenshot({ path: '.agent-work/evidence/tests/TASK-B-002/many-regions-layout.png' });
-
   await buttons.nth(0).click();
   await expect(buttons.nth(0)).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('only the first country of one record enters the top filter', async ({ page }) => {
+  await setupMockIpc(page, { records: [record('多国记录', 'US, CN, GB, BY, FR')] });
+  await page.goto('/');
+
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText([
+    '美国 1',
+  ]);
+  await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^中国大陆 / })).toHaveCount(0);
+  await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^英国 / })).toHaveCount(0);
+  await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^白俄罗斯 / })).toHaveCount(0);
+  await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^法国 / })).toHaveCount(0);
 });

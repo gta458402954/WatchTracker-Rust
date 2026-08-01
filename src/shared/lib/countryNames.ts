@@ -60,6 +60,7 @@ export const ISO_COUNTRY_NAMES: Readonly<Record<string, string>> = {
   UA: '乌克兰',
   RO: '罗马尼亚',
   BG: '保加利亚',
+  BY: '白俄罗斯',
   HR: '克罗地亚',
   RS: '塞尔维亚',
   BR: '巴西',

@@ -1,5 +1,7 @@
 # 完整实施方案
 
+> **状态更新（2026-08-02）：** Gate A/B 已完成，当前权威源码为本仓库 `main`；正式便携版的精确构建提交号显示在应用顶部栏。本文保留实施过程和目标设计；涉及 Zustand、V19 snake_case、schema v3/ETag/`expectedGeneration` 同步的内容属于历史候选或后续路线图，不代表当前实现。当前实现边界见 `docs/CURRENT_ARCHITECTURE.md`。
+
 > 原方案基于 2026-07-26 的实际工作区；2026-07-27 已增加恢复 V2 前置门禁。实施者必须完整读取 `.agent-work/RECOVERY_REBUILD_PLAN.md`。Gate R 通过前不得直接实施本文件 Phase A；阶段 A 未经 Codex 验收为 PASS（或用户明确接受的 CONDITIONAL PASS）前，阶段 B 不得进入 READY。
 
 ## 0. 恢复 V2 前置方案
@@ -45,7 +47,7 @@
 
 ### DEFERRED：本轮禁止实施
 
-REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/dirty、主动拉取、WebDAV 目标隔离、Windows 凭据迁移、逐集完成时间/观看历史、今晚看什么、Trakt、长期领域约束、网络/海报长期安全、CI 之后的长期扩展、高级筛选、提醒、收藏集、跨语言代码生成、模块拆分、完整弹窗无障碍、外部播放链接和自动备份恢复点。阶段 A 只实现其完成定义明确要求的最小修复；不得借机扩展产品功能。
+REQUEST 第 9 节的未实现路线图已于 2026-08-02 按当前 `main` 重分类为 18 个独立 `TASK-D-*`：数据安全/完整性/恢复、同步一致性/可靠性/隔离、凭据安全、观看历史、内容发现、数据交换、网络安全、可访问性、检索/追剧/内容组织、工程架构和外部集成。自动恢复点与 V18/V19 兼容提升为 R0，完整弹窗可访问性提升为 R1；持续集成已经实现并转为 `MAINTENANCE-CI`，不再属于 DEFERRED。权威任务编号、状态和边界见 `.agent-work/TASKS.md` 的 DEFERRED 部分。
 
 ## 3. 实施原则
 
@@ -103,7 +105,7 @@ REQUEST 第 9 节全部路线图：同步冲突与版本 UI、持久化 outbox/d
 
 ### 本地写入
 
-`UI -> Zustand action -> typed database IPC -> Rust validation -> SQLite transaction(record/tombstone/generation/settings) -> persisted DTO -> store publish -> 可选同步调度`。网络同步失败不得回滚已成功的本地事务或破坏本地数据。
+当前实现：`UI -> useWatchList action -> typed database IPC -> Rust validation -> SQLite transaction(record/tombstone/generation/settings) -> persisted DTO -> React state publish -> 可选同步调度`。网络同步失败不得回滚已成功的本地事务或破坏本地数据。Zustand 仅在能证明收益并完成独立迁移验收后才考虑引入。
 
 ### 地区筛选
 
@@ -116,7 +118,7 @@ TASK-B-002 接线时内部选择使用 `CountryCode | 'all'`。App memoize media
 | 文件或目录 | 操作 | 计划变更 |
 |---|---|---|
 | `src/app/App.tsx` | 修改 | 三态初始化、重试、无效地区清理、统一错误展示接线 |
-| `src/store/useWatchListStore.ts` | 修改 | 收紧 update 类型、保留原子入口、暴露可诊断错误状态（只补缺口） |
+| `src/features/watchlist/hooks/useWatchList.ts` | 已实现/后续审计 | 当前稳定状态层；维持持久化成功后发布和可诊断错误边界。Zustand 迁移仍为可选路线图 |
 | `src/shared/components/*` | 新增/修改 | 最小统一通知/错误反馈组件与测试 |
 | `src/shared/lib/database.ts` | 修改 | 保持强类型 IPC，补参数/错误语义测试 |
 | `src-tauri/src/db.rs` | 修改 | migration 单事务、setting 错误区分、必要的显式 UPSERT |
@@ -142,16 +144,16 @@ TASK-B-002 接线时内部选择使用 `CountryCode | 'all'`。App memoize media
 
 ## 7. 数据模型与迁移
 
-- 地区专项不新增数据库字段、不做破坏性数据迁移；继续使用 `origin_country` 与 `content_tags` 的读取兼容层。
-- migration 框架调整必须保持当前最终 schema/version（当前代码预期 v19），并用至少空库、v12/v17/v18/current 代表夹具验证。
+- 地区专项不新增数据库字段、不做破坏性数据迁移；当前 V18 schema 继续使用 `originCountry` 与 `contentTags`。
+- migration 框架当前最终 schema/version 为 V18，并用至少空库、v12/v17/current 代表夹具验证。V19 snake_case 兼容或升级必须另行设计、备份和验收。
 - 每个 migration：开启事务 -> 执行 schema/data 变化 -> UPSERT `db_version` -> commit；故障则 rollback，重启可再次执行。
 - 禁止使用真实活动数据库跑 migration 故障测试。
 
 ## 8. API 设计
 
-- `update_record_atomic(id, updates: UpdateWatchRecord, actorId)`：只收业务字段；空对象、未知/系统字段、非法类型返回可识别参数错误。
+- `update_record(id, updates: UpdateWatchRecord, actorId?)`：当前注册的 IPC 名称；只收业务字段，空对象、未知/系统字段、非法类型返回可识别参数错误，内部由 Rust 原子事务实现。
 - `get_setting(key)`：不存在返回 `null`；查询/类型/锁/损坏错误返回 IPC error。
-- 现有 snapshot/commit/import DTO 不重新设计，只补文档和回归。
+- 当前没有注册高级 snapshot/commit DTO；相关能力属于后续同步路线图。
 - 若新增初始化重试命令，必须复用同一数据库状态生命周期，不创建并发 Connection 覆盖现有状态；优先让前端重试幂等读取。
 
 ## 9. UI/UX 设计
@@ -178,7 +180,7 @@ TASK-B-002 接线时内部选择使用 `CountryCode | 'all'`。App memoize media
 ### 阶段 A
 
 - Rust：DTO 反序列化、系统字段/空更新/非法值、服务器时间、SQL/setting 回滚、不存在记录和 Tombstone、migration 回滚重试、setting 错误、路径矩阵。
-- Vitest：store 回滚、初始化状态、错误归类和相关前端逻辑。
+- Node 原生测试：初始化状态、错误归类、筛选和相关前端逻辑。
 - Playwright mock：空态、CRUD、初始化失败/重试、可见错误、导入/恢复/同步失败不清空。
 - 真实 Windows：`tauri dev`、首次/已有/升级库、CRUD 重启、无凭据/离线、`tauri build` 产物启动。
 - 全量命令严格按 REQUEST 7.4。
@@ -196,7 +198,7 @@ TASK-B-002 接线时内部选择使用 `CountryCode | 'all'`。App memoize media
 - `origin/main@6fcbb1e`、干净 `29ea3a4` 和最终恢复分支必须位于独立 worktree，不能共享依赖缓存、Rust target 或活动数据目录。
 - 数据测试使用临时目录；如用户授权真实副本，记录源、副本、备份和恢复命令，绝不原地操作。
 - 构建产物放入忽略目录；若 schema 修复进入发布，应先提供旧库备份路径和可重试证明。
-- WebDAV PUT 与本地 SQLite 无法组成分布式事务，依赖 generation/commitId/ETag 与安全重试恢复，文档必须明确这一限制。
+- WebDAV PUT 与本地 SQLite 无法组成分布式事务。当前 schema v2 实现只提供时间戳/Tombstone 合并和安全失败边界；generation/commitId/ETag 协议如在后续引入，必须通过独立设计与重试恢复验收。
 
 ## 14. 主要风险及应对
 

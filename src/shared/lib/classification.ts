@@ -109,6 +109,12 @@ export function regionCodesOf(
   return legacyCodes.length > 0 ? [...new Set(legacyCodes)] : [UNKNOWN_REGION_CODE];
 }
 
+export function regionCodesForTopFilter(
+  record: Pick<WatchRecord, 'originCountry' | 'contentTags'>,
+): CountryCode[] {
+  return regionCodesOf(record).slice(0, 1);
+}
+
 // B-002 will move the UI to ISO-code filters. Until then this wrapper keeps the
 // existing fixed Chinese buttons working without maintaining a second parser.
 export function regionsOf(record: Pick<WatchRecord, 'originCountry' | 'contentTags'>): RegionTag[] {
@@ -151,7 +157,7 @@ export function aggregateRegions(
 ): RegionOption[] {
   const counts = new Map<CountryCode, number>();
   for (const record of records) {
-    for (const code of regionCodesOf(record)) {
+    for (const code of regionCodesForTopFilter(record)) {
       counts.set(code, (counts.get(code) ?? 0) + 1);
     }
   }

@@ -50,7 +50,6 @@ describe('region scope and dynamic options', () => {
     assert.deepEqual(recordsInRegionScope(records, '剧集', '已看').map(item => item.id), ['hk-seen']);
     assert.deepEqual(regionOptionsForScope(records, '剧集', '已看'), [
       { code: 'HK', label: '中国香港', count: 1 },
-      { code: 'GB', label: '英国', count: 1 },
     ]);
   });
 
@@ -68,10 +67,10 @@ describe('region scope and dynamic options', () => {
     assert.deepEqual(regionOptionsForScope([...records].reverse(), 'all', 'all'), before);
   });
 
-  test('counts multi-country, unknown, and unmapped ISO values and preserves stable order', () => {
+  test('keeps all aggregated options, including unknown and unmapped regions', () => {
     const options = regionOptionsForScope(records, 'all', 'all');
     assert.deepEqual(options.map(option => option.code), [
-      'CN', 'HK', 'TW', 'GB', 'DE', 'FR', 'XX', UNKNOWN_REGION_CODE,
+      'CN', 'HK', 'TW', 'GB', 'FR', 'XX', UNKNOWN_REGION_CODE,
     ]);
     assert.deepEqual(options.find(option => option.code === UNKNOWN_REGION_CODE), {
       code: UNKNOWN_REGION_CODE,
@@ -79,6 +78,20 @@ describe('region scope and dynamic options', () => {
       count: 1,
     });
     assert.equal(options.find(option => option.code === 'XX')?.label, 'XX');
+  });
+
+  test('excludes the second and later countries of one record from options and matching', () => {
+    const longCountryRecord = record('many-countries', { originCountry: 'US, CN, GB, BY, FR' });
+    assert.deepEqual(
+      regionOptionsForScope([longCountryRecord], 'all', 'all').map(option => option.code),
+      ['US'],
+    );
+
+    const base = { mediaType: 'all', status: 'all', searchText: '', lock: 'all' };
+    assert.deepEqual(filterRecords([longCountryRecord], { ...base, region: 'US' }).map(item => item.id), ['many-countries']);
+    assert.deepEqual(filterRecords([longCountryRecord], { ...base, region: 'CN' }), []);
+    assert.deepEqual(filterRecords([longCountryRecord], { ...base, region: 'GB' }), []);
+    assert.deepEqual(filterRecords([longCountryRecord], { ...base, region: 'BY' }), []);
   });
 });
 
@@ -96,7 +109,7 @@ describe('combined record filters', () => {
 
   test('supports GB normalized from UK, unknown, and unmapped region selection', () => {
     const base = { mediaType: 'all', status: 'all', searchText: '', lock: 'all' };
-    assert.deepEqual(filterRecords(records, { ...base, region: 'GB' }).map(item => item.id), ['hk-seen', 'uk-alias']);
+    assert.deepEqual(filterRecords(records, { ...base, region: 'GB' }).map(item => item.id), ['uk-alias']);
     assert.deepEqual(filterRecords(records, { ...base, region: UNKNOWN_REGION_CODE }).map(item => item.id), ['unknown']);
     assert.deepEqual(filterRecords(records, { ...base, region: 'XX' }).map(item => item.id), ['unmapped']);
   });

@@ -10,6 +10,16 @@ WatchTracker 是一款基于 React、TypeScript、Rust 和 Tauri 2 的 Windows �
 - 可选 TMDB 元数据、海报下载和 WebDAV 同步。
 - 可选择的便携模式，以及统一的数据库、日志、海报和备份目录。
 
+## 当前实现基线
+
+- 当前权威源码为本仓库 `main`；正式便携版的精确构建提交号显示在应用顶部栏。
+- 前端记录状态使用 `src/features/watchlist/hooks/useWatchList.ts`；当前没有引入 Zustand。
+- SQLite schema 为 V18，records 表使用 camelCase 列名。
+- WebDAV 使用 schema v2、时间戳合并和简单 Tombstone；ETag、`expectedGeneration`、原子 `SyncCommit`、持久化 outbox 和主动拉取仍属于路线图。
+- 本地 CRUD/全量替换已通过 Rust/SQLite 事务维护记录、Tombstone 和 `records_generation`。
+
+完整架构和已实现/未实现边界见 [docs/CURRENT_ARCHITECTURE.md](docs/CURRENT_ARCHITECTURE.md)。
+
 ## 已验证开发环境
 
 当前 Windows 基线已使用以下版本完成独立验证：
@@ -76,9 +86,13 @@ Set-Location ..
 
 ## Windows 构建
 
+正式便携版必须从已提交且干净的 Git 工作区构建：
+
 ```powershell
-npm run tauri build
+npm run build:portable
 ```
+
+该命令在存在未提交修改时会拒绝打包，并把当前 Git 短提交号注入应用顶部栏。这样可以直接从运行中的程序确认可执行文件对应的源码提交。普通开发验证仍可使用 `npm run tauri build`，但不得把它生成的文件当作正式便携版发布。
 
 成功后检查实际生成的文件，而不是依赖历史文件名：
 
@@ -128,6 +142,8 @@ src-tauri/target/release/bundle/nsis/*-setup.exe
 
 不要在应用运行时覆盖数据库，也不要同时保留来源不明的两份活动数据库。
 
+当前程序只支持 V18 camelCase 数据库。不要用包含 V19 snake_case migration 的历史实验程序打开同一活动数据库后再切回当前程序；这会造成版本不兼容。任何 schema 升级都应先备份整个数据根目录，并只在数据库副本上验证。
+
 ## 项目结构
 
 ```text
@@ -139,7 +155,7 @@ docs/                    架构、API 和历史文档
 .agent-work/             需求、任务和验收记录
 ```
 
-原子 CRUD/同步边界详见 [docs/REFACTOR_ATOMIC_API.md](docs/REFACTOR_ATOMIC_API.md)。
+当前架构见 [docs/CURRENT_ARCHITECTURE.md](docs/CURRENT_ARCHITECTURE.md)；原子本地 CRUD 和同步边界详见 [docs/REFACTOR_ATOMIC_API.md](docs/REFACTOR_ATOMIC_API.md)。
 
 ## 开源协议
 

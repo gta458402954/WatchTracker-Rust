@@ -1,9 +1,27 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url))
+
+function resolveGitCommit(): string {
+  const injectedCommit = process.env.WATCHTRACKER_GIT_COMMIT?.trim()
+  if (injectedCommit) return injectedCommit
+
+  try {
+    return execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+const gitCommit = resolveGitCommit()
 
 export default defineConfig({
   plugins: [
@@ -24,6 +42,9 @@ export default defineConfig({
   },
   // 环境变量前缀
   envPrefix: ['VITE_', 'TAURI_'],
+  define: {
+    'import.meta.env.VITE_GIT_COMMIT': JSON.stringify(gitCommit),
+  },
   build: {
     outDir: path.join(projectRoot, 'dist'),
     emptyOutDir: true,

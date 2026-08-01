@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
+- DEFERRED：18 个按领域重新归类的独立路线图任务；其中 2 个 `SPECIFIED`、16 个 `NEEDS-DESIGN`，均不计入 A/B 数量。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1478,65 +1478,210 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ---
 
-## DEFERRED：后续路线图（本轮禁止实施）
+## DEFERRED：后续路线图（按当前 `main` 重新归类）
 
-## TASK-D-R0：同步与凭据安全路线图包
+> 审计基线：2026-08-02，`main@b23f27a` 及当前工作区。旧的 `TASK-D-R0`~`TASK-D-R3` 四个优先级大包已废止，改为“领域 + 独立编号”。`SPECIFIED` 表示业务规则已足以进入技术设计，`NEEDS-DESIGN` 表示只有路线图方向，尚不能直接实施；两者都不表示代码已开始。
+
+| 任务 | 优先级 | 分类 | 状态 | 原路线图归属 |
+| --- | --- | --- | --- | --- |
+| `TASK-D-DATA-001` | R0 | 数据安全 | SPECIFIED | R0 元数据补全 |
+| `TASK-D-DATA-002` | R0 | 数据完整性 | NEEDS-DESIGN | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
+| `TASK-D-DATA-003` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
+| `TASK-D-SYNC-001` | R0 | 同步一致性 | NEEDS-DESIGN | R0 冲突与版本记录 |
+| `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
+| `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
+| `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
+| `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
+| `TASK-D-DISCOVERY-001` | R1 | 内容发现 | NEEDS-DESIGN | R1 今晚看什么 |
+| `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | R1 Trakt |
+| `TASK-D-NET-001` | R1 | 网络安全 | NEEDS-DESIGN | R1 网络/海报安全 |
+| `TASK-D-UX-004` | R1 | 可访问性 | NEEDS-DESIGN | R2 弹窗可访问性，提升为 R1 |
+| `TASK-D-UX-001` | R2 | 检索体验 | NEEDS-DESIGN | R2 高级筛选 |
+| `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | R2 订阅提醒 |
+| `TASK-D-UX-003` | R2 | 内容组织 | NEEDS-DESIGN | R2 收藏集 |
+| `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
+| `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
+| `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
+
+### TASK-D-DATA-001：“一键补全缺失元数据”安全重构
 
 - Phase: DEFERRED
 - Owner: Unassigned
-- Status: BLOCKED
-- Priority: Future R0
-- Dependencies: Gate A, Gate B, 新的用户专项需求与验收标准
-- Scope: 同步冲突/版本记录、持久化 dirty/outbox、主动拉取、WebDAV 目标隔离、Windows 凭据安全迁移。
-- Prohibition: 本轮不得实施、不得以阶段 A 修复名义扩展。
-
-## TASK-D-R1：核心体验与长期加固路线图包
-
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: BLOCKED
-- Priority: Future R1
-- Dependencies: Gate A, Gate B, 新的用户专项需求与验收标准
-- Scope: 逐集完成时间/观看历史、今晚看什么、Trakt、长期领域约束、网络/海报长期安全、持续集成后续演进。
-- Prohibition: 除本轮明确要求的最小 CI/数据安全修复外，不实施产品能力。
-
-## TASK-D-R1-001：逐集完成时间与完结状态
-
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: BLOCKED
-- Priority: Future R1
-- Dependencies: Gate A, Gate B, 专项数据模型与验收标准
+- Status: SPECIFIED
+- Priority: R0
 - Business Source: `.agent-work/REQUEST.md` 9.3
+- Scope: 批量补全预览、电影/剧集/具体季识别、字段级安全补丁、逐条结果、取消/重试和同步一致性。
+- Required Design: 只写本地缺失且远端有效的字段；电影使用 `movieDuration`，剧集使用 `episodeRuntime`/`totalEpisodes`，季缓存键包含实体与季号；远端空值不得擦除本地值；通过正常 action 或专项原子 API 写入。
+- Acceptance Focus: 无覆盖、空响应、类型错配、重复 IMDb、多国家/自定义标签、部分失败、取消和同步调度，全部使用临时数据库与 TMDB mock。
+- Safety: 专项验收前不得在真实数据库上运行现有批量补全。
+
+### TASK-D-DATA-002：V18/V19 兼容与领域约束加固
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R0
+- Scope: 高版本数据库显式拒绝或兼容迁移、V18/V19 策略、明确 UPSERT、导入/全量替换/部分更新统一校验。
+- Current Basis: 当前 V18 camelCase schema、migration 事务和原子 CRUD 已稳定；V18 程序不能读取 V19，legacy `INSERT OR REPLACE` 与多入口约束仍不统一。
+- Design Gate: 先确定继续 V18、兼容 V19 或正式迁移的产品策略，再定义备份、回滚、旧程序行为和版本矩阵测试。
+
+### TASK-D-DATA-003：高风险操作自动恢复点
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R0
+- Scope: 在导入、同步全量落盘、migration 和批量写入前创建可验证恢复点，并提供轮转、容量、恢复预览与失败回退。
+- Current Basis: `AppPaths` 已提供统一 `backups/` 目录，设置页已有手动 JSON 导入导出；当前没有自动快照生命周期。
+- Safety: 恢复点必须使用原子临时文件和校验，恢复测试只使用数据库副本。
+
+### TASK-D-SYNC-001：同步冲突、版本域与条件提交
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R0
+- Scope: 在现有 schema v2 时间戳合并之上设计版本域、条件提交、过期重拉和可解释冲突；评估 ETag、Lamport、`expectedGeneration` 与原子 SyncCommit 的最小组合。
+- Current Basis: 已有 Tombstone、锁定保留、冲突历史和本地 generation；这些不等于远端 compare-and-swap。
+- Design Gate: 必须先定义并发写、时钟漂移、离线删除和旧 schema v2 客户端兼容矩阵。
+
+### TASK-D-SYNC-002：持久化 outbox 与主动拉取
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R0
+- Scope: 持久化 dirty/outbox、崩溃恢复补跑、暂停/恢复语义，以及启动、窗口聚焦、网络恢复和可配置周期拉取。
+- Current Basis: 当前仅有写入后内存 debounce 和单进程 in-flight 串行化；退出会丢失定时意图，没有无本地修改时的主动发现。
+- Dependency: 与 `TASK-D-SYNC-001` 共用幂等提交、重试和冲突语义，但可分阶段交付。
+
+### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R0
+- Scope: 为 URL/账号组合建立稳定 target ID，隔离凭据、未来 baseline/ETag/outbox 状态，并设计切换确认、首次拉取和旧全局 setting 迁移。
+- Current Basis: 当前 URL、凭据、代理和同步频率保存在全局 setting，尚没有 per-target 同步状态。
+
+### TASK-D-SEC-001：Windows 凭据保护与旧格式迁移
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R0
+- Scope: 使用 Windows 原生受保护存储保存 WebDAV/TMDB 凭据，迁移 `portable:v1` 和 `machine_bound:v1`，并提供机器变化后的可诊断恢复流程。
+- Current Basis: 当前 AES-GCM 密钥由 machine UID 与固定 salt 派生；`portable:v1` 仍可直接 Base64 还原。
+- Security Gate: 不在日志、导出、同步载荷或错误通知中暴露凭据；迁移成功后才删除旧值。
+
+### TASK-D-HISTORY-001：逐集完成时间与完结状态
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: SPECIFIED
+- Priority: R1
+- Business Source: `.agent-work/REQUEST.md` 9.4
 - Scope: 下一集语义、单集完成三态、跳集空时间、最后一集完结、幂等历史、旧进度兼容、migration、导入导出与同步边界。
-- Current Model Finding: 当前只有自由文本 `progress` 与 `totalEpisodes`；历史 `watch_logs` 表在 v13 migration 中被删除，不能直接复用为现行能力。
-- Required Future Design:
-  - `records.nextEpisode` 与独立 `episode_completions` 数据模型、可空 `completedAt`、唯一约束和向前 migration；
-  - 下一集更新与上一集完成事件的原子事务；
-  - 旧 `progress` 保持原样，并通过用户显式选择起始下一集启用新模型；
-  - 三态约束：无行＝未记录完成；有行且时间为空＝已完成但时间未记录；有行且时间非空＝已完成且时间已知；
-  - 跳集为中间集插入空时间完成记录、为目标前一集插入当前时间，不为未跨过的集预创建行；
-  - 重复、回退、跳集空值、离线、导入恢复和同步冲突测试；
-  - 单元、Rust/SQLite 集成和真实 Tauri UI 验收标准。
-- Confirmed First-Version Boundary: 下一集选择、单集完成三态、跳集空时间、完结、旧数据显式启用；不含观看时长、批量补历史、跨季聚合和历史编辑。
-- Prohibition: 本轮不得实施，不得并入阶段 A/B 或以稳定性修复名义提前修改 schema。
+- Required Design: `records.nextEpisode` 与独立 `episode_completions`；下一集更新和完成事件同事务；旧 `progress` 不自动推断；回退不删除历史。
+- First-Version Boundary: 下一集选择、三态、跳集、完结和旧数据显式启用；不含观看时长、批量补历史、跨季聚合和历史编辑。
 
-## TASK-D-R2：高级功能与架构路线图包
+### TASK-D-DISCOVERY-001：“今晚看什么”队列
 
 - Phase: DEFERRED
 - Owner: Unassigned
-- Status: BLOCKED
-- Priority: Future R2
-- Dependencies: Gate A, Gate B, 新的用户专项需求与验收标准
-- Scope: 高级筛选/保存视图、订阅提醒、系列收藏、跨语言类型生成、同步/组件拆分、完整弹窗可访问性。
-- Prohibition: 本轮不得实施。
+- Status: NEEDS-DESIGN
+- Priority: R1
+- Scope: 基于未看状态、兴趣、评分、时长、平台和题材生成可解释候选，支持排除、刷新和可选持久队列。
+- Current Basis: 数据字段和待看价值算法已存在，但没有产品化队列规则与验收标准。
 
-## TASK-D-R3：便利性与恢复路线图包
+### TASK-D-IMPORT-001：Trakt 专项导入导出
 
 - Phase: DEFERRED
 - Owner: Unassigned
-- Status: BLOCKED
-- Priority: Future R3
-- Dependencies: Gate A, Gate B, 新的用户专项需求与验收标准
-- Scope: 可播放来源/外部链接、自动备份与恢复点。
-- Prohibition: 本轮不得实施。
+- Status: NEEDS-DESIGN
+- Priority: R1
+- Scope: Trakt schema 映射、电影/剧集/季身份匹配、重复与冲突策略、预览、部分失败报告和往返测试。
+- Current Basis: 已有通用 JSON 导入导出与清洗；不能把通用导入直接视为 Trakt 兼容。
+
+### TASK-D-NET-001：网络响应与海报缓存安全
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R1
+- Scope: 响应体/海报大小限制、MIME 校验、临时文件原子重命名、并发限制、缓存容量与孤立文件清理。
+- Current Basis: 海报路径已限制在单文件名和统一目录，但下载仍把完整响应直接写入最终文件。
+
+### TASK-D-UX-004：完整弹窗可访问性
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R1
+- Scope: 为 RecordForm、Settings、Dashboard 统一补齐 dialog 语义、标题关联、焦点陷阱、初始焦点、Escape 和焦点恢复。
+- Current Basis: 三个弹窗已有 Escape 关闭，但未形成完整可访问弹窗契约。
+
+### TASK-D-UX-001：高级筛选与保存视图
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R2
+- Scope: 多条件筛选表达式、命名视图、持久化、失效字段迁移和与现有顶部筛选的组合语义。
+- Current Basis: 已有搜索、媒体类型、状态、地区和锁定筛选。
+
+### TASK-D-UX-002：订阅与播出提醒
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R2
+- Scope: 下集播出、剧集完结和即将上映提醒的数据刷新、通知权限、去重、时区与离线行为。
+- Current Basis: 已有 TMDB 元数据入口，但没有播出日程持久化或系统通知流程。
+
+### TASK-D-UX-003：系列 / 收藏集
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R2
+- Scope: 多对多收藏集模型、手工排序、自动/手工归组、导入导出和同步冲突语义。
+- Current Basis: 当前媒体分类和文本标签不能表达稳定的多维集合关系。
+
+### TASK-D-ARCH-001：跨语言类型生成
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R2
+- Scope: 选择 Rust 或独立 schema 作为单一事实源，生成 TypeScript/DTO/字段白名单并在 CI 检查漂移。
+- Current Basis: 当前 Rust DTO、TypeScript 类型、SQL 列和更新映射由多处手工维护。
+
+### TASK-D-ARCH-002：同步模块和大型组件拆分
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R2
+- Scope: 分离同步领域、存储、传输和应用服务，并拆分 RecordForm/SettingsModal；先锁定行为测试再做结构迁移。
+- Current Basis: `webdav.ts` 与大型表单组件职责密集，但当前 `useWatchList` 是稳定主链路，Zustand 不作为默认目标。
+
+### TASK-D-LINK-001：可播放来源与外部链接
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R3
+- Scope: 每条记录保存多个平台/本地来源，提供 URL/协议校验、平台模板、排序和一键打开。
+- Current Basis: 当前卡片只基于 IMDb ID 打开 IMDb 页面，尚无通用来源模型。
+
+## 已移出 DEFERRED
+
+### MAINTENANCE-CI：持续集成维护
+
+- Phase: MAINTENANCE
+- Owner: Unassigned
+- Status: IMPLEMENTED
+- Former Priority: R1
+- Evidence: `.github/workflows/ci.yml` 已覆盖 push/PR 的 typecheck、lint、Node tests、前端 build、Playwright、Windows `cargo fmt/clippy/test`、Tauri build 和构建产物上传。
+- Scope: 后续只维护 action/runtime 版本、缓存、最小权限、失败诊断和构建稳定性；新增门禁另开任务。

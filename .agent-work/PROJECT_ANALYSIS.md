@@ -1,5 +1,7 @@
 # 项目分析
 
+> **历史分析，不代表当前实现。** 本文主体记录的是 2026-07-26 的故障现场 `29ea3a4`。截至 2026-08-02，当前权威实现为本仓库 `main`：使用 React `useWatchList`、V18 camelCase SQLite、schema v2 WebDAV 和已验收的原子本地 CRUD；没有 Zustand 状态主链路，也没有注册 schema v3/ETag/`expectedGeneration` 原子同步提交。正式便携版的精确构建提交号显示在应用顶部栏，最新架构请以 `docs/CURRENT_ARCHITECTURE.md` 为准。
+
 > 分析时间：2026-07-26（Australia/Perth）  
 > 分析基线：`main` / `29ea3a4`，相对 `origin/main` 超前 17 个提交，工作区有大量未提交修改。  
 > 本文只记录静态检查、环境探测和规划结论；没有把历史测试结果继承为本轮 PASS，也没有修改业务代码。

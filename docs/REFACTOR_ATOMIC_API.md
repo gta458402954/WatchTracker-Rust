@@ -2,6 +2,8 @@
 
 本文描述当前已注册、已测试的 Tauri/SQLite 数据接口。它不把路线图能力写成现有功能，也不沿用旧快照中已经废弃的 IPC 名称。
 
+当前权威源码为本仓库 `main`，SQLite schema 为 V18 camelCase；正式便携版的精确构建提交号显示在应用顶部栏。整体运行时架构见 `docs/CURRENT_ARCHITECTURE.md`。
+
 ## 1. 权威实现位置
 
 - Tauri 命令注册：`src-tauri/src/lib.rs`
@@ -135,6 +137,8 @@ local SQLite commit
 ```
 
 网络失败不得回滚、删除或伪装成本地 SQLite 提交失败；它只表示远端尚未确认。反过来，远端 PUT 成功也不能证明后续本地替换一定成功。当前应用使用时间戳、修订字段、Tombstone 和冲突记录降低风险，但不声称提供 exactly-once 或分布式事务保证。
+
+当前 WebDAV payload 为 schema v2。历史故障快照中的 schema v3、Lamport/ETag 和原子 `SyncCommit` 接口没有注册到当前运行时，不能按现有 API 调用。
 
 ## 9. 验证命令
 
