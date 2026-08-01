@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001`~`TASK-B-003` 已验收；`TASK-B-004` 已从正式集成线单独签发，B-005 尚未开放。
+- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001`~`TASK-B-004` 已验收；`TASK-B-005` 已从正式集成线单独签发。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 - Phase B 后续工作以 `codex/phase-b-integration` 为唯一集成线；B-003~B-005 必须从最新已验收 integration HEAD 逐项签发，整个 Phase B 完成并通过 Gate B 后才向 `main` 提交一次完整 PR。
@@ -16,7 +16,7 @@
 
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
-- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001`~`TASK-B-003` 已 `ACCEPTED`，`TASK-B-004` 已 `READY`，B-005 继续等待依赖和单独签发。
+- Phase B：5 个任务；Gate A 前置条件已满足，`TASK-B-001`~`TASK-B-004` 已 `ACCEPTED`，`TASK-B-005` 已 `READY`。
 - DEFERRED：4 个路线图包及 1 个已细化的逐集完成时间任务；本轮禁止实施，不计入 A/B 数量。
 
 ```text
@@ -1416,15 +1416,25 @@ ACCEPTED — Test-only implementation `c07b985` was independently reviewed from 
 ## TASK-B-005：执行地区全量回归并提交验收材料
 
 - Phase: B
-- Owner: Antigravity
-- Status: BLOCKED
+- Owner: Codex
+- Status: READY
 - Priority: P1 / Critical
-- Dependencies: AC-GATE-001, TASK-B-004
+- Dependencies: AC-GATE-001 PASS, TASK-B-001~TASK-B-004 ACCEPTED
+- BASE: `62cdd53` (`codex/phase-b-integration` after independent B-004 acceptance)
 - Acceptance Criteria: AC-B-008
+- Execution Policy: Codex Implementation Pass may collect evidence and mark this task `IMPLEMENTED` only. A separate clean Verification Pass must review the committed evidence, rerun mandatory checks, complete the region report and decide Gate B.
 - Expected Files:
   - `.agent-work/TASKS.md`
+  - `.agent-work/OWNERSHIP.md`
   - `.agent-work/EXECUTION_LOG.md`
-  - `.agent-work/evidence/**/*`
+  - `.agent-work/evidence/tests/TASK-B-005/*`
+  - `.agent-work/evidence/builds/TASK-B-005/*`
+  - `.agent-work/evidence/screenshots/TASK-B-005/*`
+- Forbidden Changes:
+  - 任何产品源码、测试、依赖、配置、README、地区报告 PASS 结论、Gate B 或最终综合报告。
+  - 使用或迁移 `codex/phase-b-complete` 隔离线的任何内容。
+  - 读取、复制、哈希、迁移或启动真实用户数据库和凭据；所有桌面验证必须使用新建隔离便携目录。
+  - push、PR 或合并 `main`。
 
 ### Objective
 
@@ -1433,7 +1443,8 @@ ACCEPTED — Test-only implementation `c07b985` was independently reviewed from 
 ### Implementation Requirements
 
 - 执行全部前端强制命令和相关 Rust/真实桌面回归。
-- 人工核对大量地区布局、选中态、动态消失、设置页统计和无现有筛选回归。
+- 从本任务新构建的 release EXE 复制到独立目录，预创建相邻空 `data/` 后启动；只进行无凭据、无外部网络的启动、添加地区记录、地区选项/筛选和退出冒烟。
+- 核对大量地区布局、选中态、动态消失、设置页入口和无现有筛选回归；自动化已覆盖的细节不重复手工穷举。
 - 最终任务只标 IMPLEMENTED，等待 Codex 生成地区及综合报告。
 
 ### Verification
@@ -1444,11 +1455,18 @@ npm run typecheck
 npm run lint
 npm run test
 npx playwright test
+npm run tauri build
 Set-Location src-tauri
 cargo fmt -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo test --locked
 ```
+
+### Required Evidence
+
+- 全部命令、退出码和测试数量摘要；构建产物路径、大小与 SHA-256。
+- 隔离便携目录的绝对路径、启动前后进程清理、空库启动和地区记录/筛选的真实窗口截图。
+- 明确声明未访问真实数据库、凭据、TMDB 或 WebDAV；桌面冒烟不扩大为真实外部服务验证。
 
 ### Required Evidence
 
@@ -1456,7 +1474,7 @@ cargo test
 
 ### Execution Result
 
-BLOCKED — awaits TASK-B-004 acceptance and a separate Codex reissue from the latest accepted `codex/phase-b-integration` HEAD; no regression run or report conclusion is authorized.
+READY — separately authorized by the user after TASK-B-004 independent acceptance. Implementation must start from `codex/phase-b-integration@62cdd53`; it may collect evidence and end at `IMPLEMENTED` only.
 
 ---
 
