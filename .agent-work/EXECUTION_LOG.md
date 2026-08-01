@@ -672,3 +672,12 @@
 - Known contract targets: TMDB country arrays currently flow through `classifyTmdb`; SettingsModal contains local JSON import/export, WebDAV import/conflict restore and batch metadata update. Conditional source paths require named failing evidence before modification.
 - Quarantine: `codex/phase-b-complete`, `dc8308f`, `0f44b76` and their dirty worktrees were not inspected, copied, merged or used as BASE. Any future candidate idea must be documented only as an idea/risk and reimplemented from this BASE.
 - Scope: governance authorization only. No business source, test, dependency, build file, application process, external service or database was modified or started; no implementation or AC PASS is claimed.
+
+### TASK-B-003 contract gate correction
+
+- Date/remediation base: 2026-08-01, `315cae63df7d8fb90513b6979717c325d0b5f1b9`; governance-only follow-up, without amend.
+- Conditional authorization correction: Implementation Pass cannot activate or modify Conditional Files. A diagnostic that proves one is needed requires complete failure evidence, immediate stop, TASK-B-003 remaining `READY`, and a new signer-authored contract commit promoting the exact path to Expected Files.
+- Stage gates: Preflight performs clean Git/HEAD/BASE/process checks and the single `npm ci`; minimal conditional diagnostics run before business implementation; Final verification restarts the fixed command sequence after implementation and references rather than repeats the successful Preflight install.
+- Runtime boundary correction: B-003 is limited to Node, Playwright browser mock, frontend build and Tauri build. It must not launch Tauri/app.exe, create or access SQLite, connect to real or local WebDAV, or read real credentials. Real desktop/data-directory isolation/final smoke belongs to TASK-B-005.
+- Evidence levels: Node proves pure functions/import normalization; Playwright mock proves browser UI and mock IPC/payload boundaries; Tauri build proves build success only. No layer may claim real desktop, database or WebDAV verification.
+- Scope: contract correction only. No business source, test, dependency, build file, Codex Review or isolated-branch content was modified; no Implementation Pass was executed, pushed or opened as a PR.

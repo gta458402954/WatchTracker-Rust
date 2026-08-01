@@ -1212,11 +1212,12 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
   - `.agent-work/TASKS.md` — 仅允许更新 TASK-B-003 的 Status、Execution Result 和 Implementation 记录。
   - `.agent-work/OWNERSHIP.md` — 仅允许更新 TASK-B-003 当前阶段状态。
   - `.agent-work/EXECUTION_LOG.md` — 仅允许追加 TASK-B-003 Implementation Pass 的事实摘要。
-- Conditional Files（必须由下列客观失败证据激活，并在 Execution Log 写明测试名、失败输出与边界；不得仅因“实现方便”修改）:
-  - `src/features/watchlist/components/RecordForm.tsx` — 仅当定向 Playwright 测试证明，在 `classification.ts` 修正后，现有电影、剧集、季或编辑保存分支仍丢失/截断规范化 `originCountry` 或覆盖自定义标签时。
-  - `src/shared/lib/importValidation.ts` — 仅当 `importValidation.test.mjs` 的旧记录/多国往返用例证明 `normalizeImportedRecord(s)` 改写或丢失 `originCountry`/自定义标签时。
-  - `src/shared/lib/webdav.ts` — 仅当定向 payload 测试证明现有 parse/merge/GET/PUT 路径改写或丢失 `originCountry`/自定义标签时；不得为真实外部服务适配而激活。
-  - `src/features/watchlist/hooks/useWatchList.ts` — 仅当 WebDAV payload 已正确而定向测试仍证明同步合并或冲突恢复的 hook 边界丢失上述字段时。
+- Conditional Files（Implementation Pass 无权自行激活或修改）:
+  - `src/features/watchlist/components/RecordForm.tsx` — 条件诊断用于判断现有电影、剧集、季或编辑保存分支是否仍丢失/截断规范化 `originCountry` 或覆盖自定义标签。
+  - `src/shared/lib/importValidation.ts` — 条件诊断用于判断 `normalizeImportedRecord(s)` 是否改写或丢失 `originCountry`/自定义标签。
+  - `src/shared/lib/webdav.ts` — 条件诊断用于判断现有 parse/merge/GET/PUT payload 边界是否改写或丢失 `originCountry`/自定义标签。
+  - `src/features/watchlist/hooks/useWatchList.ts` — 条件诊断用于判断 payload 正确时同步合并或冲突恢复的 hook 边界是否仍丢失上述字段。
+  - 任一诊断失败若证明需要上述文件，必须保存测试名、完整失败输出和退出码，不得修改该文件，立即停止，保持 TASK-B-003 `READY`，并请求合同签发者另行提交修订，将明确路径提升为 Expected File。诊断失败既不是修改授权，也不得作为继续执行的理由。
 - Forbidden Changes:
   - TASK-B-004、TASK-B-005、AC-B-007/008、Gate B 或最终报告的实现/验收；B-004/B-005 状态必须保持 `BLOCKED`。
   - 地区筛选 UI、`src/app/App.tsx`、`StatsBar.tsx`、`filtering.ts`、`countryNames.ts`，或重新实现/重构 B-001/B-002 已验收逻辑。
@@ -1227,7 +1228,7 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
   - 使用或移植 `codex/phase-b-complete`、`dc8308f`、`0f44b76` 的提交或未提交修改；不得 cherry-pick、merge、复制整文件或将其作为 BASE。
   - push、创建 PR、合并到 `main`。
 - Change Budget:
-  - 预期业务文件最多 2 个；条件业务文件最多激活 2 个。若需要第 5 个业务文件或任何未列出的业务文件，立即停止并请求重签合同。
+  - 当前 Implementation Pass 的业务修改预算仅为 2 个 Expected Files；Conditional Files 的修改预算为 0。只有后续合同修订提交明确提升后，才能重新计算预算并开始新的 Implementation Pass。
   - 测试/夹具仅限上列 4 个路径，其中只允许新增 `tests/b003-roundtrip.spec.ts`；非治理、非证据 diff 总变更不超过 500 行（增删合计）。
   - 不允许新增生产模块、重命名/移动文件、批量格式化或扩大公共 API；超预算必须停止并提交合同变更请求。
 
@@ -1243,16 +1244,48 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
 - 本地 JSON 导出后再导入、WebDAV schema v2 与旧数组 payload 的 GET/merge/PUT、云端导入和冲突记录恢复均须保持 `originCountry` 与自定义标签。mock 证据只能证明 mock 边界，不得表述为真实桌面、真实网络或真实 WebDAV 服务已验证。
 - B-003 只覆盖 AC-B-005/006 的定向兼容性证据；地区完整 E2E 矩阵、布局/筛选回归和最终综合验收留给 B-004/B-005。
 
-### Database, User-data and Process Isolation
+### Execution Stages and Verification
 
-- Node 与 Playwright 验证必须使用内存夹具/mock IPC，不启动 Tauri、不访问数据库。任何桌面核验只能使用任务专属构建副本和预先创建的 executable-adjacent `data/`，根目录限定为 `D:\Project\Projects\WatchTracker-B003-TestData\<run-id>`；不得启动原始 `target/release/app.exe`，以免回退到真实 AppData。
-- WebDAV 桌面核验只能连接任务启动的 `127.0.0.1` 随机端口临时 stub，使用虚构凭据和任务专属 payload；不得连接外网或读取系统中已保存凭据。真实 WebDAV 服务验证不由 B-003 声称。
-- 不得枚举、打开或计算真实用户数据库内容/哈希。若无法证明运行时数据根目录位于上述任务目录，启动前立即停止。
-- 记录由本任务启动的 app/Node/Vite/Playwright/stub PID。每个命令结束后仅终止本任务 PID；最终确认任务 app 路径无进程且端口 `4177` 与 stub 端口无监听。禁止按进程名广泛终止用户进程。
+#### A. Preflight
 
-### Verification
+从 `D:\Project\Projects\WatchTracker-B003` 依次执行并保存输出/退出码：
 
 ```powershell
+git status --short --branch
+git rev-parse HEAD
+git merge-base --is-ancestor 6202f85d86a6e0b8611e6135cec479306a8768fc HEAD
+git diff --quiet
+git diff --cached --quiet
+$taskResidual = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and (($_.ExecutablePath -like 'D:\Project\Projects\WatchTracker-B003\*') -or ($_.CommandLine -match '(vite|playwright).*(4177|WatchTracker-B003)')) } | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine
+$taskResidual; if ($taskResidual) { exit 1 }
+$port4177 = Get-NetTCPConnection -LocalPort 4177 -State Listen -ErrorAction SilentlyContinue
+$port4177; if ($port4177) { exit 1 }
+npm ci
+```
+
+- HEAD 必须是最新 TASK-B-003 合同提交且上述 BASE 必须是其祖先；工作区与暂存区必须干净。若发现与本任务相关的残留进程/4177 监听、Git 条件不符或 `npm ci` 非零，立即停止，不得进入诊断或实现。
+- `npm ci` 整个 Implementation Pass 只执行一次；成功日志同时作为 Final verification 的锁文件安装证据，最终阶段不得重复安装。
+
+#### B. Conditional diagnostics
+
+- 只可先新增/更新 Expected Files 中列明的测试/夹具，不得修改任何业务文件，然后依次运行以下最小诊断：
+
+```powershell
+node --test --test-name-pattern="B003 conditional: import normalization" src/shared/lib/__tests__/importValidation.test.mjs
+npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-record-form"
+npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-webdav-payload"
+npx playwright test tests/b003-roundtrip.spec.ts --grep "@conditional-watchlist-boundary"
+```
+
+- 每项仅判断对应 Conditional File 是否必要。任一非零或断言证明需要条件文件时，保存测试名、完整失败输出和退出码，立即停止；不得修改条件文件、不得继续其他诊断/实现/最终验证，TASK-B-003 保持 `READY`，请求合同签发者以新修订提交把该路径提升为 Expected File。
+- 若失败原因不能唯一归属于某个 Conditional File，同样停止并报告，不得自行推断权限。只有全部条件诊断为零且没有条件文件需求，才可进入 Expected Files 范围内的业务实现。
+
+#### C. Final verification
+
+- 实现完成后必须从第一项开始按下列固定顺序核对/执行。第 1 项 `npm ci` 直接引用本次 Preflight 的成功安装日志，不重复运行；其余命令必须重新从头顺序执行：
+
+```powershell
+npm ci
 node --test src/shared/lib/__tests__/classification.test.mjs
 node --test src/shared/lib/__tests__/importValidation.test.mjs
 npm run test
@@ -1265,20 +1298,29 @@ npm run tauri build
 git diff --check
 ```
 
-命令必须从 `D:\Project\Projects\WatchTracker-B003` 顺序执行并记录开始/结束时间、退出码和完整日志。`npm run tauri build` 只生成产物；如执行桌面/回环 stub 冒烟，必须遵守上述隔离与进程清理规则。
+- 任一实际执行命令非零立即停止，不得执行后续命令。Final verification 失败不得激活 Conditional Files；如失败指向条件文件，只保存完整日志并请求新合同修订。
+- `git diff --check` 成功后，重复 Preflight 中的 `$taskResidual` 与 `$port4177` 查询作为最终两项只读清理门禁；任一有结果即按非零失败处理。查询必须排除当前 PowerShell PID，禁止误杀或广泛终止用户进程。
+
+### Runtime, Database and Credential Boundary
+
+- B-003 固定只运行 Node 测试、Playwright 浏览器 mock、前端构建与 `npm run tauri build`。不得启动 Tauri、`app.exe` 或任何桌面产物；Tauri build 只能证明构建成功。
+- 不得创建、打开、枚举、复制、哈希或访问任何 SQLite 数据库或真实用户数据目录；不得连接真实或本地 WebDAV 服务，不得读取真实凭据。真实桌面、真实数据目录隔离和最终冒烟全部留给 TASK-B-005。
+- Preflight 和最终收尾只查询与本工作树或端口 `4177` 相关的进程/监听。记录本任务启动的 Node/Vite/Playwright/Cargo 子进程 PID；命令结束后确认这些 PID 已退出且端口 `4177` 无监听。禁止启动 app，禁止按进程名广泛终止用户进程。
 
 ### Required Evidence
 
 - 测试名到 AC-B-005/006 具体步骤的映射；电影/剧集/季、新增/更新、UK→GB、CN/HK/TW、多国、重复、非法值、未映射有效代码的输入与精确输出。
 - 自定义标签与可识别旧系统地区标签的 before/after 表，证明只清理明确地区标签且非地区标签不被覆盖或误删。
-- 本地 JSON export→import、WebDAV schema v2 与旧数组 payload、同步 merge/PUT/GET、冲突恢复的脱敏字段级 before/after；mock、浏览器、隔离桌面/本地 stub 证据必须分别标注，不得互相冒充。
-- 所有验证命令原始日志、退出码、Git diff/name-status、变更预算核对、条件文件激活证据（如有）、任务 PID/端口最终清理结果，以及未访问真实用户数据库/真实凭据/外部服务的边界声明。
+- 本地 JSON export→import、WebDAV schema v2 与旧数组 payload、同步 merge/PUT/GET、冲突恢复的脱敏字段级 before/after；全部属于 Playwright mock IPC/payload 边界证据，不得表述为真实 WebDAV 或真实桌面证据。
+- 证据等级必须明确：Node 只证明纯函数/导入规范化；Playwright mock 只证明浏览器 UI 与 mock IPC/payload 边界；Tauri build 只证明构建成功。任何一项均不得宣称真实桌面、真实数据库或真实 WebDAV 已验证。
+- Preflight、条件诊断和 Final verification 的完整日志/退出码、Git diff/name-status、变更预算核对、条件诊断结论、任务 PID/4177 端口最终清理结果，以及未启动 app、未创建/访问数据库、未读取凭据或连接 WebDAV 的边界声明。
 
 ### Stop-on-failure Rules
 
-- 任一验证命令、字段断言、构建、数据根目录检查或进程清理失败，立即停止后续步骤，保留原始日志，将状态保持 `READY` 或最多记为 `IMPLEMENTED` with failures；不得写 AC PASS、不得用后续成功覆盖失败。
+- Preflight、条件诊断或 Final verification 任一命令/断言失败，立即停止对应阶段及全部后续工作，保留完整输出与退出码；不得用后续成功覆盖失败，不得写 AC PASS。
+- 条件诊断或最终验证指向 Conditional File 时，TASK-B-003 必须保持 `READY`，不得修改该文件或标记 `IMPLEMENTED`，只请求合同签发者提交明确提升路径的新合同修订。
 - 需要未列出文件、超过变更预算、需要 Rust/schema/migration/依赖修改，或发现现有 IPC 无法实现 AC 时，只记录最小复现与阻塞并停止，请求重新签发合同。
-- 发现工作树含任务外修改、真实用户路径可能被选中、真实凭据可能被读取、外部服务可能被调用或任务进程无法确认退出时，立即停止；不得 reset、clean、stash 或覆盖现场。
+- 发现工作树含任务外修改、任何数据库/用户数据/真实凭据可能被访问、任何 WebDAV 服务可能被连接、app 可能被启动或任务进程无法确认退出时，立即停止；不得 reset、clean、stash 或覆盖现场。
 
 ### Execution Result
 

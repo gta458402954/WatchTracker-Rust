@@ -486,7 +486,7 @@
   2. 验证 originCountry 有有效值时不读取冲突旧标签。
   3. 通过导入、备份恢复和同步输入旧记录，核对相同分类且 `originCountry` 不丢。
 - Expected Result: 无破坏性迁移，新旧混合结果可预测一致。
-- Required Evidence: BASE 实际 Node 原生 import 测试、定向 Playwright mock 日志，以及如执行则明确隔离的桌面/本地回环 WebDAV stub 日志；各证据层级必须分别标注。
+- Required Evidence: BASE 实际 Node 原生 import 测试与定向 Playwright mock IPC/payload 日志。Node 只证明纯函数/导入规范化，Playwright mock 只证明浏览器与 mock 边界，Tauri build 只证明构建成功；B-003 不得启动或声明验证真实桌面、SQLite 或真实/本地 WebDAV 服务。
 - Result: NOT RUN
 - Evidence: TASK-B-003 is authorized but has not run an Implementation or independent Verification Pass. No partial result is promoted to AC PASS; Result remains NOT RUN.
 
