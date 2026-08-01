@@ -632,3 +632,12 @@
 - AC disposition: AC-B-001 PASS. AC-B-002 domain display/unknown and AC-B-004 aggregation/order portions are verified, but both overall criteria retain later UI/combined-filter work and are not prematurely marked PASS.
 - Final status: TASK-B-001 ACCEPTED. B-002 through B-005 remain blocked pending separate authorization.
 - Review: `.agent-work/evidence/review/TASK-B-001-CODEX-REVIEW.md`.
+
+### TASK-B-002 Codex Implementation Pass
+
+- Date/contract HEAD: 2026-08-01, `codex/task-b-002@58c01a984358d55f94fd3bd315117015c93a9465`; the worktree was clean before implementation.
+- Scope: added pure media/status scope and combined record filtering helpers; App memoizes dynamic `RegionOption[]`, derives an immediate safe `effectiveRegion`, and subsequently clears invalid state; StatsBar renders precomputed code-keyed options with wrapping and `aria-pressed`.
+- Reactivity coverage: Node and Playwright tests cover stable dynamic ordering/counts, CN/HK/TW, GB/UK, multi-country, unknown and unmapped codes, repeat-click clearing, invalid-selection non-revival, add/edit/delete, controlled records replacement, empty data and many-region layout.
+- Verification: targeted Node tests 6/6; complete Node tests 32/32; typecheck PASS; lint PASS; build PASS; complete Playwright 8/8. All six required commands exited `0` and recorded cwd plus start/end times in `.agent-work/evidence/tests/TASK-B-002/`.
+- Boundary: no dependency, package/lockfile, analytics, Header, SettingsModal, TMDB, import/restore/WebDAV implementation, Rust, database, B-003+ or DEFERRED change. The controlled replacement test is confined to the browser IPC fixture.
+- Status: IMPLEMENTED; not accepted. Independent Verification Pass remains mandatory.

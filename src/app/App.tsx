@@ -7,7 +7,9 @@ import RecordForm from '../features/watchlist/components/RecordForm';
 import SettingsModal from '../features/settings/components/SettingsModal';
 import { hasCreds } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
-import { hasRegion, mediaTypeOf, RegionTag } from '../shared/lib/classification';
+import { mediaTypeOf } from '../shared/lib/classification';
+import type { RegionFilter } from '../shared/lib/countryNames';
+import { effectiveRegionOf, filterRecords, regionOptionsForScope } from '../shared/lib/filtering';
 import { initializeApp } from './initialization';
 import NotificationRegion, { useNotifications } from '../shared/components/NotificationRegion';
 import { notifyOperationFailure, publicFailureMessage, reportOperationFailure } from '../shared/lib/feedback';
@@ -18,7 +20,6 @@ import ListView from '../features/watchlist/components/ListView';
 import PosterWall from '../features/watchlist/components/PosterWall';
 
 type FilterStatus = Status | 'all';
-type RegionFilter = 'all' | RegionTag;
 type InitializationState = 'loading' | 'ready' | 'error';
 
 const Dashboard = lazy(() => import('../features/dashboard/components/Dashboard'));
@@ -116,25 +117,28 @@ export default function App() {
     }
   }
 
+  const regionOptions = useMemo(
+    () => regionOptionsForScope(records, activeMediaType, filterStatus),
+    [records, activeMediaType, filterStatus],
+  );
+  const effectiveRegion = effectiveRegionOf(activeRegion, regionOptions);
+
+  useEffect(() => {
+    if (activeRegion !== effectiveRegion) {
+      // effectiveRegion already makes this render safe; persist the cleanup after render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveRegion(effectiveRegion);
+    }
+  }, [activeRegion, effectiveRegion]);
+
   const filtered = useMemo(() => {
-    return records
-      .filter(r => {
-        if (activeMediaType !== 'all' && mediaTypeOf(r) !== activeMediaType) return false;
-        if (filterStatus !== 'all' && r.status !== filterStatus) return false;
-        if (activeRegion !== 'all' && !hasRegion(r, activeRegion)) return false;
-        if (lockFilter === 'locked' && !r.isLocked) return false;
-        if (lockFilter === 'unlocked' && r.isLocked) return false;
-        if (searchText) {
-          const q = searchText.toLowerCase();
-          return (
-            r.chineseName.toLowerCase().includes(q) ||
-            r.originalName.toLowerCase().includes(q) ||
-            r.platform.toLowerCase().includes(q) ||
-            r.notes.toLowerCase().includes(q)
-          );
-        }
-        return true;
-      })
+    return filterRecords(records, {
+      mediaType: activeMediaType,
+      status: filterStatus,
+      region: effectiveRegion,
+      searchText,
+      lock: lockFilter,
+    })
       .sort((a, b) => {
         if (sortBy === 'rating') {
           return (b.rating ?? -1) - (a.rating ?? -1);
@@ -155,7 +159,7 @@ export default function App() {
         }
         return (b.createdAt || '').localeCompare(a.createdAt || '');
       });
-  }, [records, activeMediaType, filterStatus, activeRegion, searchText, sortBy, lockFilter]);
+  }, [records, activeMediaType, filterStatus, effectiveRegion, searchText, sortBy, lockFilter]);
 
 
   function handleEdit(record: WatchRecord) {
@@ -307,12 +311,13 @@ export default function App() {
       {/* Stats and media type tabs */}
       <StatsBar
         records={records}
+        regionOptions={regionOptions}
         activeMediaType={activeMediaType}
-        onMediaTypeChange={(type) => { setActiveMediaType(type); setActiveRegion('all'); }}
+        onMediaTypeChange={setActiveMediaType}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
-        activeRegion={activeRegion}
-        onRegionChange={(region) => setActiveRegion(region as RegionFilter)}
+        activeRegion={effectiveRegion}
+        onRegionChange={setActiveRegion}
         lastSync={lastSync}
         isSyncing={syncing}
       />

@@ -1,0 +1,27 @@
+command: node --test src/shared/lib/__tests__/filtering.test.mjs
+cwd: D:\Project\Projects\WatchTracker-B002
+started: 2026-08-01T19:56:08.1070240+08:00
+
+▶ region scope and dynamic options
+  ✔ uses only media type and status to define the aggregation scope (1.0672ms)
+  ✔ keeps option counts independent of search, lock, sort, and active region (7.5206ms)
+  ✔ counts multi-country, unknown, and unmapped ISO values and preserves stable order (0.2541ms)
+✔ region scope and dynamic options (9.5436ms)
+▶ combined record filters
+  ✔ combines media type, status, region, search, and lock predicates (0.138ms)
+  ✔ supports GB normalized from UK, unknown, and unmapped region selection (0.1734ms)
+✔ combined record filters (0.4305ms)
+▶ invalid region fallback
+  ✔ uses all immediately and remains all when the old option later returns (0.2076ms)
+✔ invalid region fallback (0.2942ms)
+ℹ tests 6
+ℹ suites 3
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 118.2435
+
+ended: 2026-08-01T19:56:08.3216887+08:00
+exit_code: 0

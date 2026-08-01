@@ -1,25 +1,23 @@
 import { MediaType, Status, WatchRecord } from '../../../shared/types';
 import { STATUS_CONFIG } from '../../../shared/lib/constants';
-import { mediaTypeOf, REGION_TAGS, regionsOf, RegionTag } from '../../../shared/lib/classification';
+import { mediaTypeOf, type RegionOption } from '../../../shared/lib/classification';
+import type { RegionFilter } from '../../../shared/lib/countryNames';
 
 interface StatsBarProps {
   records: WatchRecord[];
+  regionOptions: RegionOption[];
   activeMediaType: MediaType | 'all';
   onMediaTypeChange: (mediaType: MediaType | 'all') => void;
   filterStatus: Status | 'all';
   onFilterStatusChange: (status: Status | 'all') => void;
-  activeRegion: RegionTag | 'all';
-  onRegionChange: (region: RegionTag | 'all') => void;
+  activeRegion: RegionFilter;
+  onRegionChange: (region: RegionFilter) => void;
   lastSync?: string | null;
   isSyncing?: boolean;
 }
 
-export default function StatsBar({ records, activeMediaType, onMediaTypeChange, filterStatus, onFilterStatusChange, activeRegion, onRegionChange, lastSync, isSyncing }: StatsBarProps) {
+export default function StatsBar({ records, regionOptions, activeMediaType, onMediaTypeChange, filterStatus, onFilterStatusChange, activeRegion, onRegionChange, lastSync, isSyncing }: StatsBarProps) {
   const visible = records.filter(record => activeMediaType === 'all' || mediaTypeOf(record) === activeMediaType);
-  const regionCounts = REGION_TAGS.map(region => ({
-    region,
-    count: visible.filter(record => (filterStatus === 'all' || record.status === filterStatus) && regionsOf(record).includes(region)).length,
-  })).filter(item => item.count > 0);
 
   return <div className="border-b border-gray-100 bg-white">
     <div className="scrollbar-none flex gap-1 overflow-x-auto px-4 pt-4">
@@ -35,9 +33,9 @@ export default function StatsBar({ records, activeMediaType, onMediaTypeChange, 
         const count = visible.filter(record => status === 'all' || record.status === status).length;
         return <button key={status} onClick={() => onFilterStatusChange(status)} className={`flex items-center gap-1.5 ${filterStatus === status ? '' : 'opacity-60'}`}><span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${config.bg} ${config.color}`}>{config.label}</span><span className="text-sm font-bold text-gray-700">{count}</span></button>;
       })}
-      {regionCounts.length > 0 && <div className="flex items-center gap-2 border-l border-gray-200 pl-4">
+      {regionOptions.length > 0 && <div aria-label="地区筛选" className="flex min-w-0 flex-wrap items-center gap-2 border-l border-gray-200 pl-4">
         <span className="font-medium text-gray-400">地区</span>
-        {regionCounts.map(({ region, count }) => <button key={region} type="button" aria-pressed={activeRegion === region} onClick={() => onRegionChange(activeRegion === region ? 'all' : region)} className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors ${activeRegion === region ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-500 hover:border-indigo-200 hover:text-indigo-600'}`}>{region} <b>{count}</b></button>)}
+        {regionOptions.map(({ code, label, count }) => <button key={code} type="button" aria-pressed={activeRegion === code} onClick={() => onRegionChange(activeRegion === code ? 'all' : code)} className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors ${activeRegion === code ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-500 hover:border-indigo-200 hover:text-indigo-600'}`}>{label} <b>{count}</b></button>)}
       </div>}
       {(lastSync || isSyncing) && <span className="ml-auto text-xs text-gray-400">{isSyncing ? '正在同步…' : `上次同步：${lastSync}`}</span>}
     </div>

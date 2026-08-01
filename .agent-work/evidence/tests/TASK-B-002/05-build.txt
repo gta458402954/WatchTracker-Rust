@@ -1,0 +1,22 @@
+command: npm run build
+cwd: D:\Project\Projects\WatchTracker-B002
+started: 2026-08-01T19:56:14.2470918+08:00
+
+
+> watch-tracker@1.10.0 build
+> tsc -b && vite build
+
+[36mvite v8.2.0 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...✓ 608 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.48 kB │ gzip:   0.33 kB
+dist/assets/index-FLO5u6y_.css      32.64 kB │ gzip:   6.46 kB
+dist/assets/index-CDtY3x-K.js      292.82 kB │ gzip:  88.44 kB
+dist/assets/Dashboard-DM9nvKL6.js  358.00 kB │ gzip: 103.86 kB
+
+[32m✓ built in 606ms[39m
+
+ended: 2026-08-01T19:56:17.2453336+08:00
+exit_code: 0

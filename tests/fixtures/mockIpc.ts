@@ -24,9 +24,10 @@ declare global {
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
     ({ records, failRecordLoads }) => {
+      const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const snapshot: MockSnapshot = {
         calls: [],
-        records: structuredClone(records),
+        records: controlledRecords ? JSON.parse(controlledRecords) : structuredClone(records),
         failRecordLoads,
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
@@ -102,6 +103,13 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       failRecordLoads: options.failRecordLoads ?? false,
     },
   );
+}
+
+export async function replaceMockRecords(page: Page, records: WatchRecord[]): Promise<void> {
+  await page.evaluate((replacement) => {
+    sessionStorage.setItem('__WATCHTRACKER_CONTROLLED_RECORDS__', JSON.stringify(replacement));
+  }, records);
+  await page.reload();
 }
 
 export async function mockSnapshot(page: Page): Promise<MockSnapshot> {

@@ -1113,7 +1113,7 @@ ACCEPTED — Implementation `b70aa24` was reviewed from clean detached HEAD. Ind
 
 - Phase: B
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: P1 / High
 - Dependencies: Gate A PASS (`AC-GATE-001`), TASK-B-001 ACCEPTED
 - BASE: `b6f30912e5c4f592d8abb7cd2c73a00bdeaa4e8d` (`origin/main` at authorization)
@@ -1180,7 +1180,7 @@ npx playwright test
 
 ### Execution Result
 
-READY — Contract reissued from clean `origin/main@b6f30912e5c4f592d8abb7cd2c73a00bdeaa4e8d`. No TASK-B-002 implementation or acceptance is claimed by this governance-only commit.
+IMPLEMENTED — Codex Implementation Pass completed on the formally authorized contract HEAD `58c01a984358d55f94fd3bd315117015c93a9465`. Dynamic ISO-code region options, scoped aggregation, combined filtering, invalid-selection cleanup, responsive StatsBar rendering, Node tests and Playwright coverage are implemented. All six required verification commands exited `0`; evidence is under `.agent-work/evidence/tests/TASK-B-002/`. This is not an acceptance decision; an independent Verification Pass remains required.
 
 ## TASK-B-003：保证 TMDB、表单及数据往返兼容
 
