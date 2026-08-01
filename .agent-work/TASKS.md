@@ -1204,6 +1204,7 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
 - Expected Files:
   - `src/shared/lib/classification.ts`
   - `src/features/settings/components/SettingsModal.tsx`
+  - `src/features/watchlist/components/Header.tsx` — 仅允许给现有设置按钮增加 `aria-label="设置"` 与 `title="设置"`；不得修改按钮行为、布局、样式、图标、事件处理或其他 Header 控件。
   - `src/shared/lib/__tests__/classification.test.mjs`
   - `src/shared/lib/__tests__/importValidation.test.mjs`
   - `tests/b003-roundtrip.spec.ts`（唯一允许新增的测试文件）
@@ -1228,7 +1229,7 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
   - 使用或移植 `codex/phase-b-complete`、`dc8308f`、`0f44b76` 的提交或未提交修改；不得 cherry-pick、merge、复制整文件或将其作为 BASE。
   - push、创建 PR、合并到 `main`。
 - Change Budget:
-  - 当前 Implementation Pass 的业务修改预算仅为 2 个 Expected Files；Conditional Files 的修改预算为 0。只有后续合同修订提交明确提升后，才能重新计算预算并开始新的 Implementation Pass。
+  - 当前 Implementation Pass 的业务修改预算最多为 3 个 Expected Files；其中 `Header.tsx` 最多只能产生现有设置按钮的 `aria-label="设置"` 与 `title="设置"` 两项可访问名称变更。Conditional Files 的修改预算为 0；只有后续合同修订提交明确提升后，才能重新计算预算并继续。
   - 测试/夹具仅限上列 4 个路径，其中只允许新增 `tests/b003-roundtrip.spec.ts`；非治理、非证据 diff 总变更不超过 500 行（增删合计）。
   - 不允许新增生产模块、重命名/移动文件、批量格式化或扩大公共 API；超预算必须停止并提交合同变更请求。
 
@@ -1271,7 +1272,7 @@ npm ci
 
 #### B. Expected implementation
 
-- 先新增/更新 Expected Files 中明确列出的测试/夹具，再仅修改两个 Expected business files：`src/shared/lib/classification.ts` 与 `src/features/settings/components/SettingsModal.tsx`。本阶段不得修改任何 Conditional File。
+- 先新增/更新 Expected Files 中明确列出的测试/夹具，再仅修改三个 Expected business files：`src/shared/lib/classification.ts`、`src/features/settings/components/SettingsModal.tsx` 与受上述两属性限制的 `src/features/watchlist/components/Header.tsx`。本阶段不得修改任何 Conditional File。
 - Expected Files 实现完成后，只运行以下针对 Expected Files 的最小测试；任一失败立即停止并按普通 Expected implementation 失败处理，不得借此激活 Conditional Files：
 
 ```powershell
@@ -1279,9 +1280,21 @@ node --test --test-name-pattern="B003 expected:" src/shared/lib/__tests__/classi
 npx playwright test tests/b003-roundtrip.spec.ts --grep "@expected-settings-modal"
 ```
 
+##### Authorized recovery from the recorded Expected Playwright failure
+
+- 已记录失败：`.agent-work/evidence/tests/TASK-B-003/03-expected-settings-modal.stdout.txt`，exit `1`。页面正常加载，但 `getByRole('button', { name: '设置' })` 在进入 SettingsModal 之前超时；快照中的设置按钮为无名称 button。该失败不是 SettingsModal 业务逻辑失败，不是 Conditional File 激活依据，只归因于现有 Header 设置按钮缺少可访问名称。
+- 本修订提交允许原 Implementation Pass 从该失败点恢复，是 Preflight 干净工作区门禁的单次、定向延续例外；当前已授权但未提交的 B-003 实现、测试和证据必须原样保留，不得 clean、stash、reset、覆盖或纳入本合同提交。不得重复 `npm ci`。
+- 恢复前只读确认本任务相关残留进程为 `0` 且端口 `4177` 监听为 `0`；任一不为 `0` 立即停止。随后只能对现有 Header 设置按钮增加 `aria-label="设置"` 与 `title="设置"`，再执行：
+
+```powershell
+npx playwright test tests/b003-roundtrip.spec.ts --grep "@expected-settings-modal"
+```
+
+- 重跑通过后才可进入 C. Conditional diagnostics；重跑失败则保存完整输出和退出码并立即停止。首次 exit `1` 不得跳过、删除、覆盖或改写，最终报告必须同时列出首次失败与修正后重跑结果。
+
 #### C. Conditional diagnostics
 
-- 只有 B 阶段两个 Expected business files 已按合同完成且最小测试全部通过后，才能依次运行以下最小诊断，用于回答“在 `classification.ts` 和 `SettingsModal.tsx` 已修正后，RecordForm/importValidation/webdav/useWatchList 是否仍然丢字段？”：
+- 只有 B 阶段三个 Expected business files 已按合同完成且最小测试全部通过后，才能依次运行以下最小诊断，用于回答“在 `classification.ts` 和 `SettingsModal.tsx` 已修正后，RecordForm/importValidation/webdav/useWatchList 是否仍然丢字段？”：
 
 ```powershell
 node --test --test-name-pattern="B003 conditional: import normalization" src/shared/lib/__tests__/importValidation.test.mjs

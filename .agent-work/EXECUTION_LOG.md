@@ -690,3 +690,13 @@
 - Conditional timing: diagnostics now ask whether RecordForm/importValidation/webdav/useWatchList still lose fields after both Expected business files are corrected. Failure preserves full output/exit code, leaves Conditional Files untouched and TASK-B-003 `READY`, then stops for a signer-authored promotion commit.
 - Install evidence: `npm ci` runs exactly once in Preflight. Final verification names the successful Preflight log as an install prerequisite and its actual command sequence begins with the classification Node test.
 - Scope: contract ordering correction only. No business source, test, dependency, build file, Codex Review or isolated-branch content was modified; no Implementation Pass was executed, pushed or opened as a PR.
+
+### TASK-B-003 settings-button accessibility contract revision
+
+- Date/revision base: 2026-08-01, `458e67459c5855d8630921c51b47f0e71d1574e0`; governance-only follow-up, without amend.
+- Recorded failure: `.agent-work/evidence/tests/TASK-B-003/03-expected-settings-modal.stdout.txt` exited `1`. The page loaded, but Playwright timed out before SettingsModal while locating `getByRole('button', { name: '设置' })`; the button snapshot had no accessible name.
+- Attribution: this is a missing accessible name on the existing Header settings button, not a SettingsModal business-logic failure and not evidence for activating any Conditional File.
+- Promotion: `src/features/watchlist/components/Header.tsx` is added as the third Expected business file, limited exactly to `aria-label="设置"` and `title="设置"` on that button. No behavior, layout, style, icon, event handler, other Header control or B-001/B-002 UI change is authorized.
+- Resume gate: preserve the current authorized uncommitted implementation/test/evidence; do not repeat `npm ci`. After confirming zero related residual processes and zero port-4177 listeners, apply only the two Header attributes and rerun the single `@expected-settings-modal` command. PASS may proceed to Conditional diagnostics; FAIL stops immediately.
+- Evidence retention: the original exit `1` and the rerun result must both remain in the final report; the first failure may not be skipped, erased or overwritten.
+- Scope: contract revision only. Existing business, test and evidence changes were not modified or staged; no test was run, no Implementation Pass was resumed, and no push or PR was performed.
