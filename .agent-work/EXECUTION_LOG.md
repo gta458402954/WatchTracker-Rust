@@ -589,3 +589,15 @@
 - Independent runtime: the second-build EXE launched from `D:\Project\Projects\WatchTracker-A010-Verify-Smoke`, rendered the real empty WatchTracker main interface, resolved its adjacent portable data root, and closed with zero residual process and zero port-4177 listener.
 - Final boundary: all three real user database SHA-256/length/UTC-mtime tuples still match the task pre-test snapshot. Verification worktree business content is clean; `Cargo.toml` has only stat/EOL noise with a blob identical to HEAD.
 - Final status: TASK-A-010 ACCEPTED; AC-A-017 PASS; AC-GATE-001 PASS. Phase A is accepted. Phase B remains unstarted and requires separate authorization.
+
+---
+
+## Post-Gate-A residual hardening
+
+- Date/base: 2026-08-01, `codex/residual-hardening` from `39e8faa`.
+- Dependency security: lockfile-only remediation; clean install audit now reports 0 vulnerabilities. No declared dependency range changed.
+- Tooling compatibility: replaced Vite config `__dirname` usage with ESM URL resolution; the Vite 8.2.0 config-loader warning is gone.
+- Verification: typecheck/lint/build PASS; Node 14/14; Playwright 3/3; rustfmt/strict Clippy PASS; Rust 29/29; two Tauri Release builds PASS.
+- Delivery boundary: consecutive EXE/MSI/NSIS hashes differ and all artifacts remain unsigned. Byte-level reproducibility needs a separately defined release-engineering contract; signing needs an approved certificate and secret flow.
+- Repository boundary: content-identical Cargo stat/EOL noise was cleared by index refresh only. No Phase B or DEFERRED business work, user database access, push or remote CI claim.
+- Evidence: `.agent-work/evidence/review/RESIDUAL-HARDENING.md`.

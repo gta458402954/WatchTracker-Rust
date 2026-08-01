@@ -87,3 +87,12 @@
 ## 12. 最终建议
 
 阶段 A 验收结论为 PASS，恢复后的 Windows 应用已达到当前定义的稳定基线。Gate A 的前置条件已满足，可以由 Owner 单独签发 Phase B；本结论不自动授权或启动任何 Phase B 业务修改。
+
+## 13. Gate A 后残余收尾（2026-08-01）
+
+- npm 锁文件已在不改变 `package.json` 声明范围的前提下更新，干净安装后的 `npm audit` 从 1 low / 3 high 降为 0。
+- Vite ESM 配置已移除对 `__dirname` 的依赖，Vite 8.2.0 的原生配置加载兼容警告已消失；前端、Playwright、Rust 与两轮 Tauri Release 构建均通过。
+- `Cargo.toml` 内容一致的 stat/EOL 噪声已通过索引刷新消除，没有重写或提交该文件。
+- 两轮受控打包再次证明功能构建可重复，但 EXE/MSI/NSIS 哈希均不同，NSIS 大小相差 323 字节；字节级可复现仍不是当前保证。
+- 三项 Windows 产物仍为 `NotSigned`，签名需要 Owner 提供代码签名证书及发布授权；远端 CI 仍需经授权 push/PR 后才能产生结果。
+- 完整证据见 `.agent-work/evidence/review/RESIDUAL-HARDENING.md`。Phase B 与 DEFERRED 均未启动。
