@@ -519,6 +519,24 @@
 - Result: NOT RUN
 - Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
 
+## Gate B
+
+### AC-GATE-B：阶段 B 集成分支具备最终合并资格
+
+- Requirement: REQUEST §11 阶段 B 完成定义及 Phase B integration branch policy。
+- Priority: Must
+- Verification Type: Automated / Inspection
+- Preconditions: TASK-B-001~B-005 均已由独立 Verification Pass 标记 `ACCEPTED`，AC-B-001~008 均为 PASS，地区专项报告已完成。
+- Verification Steps:
+  1. 核对 `codex/phase-b-integration` 从受保护 `main@b6f3091` 连续包含每个已验收 B 任务，且不包含隔离分支 `dc8308f`/`0f44b76` 的整体提交或未归属修改。
+  2. 核对最终 Phase B PR 的文件范围、任务提交链、地区报告、证据索引和所有本地强制门禁。
+  3. 核对 GitHub PR 的 Frontend/Playwright、Rust 和 Windows Tauri bundle 检查均通过；尚未运行的远端检查不得视为 PASS。
+  4. 核对真实用户数据库隔离、最终进程清理、工作区状态及未解决问题。
+- Expected Result: Phase B integration 分支可追溯、无未验收任务、无隔离分支污染、全部本地与远端门禁通过，具备合并 `main` 的资格。
+- Required Evidence: B-001~B-005 review、`.agent-work/ACCEPTANCE_REPORT_REGION.md`、最终 PR 检查、CI 链接/结果、数据与进程证据、最终 Git 清单。
+- Result: NOT RUN
+- Evidence: TASK-B-001/B-002 are accepted. TASK-B-003~B-005, the final PR and remote CI remain pending.
+
 ## 最终综合报告
 
 ### AC-FINAL-001：两阶段综合验收报告完整
@@ -526,7 +544,7 @@
 - Requirement: 完成定义 B.9。
 - Priority: Must
 - Verification Type: Inspection
-- Preconditions: 阶段 A 与 B 报告均完成。
+- Preconditions: 阶段 A 与 B 报告均完成，AC-GATE-B 已 PASS。
 - Verification Steps:
   1. 汇总任务、标准、环境限制、未解决问题和证据。
   2. 核对最终结论不把 NOT RUN/BLOCKED 算作 PASS。

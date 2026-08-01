@@ -652,3 +652,12 @@
 - AC disposition: AC-B-002 PASS. B-002 portions of AC-B-003/004 are verified; their real import/restore/WebDAV and final full-matrix portions remain open for B-003/B-004. AC-B-007 remains NOT RUN.
 - Final status: TASK-B-002 ACCEPTED. This does not authorize TASK-B-003 or later Phase B work.
 - Review: `.agent-work/evidence/review/TASK-B-002-CODEX-REVIEW.md`.
+
+### Phase B integration branch establishment
+
+- Date: 2026-08-01.
+- Canonical branch/worktree: `codex/phase-b-integration` at `D:\Project\Projects\WatchTracker-Phase-B-Integration`.
+- Accepted anchor: `d56686193a3c48af540ab98887f27ac8ab11f0cb` (`TASK-B-002` review acceptance).
+- Strategy: B-003~B-005 will be separately authorized and accepted in sequence from the latest accepted integration HEAD; their attributable commits remain on one integration line, followed by one final Phase B PR to `main`.
+- Quarantine: `codex/phase-b-complete`, commits `dc8308f`/`0f44b76`, and their dirty worktrees remain reference-only and were not copied or merged.
+- Scope: governance documentation only. No B-003 implementation, product source, dependency, build, application, process or database operation was performed.

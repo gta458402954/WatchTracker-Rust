@@ -21,6 +21,8 @@ Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；
 - `.agent-work/schemas/*`
 - `.agent-work/REVIEW_FEEDBACK.md`
 - `.agent-work/ACCEPTANCE_CRITERIA.md`
+- `.agent-work/ACCEPTANCE_REPORT_REGION.md`
+- `.agent-work/ACCEPTANCE_REPORT.md`
 - Markdown 中 `OWNER:CODEX` 标记区域
 - 正式任务状态与验收结论
 
@@ -58,3 +60,10 @@ Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；
 - `TASK-B-002`: Owner `Codex`; Status `ACCEPTED`; implementation `0f15a84` passed an independent clean detached Verification Pass.
 - `TASK-B-003`~`TASK-B-005`: not authorized for implementation; remain `BLOCKED` until their dependencies are accepted and Codex separately reassigns them.
 - Antigravity remains paused. Future Phase B Implementation Passes may update their task to `IMPLEMENTED` at most; only an independent Verification Pass may mark a task `ACCEPTED`.
+
+## Phase B integration ownership
+
+- Canonical integration branch: `codex/phase-b-integration`, created from accepted TASK-B-002 review `d56686193a3c48af540ab98887f27ac8ab11f0cb`.
+- `codex/phase-b-complete` and its worktrees are quarantined reference material only; no commit or uncommitted hunk from them has authority to enter the integration branch without a later task contract and independent review.
+- Each remaining B task receives its own task branch/worktree from the latest accepted integration HEAD. Its implementation and review commits remain separate, and only an `ACCEPTED` task may advance the integration branch.
+- No Phase B branch is merged to `main` before TASK-B-005, AC-B-001~008, the region report and AC-GATE-B are complete. Push/PR/merge still require the normal user-authorized external workflow.

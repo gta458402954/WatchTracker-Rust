@@ -10,6 +10,7 @@
 - Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 与 `TASK-B-002` 已验收；其余 Phase B 任务尚未开放。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
+- Phase B 后续工作以 `codex/phase-b-integration` 为唯一集成线；B-003~B-005 必须从最新已验收 integration HEAD 逐项签发，整个 Phase B 完成并通过 Gate B 后才向 `main` 提交一次完整 PR。
 
 ## 任务总览与依赖图
 
@@ -28,9 +29,17 @@ Gate R ─ A-001
 └─ A-005 ───────────────┘                 ├─ A-008 ─┐
                                           └─ A-009 ─┼─ A-010 ─ Gate A
                                                      │
-Gate A ─ B-001 ─┬─ B-002 ─┐                         │
-                └─ B-003 ─┴─ B-004 ─ B-005 ─ Gate B
+Gate A ─ B-001 ─ B-002 ─ B-003 ─ B-004 ─ B-005 ─ Gate B ─ Final Report ─ main
 ```
+
+### Phase B integration branch policy
+
+- Canonical worktree: `D:\Project\Projects\WatchTracker-Phase-B-Integration`.
+- Canonical branch: `codex/phase-b-integration`; initial accepted anchor: `d56686193a3c48af540ab98887f27ac8ab11f0cb`.
+- `main@b6f30912e5c4f592d8abb7cd2c73a00bdeaa4e8d` remains the protected Phase B upstream base until the final Phase B PR; it is not the direct BASE for B-003 or later tasks.
+- Each remaining task is serialized: create `codex/task-b-00N` from the latest accepted integration HEAD, commit its contract, run a separate Implementation Pass, run an independent Verification Pass, then advance the integration branch only after `ACCEPTED`.
+- Task commits must remain attributable by task. Do not squash several B tasks into one implementation commit and do not reuse `codex/phase-b-complete`, `dc8308f`, `0f44b76` or their dirty worktrees as a base.
+- No PR to `main` is opened until B-005 local evidence and region review are complete. The final Phase B PR must pass remote CI; AC-GATE-B and the final report are recorded before merge.
 
 ---
 
@@ -1188,7 +1197,7 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
 - Owner: Antigravity
 - Status: BLOCKED
 - Priority: P1 / High
-- Dependencies: AC-GATE-001, TASK-B-001
+- Dependencies: AC-GATE-001, TASK-B-001, TASK-B-002
 - Acceptance Criteria: AC-B-005, AC-B-006
 - Expected Files:
   - `src/shared/lib/classification.ts`
@@ -1225,7 +1234,7 @@ npm run typecheck
 
 ### Execution Result
 
-Blocked by Gate A
+BLOCKED — Gate A and TASK-B-001/B-002 are complete, but implementation remains unauthorized until Codex separately reissues this contract from the latest accepted `codex/phase-b-integration` HEAD and changes the Owner/Status.
 
 ## TASK-B-004：建立地区专项单元、组件与 E2E 矩阵
 
@@ -1267,7 +1276,7 @@ npm run lint
 
 ### Execution Result
 
-Blocked by Gate A
+BLOCKED — awaits TASK-B-003 acceptance and a separate Codex reissue from the latest accepted `codex/phase-b-integration` HEAD; no implementation is authorized.
 
 ## TASK-B-005：执行地区全量回归并提交验收材料
 
@@ -1276,7 +1285,7 @@ Blocked by Gate A
 - Status: BLOCKED
 - Priority: P1 / Critical
 - Dependencies: AC-GATE-001, TASK-B-004
-- Acceptance Criteria: AC-B-008, AC-FINAL-001
+- Acceptance Criteria: AC-B-008
 - Expected Files:
   - `.agent-work/TASKS.md`
   - `.agent-work/EXECUTION_LOG.md`
@@ -1284,7 +1293,7 @@ Blocked by Gate A
 
 ### Objective
 
-执行地区专项和全项目回归，整理证据交给 Codex 独立验收；不得自行填写 PASS 报告。
+执行地区专项和全项目回归，整理证据交给 Codex 独立验收；不得自行填写 PASS 报告。AC-FINAL-001 在 B-005 验收、最终 PR 检查和 AC-GATE-B 完成后由 Codex 单独处理。
 
 ### Implementation Requirements
 
@@ -1312,7 +1321,7 @@ cargo test
 
 ### Execution Result
 
-Blocked by Gate A
+BLOCKED — awaits TASK-B-004 acceptance and a separate Codex reissue from the latest accepted `codex/phase-b-integration` HEAD; no regression run or report conclusion is authorized.
 
 ---
 

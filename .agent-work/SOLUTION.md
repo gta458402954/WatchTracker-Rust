@@ -216,5 +216,6 @@ TASK-B-002 接线时内部选择使用 `CountryCode | 'all'`。App memoize media
 5. TASK-A-001 在恢复分支建立 Wave 0~5 迁移基线；后续 A 任务只选择性移植当前快照中的必要实现。
 6. TASK-A-004 已按旧治理方案完成统一路径；用户确认只有可执行文件旁预先存在 `data/` 时才进入便携模式。
 7. TASK-A-004 `ACCEPTED` 后切换到简化流程。TASK-A-005 及后续任务由 Codex Implementation Pass 实施并正常提交，再由独立 Verification Pass 复核；不再要求 JSON 合同、Runner、Safe Commit、Receipt 或 Attestation。
-8. Gate A 已通过；B-001 已验收，B-002 已从 `origin/main@b6f3091` 单独重新签发为 READY。B-003~B-005 继续保持 BLOCKED，必须按依赖另行签发。
-9. 阶段 B 完成后由 Codex独立验收并生成地区报告；两阶段通过后才生成综合报告。
+8. Gate A 已通过；B-001 与 B-002 已验收。以 B-002 验收提交 `d566861` 创建 `codex/phase-b-integration`，后续 B-003~B-005 从最新已验收 integration HEAD 串行签发、实施和独立验收，不再从旧 `origin/main@b6f3091` 并行起步。
+9. 每个 B 任务保持独立合同、Implementation 提交和 Verification 提交；只有 `ACCEPTED` 的任务才能推进 integration。隔离的 `codex/phase-b-complete` 及其提交/工作区只作审计参考，不得作为 BASE 或整体迁移。
+10. B-005 完成本地全量证据和地区报告后，创建唯一的 Phase B PR；远端 CI、AC-GATE-B 和综合报告完成后才合并到 `main`。
