@@ -726,3 +726,16 @@
 - The first targeted Playwright run failed because `locator('select')` matched four controls. It was corrected to the banner combobox; the rerun passed 5/5.
 - Final implementation checks: `npm ci` audit 0; Node 36/36; Playwright 16/16; typecheck, lint, build and `git diff --check` PASS.
 - No real database, credential, external service or desktop application was accessed; no production file, dependency, mock fixture or quarantined branch content was used.
+
+---
+
+## 2026-08-01 — TASK-B-005 Implementation Pass
+
+- BASE/contract: `15c4739`; branch/worktree: `codex/task-b-005` / `D:\Project\Projects\WatchTracker-B005`.
+- Fresh install reported audit 0. Frontend build, typecheck and lint passed; Node passed 36/36; Playwright passed 16/16.
+- Rust `fmt --check`, clippy with warnings denied and locked tests passed; Rust tests passed 29/29.
+- Windows Tauri release build produced EXE, MSI and NSIS artifacts; hashes and sizes are recorded in `.agent-work/evidence/builds/TASK-B-005/artifacts.md`.
+- Copied the newly built EXE to `D:\Project\Projects\WatchTracker-B005-Smoke`, pre-created a new adjacent empty `data/`, and launched only that copy.
+- Real-window smoke passed: empty startup, add `法国测试影片` with content tag `法国`, dynamic `法国 1` option, active France filter retaining the record, and clean exit. Screenshots are committed under `.agent-work/evidence/screenshots/TASK-B-005/`.
+- The app created only the isolated `data/watchtracker.db`, `data/app.log`, `data/backups/` and `data/posters/`. No real user database, credentials, TMDB or WebDAV endpoint was accessed; no residual copied-app process remained.
+- Status: IMPLEMENTED, not accepted. AC-B-008, the region report, Gate B and final report remain reviewer-owned and NOT RUN pending an independent clean Verification Pass.

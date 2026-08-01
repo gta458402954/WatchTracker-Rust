@@ -1417,7 +1417,7 @@ ACCEPTED — Test-only implementation `c07b985` was independently reviewed from 
 
 - Phase: B
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: P1 / Critical
 - Dependencies: AC-GATE-001 PASS, TASK-B-001~TASK-B-004 ACCEPTED
 - BASE: `62cdd53` (`codex/phase-b-integration` after independent B-004 acceptance)
@@ -1474,7 +1474,7 @@ cargo test --locked
 
 ### Execution Result
 
-READY — separately authorized by the user after TASK-B-004 independent acceptance. Implementation must start from `codex/phase-b-integration@62cdd53`; it may collect evidence and end at `IMPLEMENTED` only.
+IMPLEMENTED — From clean `codex/task-b-005@15c4739`, the Implementation Pass completed a fresh audit-zero install; frontend build/typecheck/lint; Node 36/36; Playwright 16/16; Rust fmt/clippy/test 29/29; Windows Tauri EXE/MSI/NSIS build; and an isolated portable desktop smoke. The release EXE started beside a newly created empty `data/`, created a single record tagged `法国`, immediately exposed the dynamic `法国 1` option, retained the record under that filter, and exited with no residual process. Only `D:\Project\Projects\WatchTracker-B005-Smoke\data\watchtracker.db` was created; no real user database, credential, TMDB or WebDAV endpoint was accessed. Evidence is under `.agent-work/evidence/{tests,builds,screenshots}/TASK-B-005/`. This is implementation evidence only; AC-B-008, the region report and Gate B remain NOT RUN pending an independent clean Verification Pass.
 
 ---
 
