@@ -661,3 +661,14 @@
 - Strategy: B-003~B-005 will be separately authorized and accepted in sequence from the latest accepted integration HEAD; their attributable commits remain on one integration line, followed by one final Phase B PR to `main`.
 - Quarantine: `codex/phase-b-complete`, commits `dc8308f`/`0f44b76`, and their dirty worktrees remain reference-only and were not copied or merged.
 - Scope: governance documentation only. No B-003 implementation, product source, dependency, build, application, process or database operation was performed.
+
+---
+
+## TASK-B-003 contract authorization
+
+- Date/base: 2026-08-01, `codex/task-b-003` from clean `codex/phase-b-integration@6202f85d86a6e0b8611e6135cec479306a8768fc`; `d566861` is an ancestor.
+- Preconditions: TASK-B-001 and TASK-B-002 are `ACCEPTED`; TASK-B-003 was `BLOCKED` before this authorization. Owner is reassigned to Codex and status to `READY`; Implementation and independent Verification remain separate passes.
+- BASE audit: the actual implementation uses `classification.ts`, `RecordForm.tsx`, `SettingsModal.tsx`, `importValidation.ts`, `webdav.ts`, Node native `*.test.mjs` and Playwright. The old contract's `tmdbMapper.ts`, `SettingsToolsTab.tsx`, `useWatchListStore.ts` and Vitest-style command do not match BASE and were removed.
+- Known contract targets: TMDB country arrays currently flow through `classifyTmdb`; SettingsModal contains local JSON import/export, WebDAV import/conflict restore and batch metadata update. Conditional source paths require named failing evidence before modification.
+- Quarantine: `codex/phase-b-complete`, `dc8308f`, `0f44b76` and their dirty worktrees were not inspected, copied, merged or used as BASE. Any future candidate idea must be documented only as an idea/risk and reimplemented from this BASE.
+- Scope: governance authorization only. No business source, test, dependency, build file, application process, external service or database was modified or started; no implementation or AC PASS is claimed.

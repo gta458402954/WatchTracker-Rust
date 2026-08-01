@@ -461,6 +461,7 @@
 ### AC-B-005：TMDB 多国保存和自定义标签保护
 
 - Requirement: FR-05。
+- Task Allocation: TASK-B-003 负责 BASE 现有 `classifyTmdb`、RecordForm 与 SettingsModal 批量元数据路径的定向实现/验证；B-004 负责后续完整地区测试矩阵。Implementation Pass 不得把定向测试结果写成整个 AC PASS。
 - Priority: Must
 - Verification Type: Automated / Integration
 - Preconditions: Gate A 通过。
@@ -469,13 +470,14 @@
   2. 新增/更新保存全部规范化代码。
   3. 更新自动地区标签前后对比用户自定义非地区标签。
 - Expected Result: `originCountry` 不丢多国代码；筛选用代码；自定义标签不被覆盖或误删；不修改 TMDB 搜索接口。
-- Required Evidence: mapper/classification/store 测试日志。
+- Required Evidence: BASE 实际 Node 原生 classification 测试、定向 Playwright 表单保存/更新日志及标签 before/after；不存在的 mapper/store 测试不得作为要求。
 - Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Evidence: TASK-B-003 is authorized from `codex/phase-b-integration@6202f85d86a6e0b8611e6135cec479306a8768fc` but not implemented or independently verified. Result remains NOT RUN.
 
 ### AC-B-006：旧数据、导入恢复同步兼容
 
 - Requirement: FR-06、NFR 6.2。
+- Task Allocation: TASK-B-003 负责旧记录分类优先级，以及本地 JSON 导入/导出、WebDAV payload 合并/下载和冲突恢复的字段保真定向验证；B-004 负责综合 E2E 矩阵。mock 往返不得声明为真实桌面或真实 WebDAV 服务验证。
 - Priority: Must
 - Verification Type: Automated / Integration
 - Preconditions: Gate A 通过，旧标签/UK/混合数据夹具。
@@ -484,9 +486,9 @@
   2. 验证 originCountry 有有效值时不读取冲突旧标签。
   3. 通过导入、备份恢复和同步输入旧记录，核对相同分类且 `originCountry` 不丢。
 - Expected Result: 无破坏性迁移，新旧混合结果可预测一致。
-- Required Evidence: Vitest、Rust/IPC 或 E2E 集成日志。
+- Required Evidence: BASE 实际 Node 原生 import 测试、定向 Playwright mock 日志，以及如执行则明确隔离的桌面/本地回环 WebDAV stub 日志；各证据层级必须分别标注。
 - Result: NOT RUN
-- Evidence: Gate A is PASS; the Phase B task has not yet been separately authorized or executed.
+- Evidence: TASK-B-003 is authorized but has not run an Implementation or independent Verification Pass. No partial result is promoted to AC PASS; Result remains NOT RUN.
 
 ### AC-B-007：地区专项自动化与界面流程完整
 

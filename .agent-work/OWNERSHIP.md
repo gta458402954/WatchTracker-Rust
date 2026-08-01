@@ -58,7 +58,8 @@ Receipt 和 Attestation 是 `TASK-A-004` 及以前任务的历史治理记录；
 
 - `TASK-B-001`: Owner `Codex`; Status `ACCEPTED`; implementation `b70aa24` passed an independent clean detached Verification Pass.
 - `TASK-B-002`: Owner `Codex`; Status `ACCEPTED`; implementation `0f15a84` passed an independent clean detached Verification Pass.
-- `TASK-B-003`~`TASK-B-005`: not authorized for implementation; remain `BLOCKED` until their dependencies are accepted and Codex separately reassigns them.
+- `TASK-B-003`: Owner `Codex`; Status `READY`; BASE `6202f85d86a6e0b8611e6135cec479306a8768fc`; branch/worktree `codex/task-b-003` / `D:\Project\Projects\WatchTracker-B003`. Authorization is limited to the exact expected/conditional paths and activation rules in `TASKS.md`.
+- `TASK-B-004`~`TASK-B-005`: not authorized for implementation; remain `BLOCKED` until their dependencies are accepted and Codex separately reassigns them.
 - Antigravity remains paused. Future Phase B Implementation Passes may update their task to `IMPLEMENTED` at most; only an independent Verification Pass may mark a task `ACCEPTED`.
 
 ## Phase B integration ownership

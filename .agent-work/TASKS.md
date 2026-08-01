@@ -7,7 +7,7 @@
 `DRAFT`、`READY`、`IN_PROGRESS`、`IMPLEMENTED`、`REVIEWING`、`CHANGES_REQUESTED`、`BLOCKED`、`ACCEPTED`
 
 - `TASK-R-001`~`TASK-R-005` 已由 Codex 独立复验并 `ACCEPTED`。R-004 已定位 build 首坏提交 `29ea3a4`，并选定 `6fcbb1e` 为最终恢复基线；R-005 已完成恢复分支、隔离数据及用户 UI 验证。
-- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 与 `TASK-B-002` 已验收；其余 Phase B 任务尚未开放。
+- Gate R 与 Gate A 均已 PASS；`TASK-A-001`~`TASK-A-010` 均已由 Codex 独立验收。`TASK-B-001` 与 `TASK-B-002` 已验收；`TASK-B-003` 已单独签发为 READY，B-004/B-005 尚未开放。
 - Antigravity 自 2026-07-28 起暂停使用。现有 Owner 为 Antigravity 的未完成任务不得执行，必须先由 Codex 重新签发合同并明确改派；Codex 实施与验收须分成 Implementation Pass 和独立 Verification Pass。
 - Phase B 在 AC-GATE-001 通过前保持 BLOCKED，不得由执行者自行解锁。
 - Phase B 后续工作以 `codex/phase-b-integration` 为唯一集成线；B-003~B-005 必须从最新已验收 integration HEAD 逐项签发，整个 Phase B 完成并通过 Gate B 后才向 `main` 提交一次完整 PR。
@@ -1194,47 +1194,95 @@ ACCEPTED — Implementation `0f15a840b6246479e6890d8de551e69f5ca4d27c` was indep
 ## TASK-B-003：保证 TMDB、表单及数据往返兼容
 
 - Phase: B
-- Owner: Antigravity
-- Status: BLOCKED
+- Owner: Codex
+- Status: READY
 - Priority: P1 / High
-- Dependencies: AC-GATE-001, TASK-B-001, TASK-B-002
-- Acceptance Criteria: AC-B-005, AC-B-006
+- Dependencies: AC-GATE-001 PASS, TASK-B-001 ACCEPTED, TASK-B-002 ACCEPTED
+- BASE: `6202f85d86a6e0b8611e6135cec479306a8768fc` (`codex/phase-b-integration` at authorization)
+- Acceptance Criteria: AC-B-005, AC-B-006 only; neither criterion may be marked PASS by the Implementation Pass.
+- Execution Policy: Codex simplified workflow. The Implementation Pass may update TASK-B-003 to `IMPLEMENTED` at most; only an independent Verification Pass from a clean HEAD/worktree may mark it `ACCEPTED` or update AC-B-005/006 results.
 - Expected Files:
   - `src/shared/lib/classification.ts`
-  - `src/shared/lib/tmdbMapper.ts`
-  - `src/features/watchlist/components/RecordForm.tsx`
-  - `src/features/settings/components/SettingsToolsTab.tsx`
-  - `src/store/useWatchListStore.ts`
-  - `src/shared/lib/webdav.ts`
-  - 相关测试
+  - `src/features/settings/components/SettingsModal.tsx`
+  - `src/shared/lib/__tests__/classification.test.mjs`
+  - `src/shared/lib/__tests__/importValidation.test.mjs`
+  - `tests/b003-roundtrip.spec.ts`（唯一允许新增的测试文件）
+  - `tests/fixtures/mockIpc.ts`
+  - `.agent-work/evidence/tests/TASK-B-003/*`
+  - `.agent-work/TASKS.md` — 仅允许更新 TASK-B-003 的 Status、Execution Result 和 Implementation 记录。
+  - `.agent-work/OWNERSHIP.md` — 仅允许更新 TASK-B-003 当前阶段状态。
+  - `.agent-work/EXECUTION_LOG.md` — 仅允许追加 TASK-B-003 Implementation Pass 的事实摘要。
+- Conditional Files（必须由下列客观失败证据激活，并在 Execution Log 写明测试名、失败输出与边界；不得仅因“实现方便”修改）:
+  - `src/features/watchlist/components/RecordForm.tsx` — 仅当定向 Playwright 测试证明，在 `classification.ts` 修正后，现有电影、剧集、季或编辑保存分支仍丢失/截断规范化 `originCountry` 或覆盖自定义标签时。
+  - `src/shared/lib/importValidation.ts` — 仅当 `importValidation.test.mjs` 的旧记录/多国往返用例证明 `normalizeImportedRecord(s)` 改写或丢失 `originCountry`/自定义标签时。
+  - `src/shared/lib/webdav.ts` — 仅当定向 payload 测试证明现有 parse/merge/GET/PUT 路径改写或丢失 `originCountry`/自定义标签时；不得为真实外部服务适配而激活。
+  - `src/features/watchlist/hooks/useWatchList.ts` — 仅当 WebDAV payload 已正确而定向测试仍证明同步合并或冲突恢复的 hook 边界丢失上述字段时。
+- Forbidden Changes:
+  - TASK-B-004、TASK-B-005、AC-B-007/008、Gate B 或最终报告的实现/验收；B-004/B-005 状态必须保持 `BLOCKED`。
+  - 地区筛选 UI、`src/app/App.tsx`、`StatsBar.tsx`、`filtering.ts`、`countryNames.ts`，或重新实现/重构 B-001/B-002 已验收逻辑。
+  - 数据库 schema、migration、真实数据清洗，以及任何 Rust 业务代码。若现有 IPC 无法满足 AC，只记录证据并停止，请求重新签发，不得自行扩权。
+  - `package.json`、`package-lock.json`、依赖、测试框架、构建配置和生成产物。
+  - TMDB 搜索接口/交互、凭据行为、WebDAV 协议扩展、同步算法重构、顺便重构/格式化/修复无关问题。
+  - 接触、读取、启动、复制、哈希或清洗真实用户数据库；使用真实 TMDB/WebDAV 凭据或外部 WebDAV 服务。
+  - 使用或移植 `codex/phase-b-complete`、`dc8308f`、`0f44b76` 的提交或未提交修改；不得 cherry-pick、merge、复制整文件或将其作为 BASE。
+  - push、创建 PR、合并到 `main`。
+- Change Budget:
+  - 预期业务文件最多 2 个；条件业务文件最多激活 2 个。若需要第 5 个业务文件或任何未列出的业务文件，立即停止并请求重签合同。
+  - 测试/夹具仅限上列 4 个路径，其中只允许新增 `tests/b003-roundtrip.spec.ts`；非治理、非证据 diff 总变更不超过 500 行（增删合计）。
+  - 不允许新增生产模块、重命名/移动文件、批量格式化或扩大公共 API；超预算必须停止并提交合同变更请求。
 
 ### Objective
 
-确保电影/剧集 TMDB 多国代码完整保存，自动地区标签不误删用户标签，旧记录经导入/恢复/同步仍遵守同一分类规则。
+基于 BASE 的真实结构完成小范围兼容性闭环：电影 `production_countries` 与剧集 `origin_country` 经 B-001 规范化规则完整写入 `originCountry`；表单新增/更新和设置页批量元数据更新保留用户自定义标签，只清理可由现有国家标签/别名映射明确识别的旧系统地区标签；本地 JSON 导入/导出、WebDAV payload 合并/下载及冲突恢复不丢字段；旧标签记录、UK/GB、CN/HK/TW、多国与未映射有效代码保持兼容。BASE 不存在 `tmdbMapper.ts`、`SettingsToolsTab.tsx` 或 `useWatchListStore.ts`，不得按旧合同虚构这些入口。
 
 ### Implementation Requirements
 
-- 不修改 TMDB 搜索接口/交互。
-- 新增和更新完整保留 TMDB 返回代码并规范化；未映射代码不必注入中文 contentTags。
-- 只移除明确识别的旧系统地区标签，保留其他用户自定义标签。
-- 导入/导出/备份恢复/WebDAV payload 往返不丢 `originCountry`。
-- 不执行数据库地区迁移或清洗用户标签。
+- `classifyTmdb` 必须复用 `normalizeCountryCodes`，对电影/剧集来源数组执行 trim、大小写、UK→GB、去重和有效代码过滤，并完整保存规范化代码；不得创建第二套国家解析器。
+- `mergeContentTags` 只清理 `countryCodeOfLabel` 能明确识别的旧系统地区标签及既有系统分类标签，保留其他用户自定义标签；TMDB 未映射有效代码只进入 `originCountry`，不得伪造中文标签。
+- RecordForm 的新增、更新、电影、剧集和季路径，以及 SettingsModal 的批量元数据更新，必须使用同一分类/标签合并规则，不得以 TMDB 结果整体覆盖用户自定义标签。
+- 本地 JSON 导出后再导入、WebDAV schema v2 与旧数组 payload 的 GET/merge/PUT、云端导入和冲突记录恢复均须保持 `originCountry` 与自定义标签。mock 证据只能证明 mock 边界，不得表述为真实桌面、真实网络或真实 WebDAV 服务已验证。
+- B-003 只覆盖 AC-B-005/006 的定向兼容性证据；地区完整 E2E 矩阵、布局/筛选回归和最终综合验收留给 B-004/B-005。
+
+### Database, User-data and Process Isolation
+
+- Node 与 Playwright 验证必须使用内存夹具/mock IPC，不启动 Tauri、不访问数据库。任何桌面核验只能使用任务专属构建副本和预先创建的 executable-adjacent `data/`，根目录限定为 `D:\Project\Projects\WatchTracker-B003-TestData\<run-id>`；不得启动原始 `target/release/app.exe`，以免回退到真实 AppData。
+- WebDAV 桌面核验只能连接任务启动的 `127.0.0.1` 随机端口临时 stub，使用虚构凭据和任务专属 payload；不得连接外网或读取系统中已保存凭据。真实 WebDAV 服务验证不由 B-003 声称。
+- 不得枚举、打开或计算真实用户数据库内容/哈希。若无法证明运行时数据根目录位于上述任务目录，启动前立即停止。
+- 记录由本任务启动的 app/Node/Vite/Playwright/stub PID。每个命令结束后仅终止本任务 PID；最终确认任务 app 路径无进程且端口 `4177` 与 stub 端口无监听。禁止按进程名广泛终止用户进程。
 
 ### Verification
 
 ```powershell
-npm run test -- src/shared/lib/__tests__/tmdbMapper.test.ts src/shared/lib/__tests__/classification.test.ts src/shared/lib/__tests__/webdav.test.ts
+node --test src/shared/lib/__tests__/classification.test.mjs
+node --test src/shared/lib/__tests__/importValidation.test.mjs
+npm run test
 npm run typecheck
+npm run lint
+npm run build
+npx playwright test tests/b003-roundtrip.spec.ts
+npx playwright test
+npm run tauri build
+git diff --check
 ```
+
+命令必须从 `D:\Project\Projects\WatchTracker-B003` 顺序执行并记录开始/结束时间、退出码和完整日志。`npm run tauri build` 只生成产物；如执行桌面/回环 stub 冒烟，必须遵守上述隔离与进程清理规则。
 
 ### Required Evidence
 
-- 多国/自定义标签前后样例和测试日志。
-- 导入恢复同步往返校验摘要。
+- 测试名到 AC-B-005/006 具体步骤的映射；电影/剧集/季、新增/更新、UK→GB、CN/HK/TW、多国、重复、非法值、未映射有效代码的输入与精确输出。
+- 自定义标签与可识别旧系统地区标签的 before/after 表，证明只清理明确地区标签且非地区标签不被覆盖或误删。
+- 本地 JSON export→import、WebDAV schema v2 与旧数组 payload、同步 merge/PUT/GET、冲突恢复的脱敏字段级 before/after；mock、浏览器、隔离桌面/本地 stub 证据必须分别标注，不得互相冒充。
+- 所有验证命令原始日志、退出码、Git diff/name-status、变更预算核对、条件文件激活证据（如有）、任务 PID/端口最终清理结果，以及未访问真实用户数据库/真实凭据/外部服务的边界声明。
+
+### Stop-on-failure Rules
+
+- 任一验证命令、字段断言、构建、数据根目录检查或进程清理失败，立即停止后续步骤，保留原始日志，将状态保持 `READY` 或最多记为 `IMPLEMENTED` with failures；不得写 AC PASS、不得用后续成功覆盖失败。
+- 需要未列出文件、超过变更预算、需要 Rust/schema/migration/依赖修改，或发现现有 IPC 无法实现 AC 时，只记录最小复现与阻塞并停止，请求重新签发合同。
+- 发现工作树含任务外修改、真实用户路径可能被选中、真实凭据可能被读取、外部服务可能被调用或任务进程无法确认退出时，立即停止；不得 reset、clean、stash 或覆盖现场。
 
 ### Execution Result
 
-BLOCKED — Gate A and TASK-B-001/B-002 are complete, but implementation remains unauthorized until Codex separately reissues this contract from the latest accepted `codex/phase-b-integration` HEAD and changes the Owner/Status.
+READY — Contract reissued from clean `codex/phase-b-integration@6202f85d86a6e0b8611e6135cec479306a8768fc` after auditing the actual BASE source, Node/Playwright entry points and AC-B-005/006. No TASK-B-003 implementation or acceptance is claimed.
 
 ## TASK-B-004：建立地区专项单元、组件与 E2E 矩阵
 
