@@ -1,10 +1,19 @@
-import { useCallback, useState, useEffect } from 'react';
-import { WatchRecord } from '../../../shared/types';
+import { useCallback, useState, useEffect, useRef } from 'react';
+import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
-import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync, updateRecord as updateRecordDb } from '../../../shared/lib/database';
-import { classifyTmdb, MEDIA_TYPES, mediaTypeOf, mergeContentTags, regionsOf, TmdbMedia } from '../../../shared/lib/classification';
+import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
+import { MEDIA_TYPES, mediaTypeOf, regionsOf, type TmdbMedia } from '../../../shared/lib/classification';
+import {
+  BATCH_METADATA_FIELD_LABELS,
+  buildBatchMetadataPatch,
+  isBatchMetadataCandidate,
+  remoteIdentityKey,
+  retainMissingMetadataPatch,
+  selectTmdbMatch,
+  type BatchMetadataField,
+} from '../../../shared/lib/batchMetadata';
 import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
 
@@ -14,14 +23,33 @@ interface SettingsModalProps {
   onImport: (records: WatchRecord[]) => void | Promise<void>;
   onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
   onRestoreConflict?: (record: WatchRecord) => Promise<void>;
-  onRefresh?: () => unknown | Promise<unknown>;
+  onUpdateRecord: (id: string, updates: UpdateWatchRecord) => Promise<void>;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
   onNotify?: (tone: NoticeTone, message: string) => void;
 }
 
+type BatchPhase = 'idle' | 'planning' | 'preview' | 'applying' | 'done';
+type BatchPlanStatus = 'ready' | 'skipped' | 'failed';
+
+interface BatchPlanRow {
+  recordId: string;
+  recordName: string;
+  status: BatchPlanStatus;
+  updates: UpdateWatchRecord;
+  fields: BatchMetadataField[];
+  remoteIdentity?: string;
+  reason?: string;
+}
+
+interface BatchApplyResult {
+  plan: BatchPlanRow;
+  status: 'updated' | 'skipped' | 'failed';
+  reason?: string;
+}
+
 export default function SettingsModal({
-  onClose, records, onImport, onSync, onRestoreConflict, onRefresh,
+  onClose, records, onImport, onSync, onRestoreConflict, onUpdateRecord,
   syncInterval, onSyncIntervalChange, onNotify
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
@@ -48,10 +76,19 @@ export default function SettingsModal({
   const [vacuumStatus, setVacuumStatus] = useState<string>('');
 
   // 批量同步状态
-  const [batchSyncing, setBatchSyncing] = useState(false);
+  const [batchPhase, setBatchPhase] = useState<BatchPhase>('idle');
   const [batchStatus, setBatchStatus] = useState('');
   const [batchProgress, setBatchProgress] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
+  const [batchPlan, setBatchPlan] = useState<BatchPlanRow[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchApplyResult[]>([]);
+  const batchCancelRef = useRef(false);
+  const recordsRef = useRef(records);
+  const batchSyncing = batchPhase === 'planning' || batchPhase === 'applying';
+
+  useEffect(() => {
+    recordsRef.current = records;
+  }, [records]);
 
   const showFailure = useCallback((
     scope: string,
@@ -297,11 +334,17 @@ export default function SettingsModal({
   // 快捷键退出
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (batchSyncing) {
+        batchCancelRef.current = true;
+        setBatchStatus('正在安全停止批量任务...');
+      } else {
+        onClose();
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [batchSyncing, onClose]);
 
   // 数据库整理优化
   async function handleVacuum() {
@@ -316,88 +359,192 @@ export default function SettingsModal({
     setTimeout(() => setVacuumStatus(''), 3000);
   }
 
-  // 自动补全缺失字段
-  async function handleBatchSync() {
-    const targets = records.filter(record =>
-      record.imdbId && !record.isLocked &&
-      (!record.genres || record.episodeRuntime == null || !record.originCountry || record.contentTags == null),
-    );
+  async function searchTmdbWithRetry(imdbId: string): Promise<TmdbMedia[]> {
+    let lastError: unknown = new Error('TMDB search failed');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (batchCancelRef.current) throw new Error('Batch cancelled');
+      const response = await searchTmdbAsync({ apiKey: tmdbKey.trim(), query: imdbId, language: 'zh-CN' });
+      if (response.success) return response.results ?? [];
+      lastError = new Error(response.error || 'TMDB search failed');
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+    throw lastError;
+  }
+
+  async function getTmdbDetailWithRetry(id: number, mediaType: 'movie' | 'tv'): Promise<TmdbMedia> {
+    let lastError: unknown = new Error('TMDB detail failed');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (batchCancelRef.current) throw new Error('Batch cancelled');
+      const response = await getTmdbDetailAsync({ apiKey: tmdbKey.trim(), id, mediaType, language: 'zh-CN' });
+      if (response.success && response.data) return response.data;
+      lastError = new Error(response.error || 'TMDB detail failed');
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+    throw lastError;
+  }
+
+  // 第一步只读取远端并生成预览，不写数据库。
+  async function handlePrepareBatch() {
+    const targets = records.filter(isBatchMetadataCandidate);
     if (!tmdbKey.trim()) {
       setBatchStatus('❌ 请先配置 TMDB API Key');
       onNotify?.('warning', '请先配置 TMDB API Key。');
       return;
     }
     if (targets.length === 0) {
-      setBatchStatus('🎉 所有带 IMDb 编号的记录均已包含完整元数据！');
+      setBatchStatus('🎉 所有未锁定且带 IMDb 编号的记录均无可补字段。');
       setTimeout(() => setBatchStatus(''), 3000);
       return;
     }
-    if (!confirm('发现 ' + targets.length + ' 条缺失部分元数据的记录。是否开始批量同步？\n\n注意：期间请保持网络畅通。')) return;
 
-    setBatchSyncing(true);
+    batchCancelRef.current = false;
+    setBatchPhase('planning');
+    setBatchPlan([]);
+    setBatchResults([]);
     setBatchTotal(targets.length);
     setBatchProgress(0);
-    setBatchStatus('正在连接 TMDB...');
-    let success = 0;
-    let fail = 0;
-    const tmdbCache = new Map<string, Partial<WatchRecord>>();
+    setBatchStatus('正在分析缺失字段，不会写入数据库...');
+    const rows: BatchPlanRow[] = [];
+    const searchCache = new Map<string, TmdbMedia[]>();
+    const detailCache = new Map<string, TmdbMedia>();
 
     for (let index = 0; index < targets.length; index++) {
+      if (batchCancelRef.current) break;
       const record = targets[index];
       setBatchProgress(index + 1);
-      setBatchStatus('正在同步: ' + record.chineseName);
+      setBatchStatus('正在分析: ' + record.chineseName);
       try {
-        let updates = record.imdbId ? tmdbCache.get(record.imdbId) : undefined;
-        if (!updates && record.imdbId) {
-          const search = await searchTmdbAsync({ apiKey: tmdbKey.trim(), query: record.imdbId, language: 'zh-CN' });
-          const expectedType = record.totalEpisodes || ['剧集', '综艺'].includes(mediaTypeOf(record)) ? 'tv' : 'movie';
-          const item = search.results?.find(result => result.media_type === expectedType)
-            ?? search.results?.find(result => result.media_type === 'movie' || result.media_type === 'tv');
-          if (item?.id != null) {
-            const tmdbType: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
-            const detailResult = await getTmdbDetailAsync({ apiKey: tmdbKey.trim(), id: item.id, mediaType: tmdbType, language: 'zh-CN' });
-            if (detailResult.success && detailResult.data) {
-              const detail: TmdbMedia = detailResult.data;
-              const classification = classifyTmdb(detail, tmdbType === 'tv', mediaTypeOf(record));
-              updates = {
-                genres: classification.genres,
-                originCountry: classification.originCountry,
-                imdbRating: detail.vote_average ?? null,
-                tmdbStatus: detail.status ?? null,
-                episodeRuntime: detail.episode_run_time?.[0] ?? detail.runtime ?? null,
-                mediaType: classification.mediaType,
-                contentTags: classification.contentTags,
-              };
-              tmdbCache.set(record.imdbId, updates);
-            }
-          }
+        const imdbId = record.imdbId!.trim();
+        let searchResults = searchCache.get(imdbId);
+        if (!searchResults) {
+          searchResults = await searchTmdbWithRetry(imdbId);
+          searchCache.set(imdbId, searchResults);
         }
-        if (updates) {
-          await updateRecordDb(record.id, {
-            ...updates,
-            contentTags: mergeContentTags(record.contentTags, updates.contentTags || ''),
+
+        const matchResult = selectTmdbMatch(record, searchResults);
+        if (!matchResult.ok) {
+          rows.push({
+            recordId: record.id, recordName: record.chineseName, status: 'skipped',
+            updates: {}, fields: [], reason: matchResult.reason,
           });
-          success++;
-        } else {
-          fail++;
+          setBatchPlan([...rows]);
+          continue;
         }
+
+        const detailKey = `${matchResult.match.type}:${matchResult.match.id}`;
+        let detail = detailCache.get(detailKey);
+        if (!detail) {
+          detail = await getTmdbDetailWithRetry(matchResult.match.id, matchResult.match.type);
+          detailCache.set(detailKey, detail);
+        }
+        const patch = buildBatchMetadataPatch(record, detail, matchResult.match.type);
+        rows.push({
+          recordId: record.id,
+          recordName: record.chineseName,
+          status: patch.fields.length ? 'ready' : 'skipped',
+          updates: patch.updates,
+          fields: patch.fields,
+          remoteIdentity: remoteIdentityKey(matchResult.match, patch.seasonNumber),
+          reason: patch.fields.length ? undefined : 'TMDB 没有返回可用于缺失字段的有效值',
+        });
       } catch (error) {
+        if (batchCancelRef.current) break;
         reportOperationFailure('Settings.BatchMetadataRecord', error);
-        fail++;
+        rows.push({
+          recordId: record.id, recordName: record.chineseName, status: 'failed',
+          updates: {}, fields: [], reason: 'TMDB 查询失败，可重新分析',
+        });
       }
-      await new Promise(resolve => setTimeout(resolve, 300));
+      setBatchPlan([...rows]);
+      if (index + 1 < targets.length) await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    setBatchSyncing(false);
-    setBatchStatus('🎉 同步完成！成功: ' + success + ', 失败: ' + fail);
-    if (fail > 0) onNotify?.('warning', `批量补全完成，${fail} 条记录失败。`);
-    else showSuccess('批量补全完成。');
-    try {
-      await onRefresh?.();
-    } catch (error) {
-      showFailure('Settings.RefreshAfterBatch', '刷新记录', error);
+    setBatchPlan(rows);
+    setBatchPhase('preview');
+    const ready = rows.filter(row => row.status === 'ready').length;
+    const failed = rows.filter(row => row.status === 'failed').length;
+    setBatchStatus(batchCancelRef.current
+      ? `分析已取消；已完成 ${rows.length} / ${targets.length} 条，可检查已生成的预览。`
+      : `分析完成：可更新 ${ready} 条，跳过/失败 ${rows.length - ready} 条${failed ? `（失败 ${failed} 条）` : ''}。`);
+  }
+
+  async function handleApplyBatch(plans?: BatchPlanRow[]) {
+    const selected = plans ?? batchPlan.filter(row => row.status === 'ready');
+    if (!selected.length) {
+      setBatchStatus('没有可写入的字段。');
+      return;
     }
-    setTimeout(() => setBatchStatus(''), 5000);
+
+    batchCancelRef.current = false;
+    setBatchPhase('applying');
+    setBatchProgress(0);
+    setBatchTotal(selected.length);
+    setBatchStatus('正在安全写入已确认的字段...');
+    const retriedIds = new Set(selected.map(plan => plan.recordId));
+    const results: BatchApplyResult[] = plans
+      ? batchResults.filter(result => !retriedIds.has(result.plan.recordId))
+      : [];
+
+    for (let index = 0; index < selected.length; index++) {
+      if (batchCancelRef.current) break;
+      const plan = selected[index];
+      setBatchProgress(index + 1);
+      setBatchStatus('正在写入: ' + plan.recordName);
+      const current = recordsRef.current.find(record => record.id === plan.recordId);
+      if (!current || current.isLocked) {
+        results.push({ plan, status: 'skipped', reason: current ? '记录已锁定' : '记录已不存在' });
+        setBatchResults([...results]);
+        continue;
+      }
+
+      const safePatch = retainMissingMetadataPatch(current, plan.updates);
+      if (!safePatch.fields.length) {
+        results.push({ plan, status: 'skipped', reason: '预览后字段已被其他操作补全' });
+        setBatchResults([...results]);
+        continue;
+      }
+
+      try {
+        await onUpdateRecord(plan.recordId, safePatch.updates);
+        results.push({ plan: { ...plan, fields: safePatch.fields, updates: safePatch.updates }, status: 'updated' });
+      } catch (error) {
+        reportOperationFailure('Settings.BatchMetadataWrite', error);
+        results.push({ plan, status: 'failed', reason: '数据库写入失败，可重试此条' });
+      }
+      setBatchResults([...results]);
+    }
+
+    if (batchCancelRef.current) {
+      const completedIds = new Set(results.map(result => result.plan.recordId));
+      for (const plan of selected) {
+        if (!completedIds.has(plan.recordId)) {
+          results.push({ plan, status: 'skipped', reason: '用户取消，未写入' });
+        }
+      }
+    }
+    setBatchResults(results);
+    setBatchPhase('done');
+    const updated = results.filter(result => result.status === 'updated').length;
+    const failed = results.filter(result => result.status === 'failed').length;
+    const skipped = results.filter(result => result.status === 'skipped').length;
+    setBatchStatus(`${batchCancelRef.current ? '补全已停止' : '补全结束'}：已更新 ${updated} 条，跳过 ${skipped} 条，失败 ${failed} 条。`);
+    if (failed) onNotify?.('warning', `批量补全有 ${failed} 条写入失败，可单独重试。`);
+    else if (updated) showSuccess(`已安全补全 ${updated} 条记录。`);
+  }
+
+  function handleCancelBatch() {
+    batchCancelRef.current = true;
+    setBatchStatus(batchPhase === 'planning' ? '正在停止分析...' : '将在当前记录写入完成后停止...');
+  }
+
+  function resetBatch() {
+    batchCancelRef.current = false;
+    setBatchPhase('idle');
+    setBatchPlan([]);
+    setBatchResults([]);
+    setBatchProgress(0);
+    setBatchTotal(0);
+    setBatchStatus('');
   }
 
   return (
@@ -461,13 +608,13 @@ export default function SettingsModal({
         {/* 侧边栏底部返回 */}
         <div className="p-4 border-t border-gray-100">
           <button
-            onClick={onClose}
+            onClick={batchSyncing ? handleCancelBatch : onClose}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-sm font-bold text-gray-700 transition-colors shadow-sm"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            返回主页
+            {batchSyncing ? '安全停止任务' : '返回主页'}
           </button>
         </div>
       </div>
@@ -831,26 +978,118 @@ export default function SettingsModal({
                   <span className="text-2xl">✨</span>
                   <div>
                     <h4 className="font-bold text-gray-800">一键补全缺失元数据</h4>
-                    <p className="text-[11px] text-gray-400">调用 TMDB 自动补全数据库中老数据缺失的流派、国家、集数等信息</p>
+                    <p className="text-[11px] text-gray-400">先分析并预览；确认后只写仍然缺失的字段，不覆盖已有数据</p>
                   </div>
                 </div>
-                <button
-                  onClick={handleBatchSync}
-                  disabled={batchSyncing || !tmdbSaved}
-                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
-                  title={!tmdbSaved ? "请先在【基础配置】中设置 TMDB 密钥" : ""}
-                >
-                  {batchSyncing ? '⏳ 正在同步更新中...' : '✨ 立即一键补全缺失字段'}
-                </button>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-xs leading-5 text-emerald-800">
+                  电影只补电影时长；剧集和具体季只补单集时长与总集数。媒体类型、已有题材、国家、评分、状态和自定义标签不会被静默修改。
+                </div>
+                {(batchPhase === 'idle' || batchPhase === 'done') && (
+                  <button
+                    onClick={handlePrepareBatch}
+                    disabled={!tmdbSaved}
+                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
+                    title={!tmdbSaved ? "请先在【基础配置】中设置 TMDB 密钥" : ""}
+                  >
+                    🔎 分析并预览缺失字段
+                  </button>
+                )}
                 {batchSyncing && batchTotal > 0 && (
                   <div className="mt-3 space-y-2">
                     <div className="w-full bg-gray-100 rounded-full h-2">
                       <div className="bg-amber-500 h-2 rounded-full transition-all duration-300" style={{ width: `${(batchProgress / batchTotal) * 100}%` }}></div>
                     </div>
                     <p className="text-[10px] text-center text-gray-400">进度：{batchProgress} / {batchTotal}</p>
+                    <button
+                      onClick={handleCancelBatch}
+                      className="w-full rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50"
+                    >
+                      安全停止
+                    </button>
                   </div>
                 )}
                 {batchStatus && <p className="text-xs text-center text-amber-600 font-bold mt-1">{batchStatus}</p>}
+
+                {batchPhase === 'preview' && (
+                  <div aria-label="元数据补全预览" className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h5 className="text-sm font-black text-gray-800">写入预览</h5>
+                      <span className="text-[10px] text-gray-500">确认时会再次检查字段是否仍缺失</span>
+                    </div>
+                    <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                      {batchPlan.map(row => (
+                        <div key={row.recordId} className="rounded-xl border border-gray-100 bg-white px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="min-w-0 truncate text-xs font-bold text-gray-800">{row.recordName}</p>
+                            <span className={`shrink-0 text-[10px] font-bold ${row.status === 'ready' ? 'text-emerald-600' : row.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
+                              {row.status === 'ready' ? '可更新' : row.status === 'failed' ? '失败' : '跳过'}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[10px] text-gray-500">
+                            {row.fields.length
+                              ? row.fields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')
+                              : row.reason}
+                          </p>
+                          {row.remoteIdentity && <p className="mt-1 font-mono text-[9px] text-gray-300">{row.remoteIdentity}</p>}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void handleApplyBatch()}
+                        disabled={!batchPlan.some(row => row.status === 'ready')}
+                        className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:bg-gray-300"
+                      >
+                        确认写入 {batchPlan.filter(row => row.status === 'ready').length} 条
+                      </button>
+                      <button onClick={resetBatch} className="rounded-xl border border-gray-200 px-4 py-2.5 text-xs font-bold text-gray-600 hover:bg-white">
+                        取消
+                      </button>
+                    </div>
+                    {batchPlan.some(row => row.status === 'failed') && (
+                      <button
+                        onClick={() => void handlePrepareBatch()}
+                        className="w-full rounded-xl border border-red-200 bg-white py-2 text-xs font-bold text-red-600 hover:bg-red-50"
+                      >
+                        重新分析全部候选
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {batchPhase === 'done' && batchResults.length > 0 && (
+                  <div aria-label="元数据补全结果" className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                    <h5 className="text-sm font-black text-gray-800">逐条结果</h5>
+                    <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                      {batchResults.map(result => (
+                        <div key={result.plan.recordId} className="flex items-start justify-between gap-3 rounded-xl bg-white px-3 py-2 text-xs">
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-gray-800">{result.plan.recordName}</p>
+                            <p className="mt-1 text-[10px] text-gray-500">
+                              {result.status === 'updated'
+                                ? result.plan.fields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')
+                                : result.reason}
+                            </p>
+                          </div>
+                          <span className={`shrink-0 text-[10px] font-bold ${result.status === 'updated' ? 'text-emerald-600' : result.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
+                            {result.status === 'updated' ? '已更新' : result.status === 'failed' ? '失败' : '已跳过'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {batchResults.some(result => result.status === 'failed') && (
+                      <button
+                        onClick={() => void handleApplyBatch(batchResults.filter(result => result.status === 'failed').map(result => result.plan))}
+                        className="w-full rounded-xl border border-red-200 bg-white py-2 text-xs font-bold text-red-600 hover:bg-red-50"
+                      >
+                        重试失败项
+                      </button>
+                    )}
+                    <button onClick={resetBatch} className="w-full rounded-xl border border-gray-200 bg-white py-2 text-xs font-bold text-gray-600 hover:bg-gray-50">
+                      清除结果
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}

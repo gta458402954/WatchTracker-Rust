@@ -34,7 +34,7 @@ async function openSettingsTools(page: Page) {
   await page.getByRole('button', { name: /系统工具/ }).click();
 }
 
-test('@expected-settings-modal batch metadata preserves custom tags and normalized countries', async ({ page }) => {
+test('@expected-settings-modal batch metadata previews and only fills missing movie fields', async ({ page }) => {
   const original = record('批量补全记录', {
     imdbId: 'tt-b003-settings',
     contentTags: '美国,律政,自定义',
@@ -56,19 +56,132 @@ test('@expected-settings-modal batch metadata preserves custom tags and normaliz
   await page.goto('/');
   await openSettingsTools(page);
 
-  const batchButton = page.getByRole('button', { name: /立即一键补全缺失字段/ });
+  const batchButton = page.getByRole('button', { name: /分析并预览缺失字段/ });
   await expect(batchButton).toBeEnabled();
-  page.once('dialog', dialog => dialog.accept());
   await batchButton.click();
-  await expect(page.getByText('🎉 同步完成！成功: 1, 失败: 0')).toBeVisible();
+
+  const preview = page.getByLabel('元数据补全预览');
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText('题材、国家、电影时长');
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'update_record')).toHaveLength(0);
+
+  await preview.getByRole('button', { name: '确认写入 1 条' }).click();
+  await expect(page.getByText('补全结束：已更新 1 条，跳过 0 条，失败 0 条。')).toBeVisible();
+  await expect(page.getByLabel('元数据补全结果')).toContainText('已更新');
 
   const snapshot = await mockSnapshot(page);
   const update = snapshot.calls.find(call => call.command === 'update_record');
   expect(update?.args.id).toBe(original.id);
   expect(update?.args.updates).toMatchObject({
     originCountry: 'GB, XX',
-    contentTags: '律政,自定义,英国',
+    genres: 'Drama',
+    movieDuration: 7200,
   });
+  expect(update?.args.updates).not.toHaveProperty('contentTags');
+  expect(update?.args.updates).not.toHaveProperty('mediaType');
+  expect(update?.args.updates).not.toHaveProperty('episodeRuntime');
+  expect(snapshot.records[0].contentTags).toBe('美国,律政,自定义');
+});
+
+test('@expected-settings-modal shared IMDb seasons keep distinct episode totals', async ({ page }) => {
+  const first = record('第一季', {
+    originalName: 'Example Season 1', imdbId: 'tt-shared-series', mediaType: '剧集', contentTags: '自定义',
+  });
+  const second = record('第二季', {
+    originalName: 'Example Season 2', imdbId: 'tt-shared-series', mediaType: '剧集', contentTags: '自定义',
+  });
+  await setupMockIpc(page, {
+    records: [first, second],
+    settings: { tmdb_api_key: 'encrypted:test-key' },
+    tmdbSearchResults: [{ id: 510, name: 'Example', media_type: 'tv' }],
+    tmdbDetail: {
+      id: 510, name: 'Example', origin_country: ['US'], genres: [{ name: 'Drama' }],
+      episode_run_time: [48], number_of_episodes: 23,
+      seasons: [{ season_number: 1, episode_count: 10 }, { season_number: 2, episode_count: 13 }],
+    },
+  });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  const preview = page.getByLabel('元数据补全预览');
+  await expect(preview).toContainText('tv:510:season-1');
+  await expect(preview).toContainText('tv:510:season-2');
+  await preview.getByRole('button', { name: '确认写入 2 条' }).click();
+  await expect(page.getByText('补全结束：已更新 2 条，跳过 0 条，失败 0 条。')).toBeVisible();
+
+  const updates = (await mockSnapshot(page)).calls
+    .filter(call => call.command === 'update_record')
+    .map(call => ({ id: call.args.id, updates: call.args.updates }));
+  expect(updates).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: first.id, updates: expect.objectContaining({ totalEpisodes: 10, episodeRuntime: 48 }) }),
+    expect.objectContaining({ id: second.id, updates: expect.objectContaining({ totalEpisodes: 13, episodeRuntime: 48 }) }),
+  ]));
+});
+
+test('@expected-settings-modal partial write failure is visible and retryable', async ({ page }) => {
+  const first = record('成功记录', { imdbId: 'tt-success' });
+  const second = record('重试记录', { imdbId: 'tt-retry' });
+  await setupMockIpc(page, {
+    records: [first, second],
+    settings: { tmdb_api_key: 'encrypted:test-key' },
+    tmdbSearchResults: [{ id: 301, title: 'Movie', media_type: 'movie' }],
+    tmdbDetail: { id: 301, runtime: 100, genres: [{ name: 'Drama' }], production_countries: [{ iso_3166_1: 'US' }] },
+    updateFailureCounts: { [second.id]: 1 },
+  });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  await page.getByRole('button', { name: '确认写入 2 条' }).click();
+  await expect(page.getByText('补全结束：已更新 1 条，跳过 0 条，失败 1 条。')).toBeVisible();
+
+  await page.getByRole('button', { name: '重试失败项' }).click();
+  await expect(page.getByText('补全结束：已更新 2 条，跳过 0 条，失败 0 条。')).toBeVisible();
+  const retryWrites = (await mockSnapshot(page)).calls.filter(call => call.command === 'update_record' && call.args.id === second.id);
+  expect(retryWrites).toHaveLength(2);
+});
+
+test('@expected-settings-modal planning can be cancelled without database writes', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [record('慢速记录一', { imdbId: 'tt-slow-1' }), record('慢速记录二', { imdbId: 'tt-slow-2' })],
+    settings: { tmdb_api_key: 'encrypted:test-key' },
+    tmdbSearchResults: [{ id: 301, title: 'Movie', media_type: 'movie' }],
+    tmdbDetail: { id: 301, runtime: 100 },
+    tmdbDelayMs: 400,
+  });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  await page.getByRole('button', { name: '安全停止', exact: true }).click();
+  await expect(page.getByText(/分析已取消/)).toBeVisible();
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'update_record')).toHaveLength(0);
+});
+
+test('@expected-settings-modal successful write uses the normal action and schedules auto sync', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [record('自动同步记录', { imdbId: 'tt-auto-sync' })],
+    settings: {
+      tmdb_api_key: 'encrypted:test-key',
+      sync_interval: '5',
+      webdav_creds: 'encrypted:user:password',
+      webdav_url: 'https://dav.example.test/watchtracker/',
+    },
+    tmdbSearchResults: [{ id: 301, title: 'Movie', media_type: 'movie' }],
+    tmdbDetail: { id: 301, runtime: 100, genres: [{ name: 'Drama' }] },
+    webdavRemote: [],
+  });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  await page.getByRole('button', { name: '确认写入 1 条' }).click();
+  await expect(page.getByText('补全结束：已更新 1 条，跳过 0 条，失败 0 条。')).toBeVisible();
+
+  await expect.poll(async () => (await mockSnapshot(page)).calls.some(call => call.command === 'webdav_request'), {
+    timeout: 8000,
+  }).toBe(true);
 });
 
 test('@conditional-record-form new movie preserves all normalized countries and custom tags', async ({ page }) => {

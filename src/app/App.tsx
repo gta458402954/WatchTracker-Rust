@@ -405,7 +405,7 @@ export default function App() {
           onImport={handleImport}
           onSync={syncNow}
           onRestoreConflict={restoreRecord}
-          onRefresh={loadRecords}
+          onUpdateRecord={updateRecord}
           syncInterval={syncInterval}
           onSyncIntervalChange={setSyncInterval}
           onNotify={notify}

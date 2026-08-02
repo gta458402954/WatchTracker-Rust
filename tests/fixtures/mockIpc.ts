@@ -8,6 +8,8 @@ export interface MockIpcOptions {
   settings?: Record<string, string | null>;
   tmdbSearchResults?: TmdbMedia[];
   tmdbDetail?: TmdbMedia;
+  tmdbDelayMs?: number;
+  updateFailureCounts?: Record<string, number>;
   webdavRemote?: unknown;
 }
 
@@ -29,7 +31,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, webdavRemote }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const snapshot: MockSnapshot = {
         calls: [],
@@ -38,6 +40,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
         settings: structuredClone(settings),
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
+      const remainingUpdateFailures = structuredClone(updateFailureCounts);
 
       const requireKeys = (
         command: string,
@@ -77,6 +80,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'update_record': {
               requireKeys(command, args, ['id', 'updates']);
               const id = args.id as string;
+              if ((remainingUpdateFailures[id] ?? 0) > 0) {
+                remainingUpdateFailures[id] -= 1;
+                throw new Error('Injected update failure');
+              }
               const index = snapshot.records.findIndex((record) => record.id === id);
               if (index < 0) throw new Error('Record not found');
               const previous = snapshot.records[index];
@@ -110,9 +117,11 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return String(args.id).replace(/^encrypted:/, '');
             case 'search_tmdb':
               requireKeys(command, args, ['apiKey', 'language', 'proxy', 'query']);
+              if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return { results: structuredClone(tmdbSearchResults) };
             case 'get_tmdb_detail':
               requireKeys(command, args, ['apiKey', 'id', 'language', 'mediaType', 'proxy']);
+              if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return structuredClone(tmdbDetail);
             case 'webdav_request':
               requireKeys(command, args, ['body', 'method', 'password', 'proxy', 'url', 'username']);
@@ -132,6 +141,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       settings: options.settings ?? {},
       tmdbSearchResults: options.tmdbSearchResults ?? [],
       tmdbDetail: options.tmdbDetail ?? {},
+      tmdbDelayMs: options.tmdbDelayMs ?? 0,
+      updateFailureCounts: options.updateFailureCounts ?? {},
       webdavRemote: options.webdavRemote ?? [],
     },
   );

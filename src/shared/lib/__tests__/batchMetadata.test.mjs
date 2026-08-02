@@ -1,0 +1,110 @@
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+
+import {
+  buildBatchMetadataPatch,
+  isBatchMetadataCandidate,
+  retainMissingMetadataPatch,
+  remoteIdentityKey,
+  seasonNumberOf,
+  selectTmdbMatch,
+  tmdbTypeHintOf,
+} from '../batchMetadata.ts';
+
+function record(overrides = {}) {
+  return {
+    id: 'record-1', originalName: 'Example', chineseName: '示例', progress: '',
+    totalEpisodes: null, movieProgress: null, movieDuration: null, releaseYear: null,
+    posterPath: null, status: '未看', platform: '', rating: null, startDate: '', endDate: '',
+    notes: '', createdAt: '2025-01-01T00:00:00Z', imdbId: 'tt123', mediaType: '电影',
+    contentTags: null, originCountry: null, genres: null, imdbRating: null, tmdbStatus: null,
+    episodeRuntime: null, ...overrides,
+  };
+}
+
+describe('batch metadata identity', () => {
+  test('recognizes movie, episodic, special-type and season hints without guessing ambiguous specials', () => {
+    assert.equal(tmdbTypeHintOf(record()), 'movie');
+    assert.equal(tmdbTypeHintOf(record({ mediaType: '综艺' })), 'tv');
+    assert.equal(tmdbTypeHintOf(record({ mediaType: '动画', totalEpisodes: 12 })), 'tv');
+    assert.equal(tmdbTypeHintOf(record({ mediaType: '纪录片', movieDuration: 5400 })), 'movie');
+    assert.equal(tmdbTypeHintOf(record({ mediaType: '动画' })), null);
+  });
+
+  test('extracts a stable season number and includes it in the remote identity', () => {
+    const season = record({ originalName: 'Example Season 3', mediaType: '剧集' });
+    assert.equal(seasonNumberOf(season), 3);
+    assert.equal(remoteIdentityKey({ id: 77, type: 'tv' }, 3), 'tv:77:season-3');
+    assert.equal(remoteIdentityKey({ id: 77, type: 'tv' }, null), 'tv:77:series');
+  });
+
+  test('never falls back to a mismatched type and rejects ambiguous special media', () => {
+    const movie = record();
+    assert.deepEqual(selectTmdbMatch(movie, [{ id: 9, media_type: 'tv' }]), {
+      ok: false, reason: 'TMDB 没有返回匹配的电影结果',
+    });
+    const animation = record({ mediaType: '动画' });
+    assert.equal(selectTmdbMatch(animation, [
+      { id: 10, media_type: 'movie' }, { id: 11, media_type: 'tv' },
+    ]).ok, false);
+  });
+});
+
+describe('field-level safe patch', () => {
+  test('fills movie fields only and never overwrites existing metadata', () => {
+    const original = record({
+      genres: 'Local genre', originCountry: 'JP', contentTags: '自定义', imdbRating: 8.8,
+      tmdbStatus: 'Local status', mediaType: '电影',
+    });
+    const patch = buildBatchMetadataPatch(original, {
+      runtime: 120, vote_average: 6.5, status: 'Released', genres: [{ name: 'Drama' }],
+      production_countries: [{ iso_3166_1: 'US' }], number_of_episodes: 99,
+      episode_run_time: [45],
+    }, 'movie');
+
+    assert.deepEqual(patch.updates, { movieDuration: 7200 });
+    assert.deepEqual(patch.fields, ['movieDuration']);
+    assert.equal('mediaType' in patch.updates, false);
+    assert.equal('episodeRuntime' in patch.updates, false);
+    assert.equal('totalEpisodes' in patch.updates, false);
+  });
+
+  test('fills a specific TV season with series runtime and season episode count', () => {
+    const season = record({ originalName: 'Example Season 2', mediaType: '动画' });
+    const patch = buildBatchMetadataPatch(season, {
+      vote_average: 8.1, status: 'Returning Series', genres: [{ name: 'Animation' }],
+      origin_country: ['JP', 'US'], episode_run_time: [24], number_of_episodes: 50,
+      seasons: [{ season_number: 1, episode_count: 12 }, { season_number: 2, episode_count: 13 }],
+    }, 'tv');
+
+    assert.deepEqual(patch.updates, {
+      genres: 'Animation', originCountry: 'JP, US', contentTags: '日本,美国', imdbRating: 8.1,
+      tmdbStatus: 'Returning Series', episodeRuntime: 24, totalEpisodes: 13,
+    });
+    assert.equal(patch.seasonNumber, 2);
+    assert.equal('movieDuration' in patch.updates, false);
+    assert.equal('mediaType' in patch.updates, false);
+  });
+
+  test('does not turn remote nulls or invalid numbers into destructive updates', () => {
+    const patch = buildBatchMetadataPatch(record(), {
+      runtime: 0, vote_average: 0, status: ' ', genres: [], production_countries: [],
+    }, 'movie');
+    assert.deepEqual(patch.updates, {});
+  });
+
+  test('revalidates missing fields at write time so preview cannot overwrite a later edit', () => {
+    const current = record({ genres: '用户刚刚填写', movieDuration: null });
+    const retained = retainMissingMetadataPatch(current, { genres: 'Remote', movieDuration: 7200 });
+    assert.deepEqual(retained.updates, { movieDuration: 7200 });
+  });
+
+  test('candidate selection excludes locked, unidentified and already complete records', () => {
+    assert.equal(isBatchMetadataCandidate(record({ isLocked: true })), false);
+    assert.equal(isBatchMetadataCandidate(record({ imdbId: null })), false);
+    assert.equal(isBatchMetadataCandidate(record({
+      genres: 'Drama', originCountry: 'US', contentTags: '美国', imdbRating: 8,
+      tmdbStatus: 'Released', movieDuration: 6000,
+    })), false);
+  });
+});

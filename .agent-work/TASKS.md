@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- DEFERRED：18 个按领域重新归类的独立路线图任务；其中 2 个 `SPECIFIED`、16 个 `NEEDS-DESIGN`，均不计入 A/B 数量。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001` 已实现，剩余 DEFERRED 为 1 个 `SPECIFIED`、16 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1478,13 +1478,13 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ---
 
-## DEFERRED：后续路线图（按当前 `main` 重新归类）
+## 路线图任务（按当前 `main` 重新归类）
 
-> 审计基线：2026-08-02，`main@b23f27a` 及当前工作区。旧的 `TASK-D-R0`~`TASK-D-R3` 四个优先级大包已废止，改为“领域 + 独立编号”。`SPECIFIED` 表示业务规则已足以进入技术设计，`NEEDS-DESIGN` 表示只有路线图方向，尚不能直接实施；两者都不表示代码已开始。
+> 审计基线：2026-08-02，`main@b23f27a` 及后续当前工作区。旧的 `TASK-D-R0`~`TASK-D-R3` 四个优先级大包已废止，改为“领域 + 独立编号”。`IMPLEMENTED` 表示已实现并通过本地验收；`SPECIFIED` 表示业务规则已足以进入技术设计；`NEEDS-DESIGN` 表示只有路线图方向，尚不能直接实施。
 
 | 任务 | 优先级 | 分类 | 状态 | 原路线图归属 |
 | --- | --- | --- | --- | --- |
-| `TASK-D-DATA-001` | R0 | 数据安全 | SPECIFIED | R0 元数据补全 |
+| `TASK-D-DATA-001` | R0 | 数据安全 | IMPLEMENTED | R0 元数据补全 |
 | `TASK-D-DATA-002` | R0 | 数据完整性 | NEEDS-DESIGN | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
 | `TASK-D-DATA-003` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | NEEDS-DESIGN | R0 冲突与版本记录 |
@@ -1505,15 +1505,15 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-DATA-001：“一键补全缺失元数据”安全重构
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: SPECIFIED
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
 - Priority: R0
 - Business Source: `.agent-work/REQUEST.md` 9.3
 - Scope: 批量补全预览、电影/剧集/具体季识别、字段级安全补丁、逐条结果、取消/重试和同步一致性。
-- Required Design: 只写本地缺失且远端有效的字段；电影使用 `movieDuration`，剧集使用 `episodeRuntime`/`totalEpisodes`，季缓存键包含实体与季号；远端空值不得擦除本地值；通过正常 action 或专项原子 API 写入。
-- Acceptance Focus: 无覆盖、空响应、类型错配、重复 IMDb、多国家/自定义标签、部分失败、取消和同步调度，全部使用临时数据库与 TMDB mock。
-- Safety: 专项验收前不得在真实数据库上运行现有批量补全。
+- Implementation: `batchMetadata.ts` 负责类型/季身份、TMDB 匹配、字段级补丁和写入前二次缺失检查；Settings 提供预览确认、安全停止、逐条结果和失败重试；写入统一调用 `useWatchList.updateRecord`。
+- Acceptance: Node 纯函数覆盖无覆盖、电影/剧集/季、远端空值、类型错配和共享 IMDb；Playwright mock 覆盖预览零写入、多季不同集数、部分失败重试、取消零写入、多国家/自定义标签及自动同步调度。
+- Safety: 自动化仅使用 Tauri IPC mock；实现和验证未读取或写入真实便携版数据库。
 
 ### TASK-D-DATA-002：V18/V19 兼容与领域约束加固
 
