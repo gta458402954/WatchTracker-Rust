@@ -48,7 +48,6 @@ export default function Header({
         {/* Title */}
         <div className="flex items-center gap-2">
           <span className="text-2xl">🎬</span>
-          <h1 className="text-lg font-bold text-gray-900 hidden sm:block">影视追踪</h1>
           <span
             data-testid="build-commit"
             title={`Git 提交 ${gitCommit}`}
@@ -56,6 +55,7 @@ export default function Header({
           >
             git {gitCommit}
           </span>
+          <h1 className="text-lg font-bold text-gray-900 hidden sm:block">影视追踪</h1>
         </div>
 
         {/* Search */}
