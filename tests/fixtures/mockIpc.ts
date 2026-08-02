@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import type { WatchRecord } from '../../src/shared/types';
 import type { TmdbMedia } from '../../src/shared/lib/classification';
+import type { RecoveryPoint } from '../../src/shared/lib/database';
 
 export interface MockIpcOptions {
   records?: WatchRecord[];
@@ -16,6 +17,7 @@ export interface MockIpcOptions {
     detectedVersion: number;
     supportedVersion: number;
   } | null;
+  recoveryPoints?: RecoveryPoint[];
 }
 
 export interface MockSnapshot {
@@ -23,6 +25,7 @@ export interface MockSnapshot {
   records: WatchRecord[];
   failRecordLoads: boolean;
   settings: Record<string, string | null>;
+  recoveryPoints: RecoveryPoint[];
 }
 
 declare global {
@@ -36,16 +39,38 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, databaseCompatibilityIssue }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, databaseCompatibilityIssue, recoveryPoints }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const snapshot: MockSnapshot = {
         calls: [],
         records: controlledRecords ? JSON.parse(controlledRecords) : structuredClone(records),
         failRecordLoads,
         settings: structuredClone(settings),
+        recoveryPoints: structuredClone(recoveryPoints),
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
       const remainingUpdateFailures = structuredClone(updateFailureCounts);
+      const recoveryRecords: Record<string, WatchRecord[]> = {};
+      let recoverySequence = snapshot.recoveryPoints.length;
+
+      const makeRecoveryPoint = (reason: RecoveryPoint['reason']) => {
+        recoverySequence += 1;
+        const id = `watchtracker-recovery-test-${recoverySequence}-${reason}.db`;
+        const point: RecoveryPoint = {
+          id,
+          createdAt: new Date(1785660000000 + recoverySequence * 1000).toISOString(),
+          reason,
+          databaseVersion: 18,
+          recordCount: snapshot.records.length,
+          sizeBytes: 4096,
+          sha256: `TEST${recoverySequence}`,
+          retained: false,
+          integrityOk: true,
+        };
+        recoveryRecords[id] = structuredClone(snapshot.records);
+        snapshot.recoveryPoints.unshift(point);
+        return structuredClone(point);
+      };
 
       const requireKeys = (
         command: string,
@@ -120,8 +145,45 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               snapshot.records = snapshot.records.filter((record) => record.id !== args.id);
               return null;
             case 'replace_all_records':
-              requireKeys(command, args, ['records']);
+              requireKeys(command, args, ['reason', 'records']);
+              makeRecoveryPoint(args.reason as 'import' | 'sync');
               snapshot.records = structuredClone(args.records as WatchRecord[]);
+              return null;
+            case 'create_recovery_point':
+              requireKeys(command, args, ['reason']);
+              return makeRecoveryPoint(args.reason as RecoveryPoint['reason']);
+            case 'list_recovery_points': {
+              requireKeys(command, args, []);
+              const totalBytes = snapshot.recoveryPoints.reduce((sum, point) => sum + point.sizeBytes, 0);
+              return {
+                points: structuredClone(snapshot.recoveryPoints),
+                totalBytes,
+                capacityBytes: 500 * 1024 * 1024,
+                capacityExceeded: totalBytes > 500 * 1024 * 1024,
+              };
+            }
+            case 'set_recovery_point_retained': {
+              requireKeys(command, args, ['id', 'retained']);
+              const point = snapshot.recoveryPoints.find(item => item.id === args.id);
+              if (!point) throw new Error('Recovery point not found');
+              point.retained = args.retained as boolean;
+              return null;
+            }
+            case 'delete_recovery_point':
+              requireKeys(command, args, ['id']);
+              snapshot.recoveryPoints = snapshot.recoveryPoints.filter(point => point.id !== args.id);
+              delete recoveryRecords[args.id as string];
+              return null;
+            case 'restore_recovery_point': {
+              requireKeys(command, args, ['id']);
+              const restored = recoveryRecords[args.id as string];
+              if (!restored) throw new Error('Recovery point not found');
+              const preRestore = makeRecoveryPoint('pre-restore');
+              snapshot.records = structuredClone(restored);
+              return { preRestorePointId: preRestore.id, recordCount: snapshot.records.length };
+            }
+            case 'open_backup_directory':
+              requireKeys(command, args, []);
               return null;
             case 'set_setting':
               requireKeys(command, args, ['key', 'value']);
@@ -163,6 +225,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       updateFailureCounts: options.updateFailureCounts ?? {},
       webdavRemote: options.webdavRemote ?? [],
       databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,
+      recoveryPoints: options.recoveryPoints ?? [],
     },
   );
 }

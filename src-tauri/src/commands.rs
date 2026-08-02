@@ -1,6 +1,7 @@
 use crate::app_paths::AppPaths;
 use crate::db::{self, DatabaseCompatibilityIssue, DbState};
 use crate::models::{UpdateWatchRecord, WatchRecord};
+use crate::recovery_points;
 use crate::{auth, net};
 use serde_json::Value;
 use tauri::State;
@@ -70,10 +71,75 @@ pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::err
 #[tauri::command]
 pub fn replace_all_records(
     state: State<DbState>,
+    paths: State<AppPaths>,
     records: Vec<WatchRecord>,
+    reason: String,
 ) -> Result<(), crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
+    recovery_points::create(&conn, paths.inner(), &reason)?;
     crate::db_atomic_crud::replace_all_records_atomic(&mut conn, records)
+}
+
+#[tauri::command]
+pub fn create_recovery_point(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    reason: String,
+) -> Result<recovery_points::RecoveryPoint, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    recovery_points::create(&conn, paths.inner(), &reason)
+}
+
+#[tauri::command]
+pub fn list_recovery_points(
+    paths: State<AppPaths>,
+) -> Result<recovery_points::RecoveryPointList, crate::error::AppError> {
+    recovery_points::list(paths.inner())
+}
+
+#[tauri::command]
+pub fn set_recovery_point_retained(
+    paths: State<AppPaths>,
+    id: String,
+    retained: bool,
+) -> Result<(), crate::error::AppError> {
+    recovery_points::set_retained(paths.inner(), &id, retained)
+}
+
+#[tauri::command]
+pub fn delete_recovery_point(
+    paths: State<AppPaths>,
+    id: String,
+) -> Result<(), crate::error::AppError> {
+    recovery_points::delete(paths.inner(), &id)
+}
+
+#[tauri::command]
+pub fn restore_recovery_point(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    id: String,
+) -> Result<recovery_points::RecoveryResult, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    recovery_points::restore(&mut conn, paths.inner(), &id)
+}
+
+#[tauri::command]
+pub fn open_backup_directory(paths: State<AppPaths>) -> Result<(), crate::error::AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(paths.backups())
+            .spawn()?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = paths;
+        Err(crate::error::AppError::General(
+            "Opening the backup directory is only supported on Windows".to_string(),
+        ))
+    }
 }
 
 #[tauri::command]

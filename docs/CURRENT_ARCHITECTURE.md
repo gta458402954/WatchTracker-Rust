@@ -98,7 +98,7 @@ React UI
 
 路线图已按领域拆分，不再使用旧的 `TASK-D-R0`~`TASK-D-R3` 优先级大包。同步相关能力分别由 `TASK-D-SYNC-001`（冲突/版本/条件提交）、`TASK-D-SYNC-002`（持久化 outbox/主动拉取）和 `TASK-D-SYNC-003`（目标隔离）跟踪；状态层模块拆分属于独立的 `TASK-D-ARCH-002`，不默认要求引入 Zustand。
 
-`TASK-D-DATA-001`（批量元数据补全安全重构）、`TASK-D-DATA-002`（V18/V19 兼容与领域约束）和 `TASK-D-DATA-003`（国家解析统一与平台字段保护）已经实现。国家判断和 TMDB 平台推测现由 `classification.ts` 的共享纯函数负责：普通保存不再清空用户平台，自动补全精确区分 CN/HK/TW，只在平台缺失且国家列表不含 CN 时写入推测值。当前下一项 R0 数据任务是 `TASK-D-DATA-004`（高风险操作自动恢复点）。完整清单和状态以 `.agent-work/TASKS.md` 为准。
+`TASK-D-DATA-001`~`004` 已经实现。国家判断和 TMDB 平台推测现由 `classification.ts` 的共享纯函数负责：普通保存不再清空用户平台，自动补全精确区分 CN/HK/TW，只在平台缺失且国家列表不含 CN 时写入推测值。高风险的全量导入、同步全量落盘、V19 migration、至少 2 条实际批量补全写入和恢复操作现会先建立可验证的 SQLite 完整恢复点；设置页提供校验状态、保留、删除、目录访问和带 `pre-restore` 回退的 V18 恢复流程。当前下一项 R0 任务是 `TASK-D-SYNC-001`（同步冲突、版本域与条件提交），仍处于 `NEEDS-DESIGN`，实施前须先完成专项设计。完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 
@@ -108,10 +108,10 @@ React UI
 npm run typecheck  PASS
 npm run lint       PASS
 npm run test       PASS（56/56）
-npx playwright test PASS（29/29）
+npx playwright test PASS（30/30）
 npm run build      PASS
 cargo fmt/clippy   PASS
-cargo test --locked PASS（36/36）
+cargo test --locked PASS（42/42）
 ```
 
 便携版发布仍须从干净 Git 提交运行 Windows Tauri 构建，并在替换前后只读校验真实数据库。

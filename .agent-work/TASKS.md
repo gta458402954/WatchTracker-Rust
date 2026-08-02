@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001` 与 `TASK-D-DATA-002` 已实现，剩余为 1 个 `SPECIFIED`、15 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 已实现，剩余为 1 个 `SPECIFIED`、13 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1487,7 +1487,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-DATA-001` | R0 | 数据安全 | IMPLEMENTED | R0 元数据补全 |
 | `TASK-D-DATA-002` | R0 | 数据完整性 | IMPLEMENTED | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
 | `TASK-D-DATA-003` | R0 | 数据正确性 | IMPLEMENTED | 国家解析与平台字段保护 |
-| `TASK-D-DATA-004` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
+| `TASK-D-DATA-004` | R0 | 数据恢复 | IMPLEMENTED | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | NEEDS-DESIGN | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
@@ -1557,13 +1557,15 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-DATA-004：高风险操作自动恢复点
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
 - Priority: R0
 - Scope: 在导入、同步全量落盘、migration 和批量写入前创建可验证恢复点，并提供轮转、容量、恢复预览与失败回退。
-- Current Basis: `AppPaths` 已提供统一 `backups/` 目录，设置页已有手动 JSON 导入导出；当前没有自动快照生命周期。
-- Safety: 恢复点必须使用原子临时文件和校验，恢复测试只使用数据库副本。
+- Implementation: Rust 使用 SQLite backup API 在统一 `backups/` 目录生成完整数据库恢复点，经临时文件、`integrity_check`、数据库版本、记录数和 SHA-256 校验后原子落盘，同时保存本地清单。全量导入、WebDAV 全量落盘、V19 migration、实际将写入至少 2 条的批量元数据补全，以及恢复操作本身均先创建恢复点；创建失败会阻止对应高风险写入。
+- Lifecycle: 自动恢复点保留最近 10 个并受 500MB 软容量约束；用户标记“保留”的恢复点不计入 10 个上限且绝不自动删除，但仍计入容量提示。启动时只清理本功能遗留的临时文件。设置页可刷新、查看原因/版本/条数/大小/校验状态、保留、删除、打开目录，并在确认当前与目标条数后恢复。
+- Restore Safety: 仅允许恢复当前 V18 且 SHA/完整性校验通过的恢复点；恢复前创建 `pre-restore` 点，通过 SQLite backup 写回活动连接并再次校验。写回或校验失败时从 `pre-restore` 回退。V19 migration 点只用于迁移故障的文件级回退，不允许由 V18 界面直接恢复。
+- Acceptance Evidence: Rust 临时数据库覆盖完整状态恢复、损坏拒绝且当前库不变、10 个自动点加保留点轮转、保留/删除、快照失败阻断写入和临时文件清理；Playwright mock 覆盖批量补全先快照、导入/同步原因接线及导入后恢复与 `pre-restore` 创建。全部自动化不读取或写入真实便携版数据库。
 
 ### TASK-D-SYNC-001：同步冲突、版本域与条件提交
 

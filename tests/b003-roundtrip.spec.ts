@@ -174,6 +174,11 @@ test('@expected-settings-modal shared IMDb seasons keep distinct episode totals'
     expect.objectContaining({ id: first.id, updates: expect.objectContaining({ totalEpisodes: 10, episodeRuntime: 48 }) }),
     expect.objectContaining({ id: second.id, updates: expect.objectContaining({ totalEpisodes: 13, episodeRuntime: 48 }) }),
   ]));
+  const batchCalls = (await mockSnapshot(page)).calls;
+  const recoveryIndex = batchCalls.findIndex(call => call.command === 'create_recovery_point' && call.args.reason === 'batch-metadata');
+  const firstWriteIndex = batchCalls.findIndex(call => call.command === 'update_record');
+  expect(recoveryIndex).toBeGreaterThanOrEqual(0);
+  expect(recoveryIndex).toBeLessThan(firstWriteIndex);
 });
 
 test('@expected-settings-modal partial write failure is visible and retryable', async ({ page }) => {
@@ -430,6 +435,7 @@ test('@conditional-watchlist-boundary local export and import preserve region fi
 
   const snapshot = await mockSnapshot(page);
   const replacement = snapshot.calls.find(call => call.command === 'replace_all_records');
+  expect(replacement?.args.reason).toBe('import');
   expect(replacement?.args.records).toEqual([
     expect.objectContaining({ originCountry: 'GB, XX, CN', contentTags: '律政,自定义,日本料理' }),
   ]);
@@ -460,6 +466,50 @@ test('@conditional-watchlist-boundary sync replacement preserves region fields',
     originCountry: 'HK, TW, GB',
     contentTags: '悬疑,自定义',
   });
+  expect(snapshot.calls.find(call => call.command === 'replace_all_records')?.args.reason).toBe('sync');
+});
+
+test('@expected-settings-modal automatic recovery point can restore a pre-import database', async ({ page }) => {
+  const original = record('恢复前记录', { notes: '原始状态' });
+  const replacement = record('导入后记录', { notes: '替换状态' });
+  await setupMockIpc(page, { records: [original] });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: /导入本地 JSON/ }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: 'replacement.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify([replacement])),
+  });
+  await expect(page.getByText('已导入 1 条本地记录。')).toBeVisible();
+
+  const recoveryPanel = page.getByLabel('自动恢复点');
+  await recoveryPanel.getByRole('button', { name: '刷新' }).click();
+  await expect(recoveryPanel).toContainText('全量导入前');
+  await expect(recoveryPanel).toContainText('1 条');
+
+  const importPoint = recoveryPanel.getByLabel('恢复点 全量导入前');
+  await importPoint.getByRole('button', { name: '手工保留' }).click();
+  await expect(importPoint).toContainText('已手工保留');
+
+  page.once('dialog', dialog => dialog.accept());
+  await importPoint.getByRole('button', { name: '恢复', exact: true }).click();
+  await expect(page.getByText(/已恢复 1 条记录/)).toBeVisible();
+
+  let snapshot = await mockSnapshot(page);
+  expect(snapshot.records).toEqual([expect.objectContaining({ id: original.id, notes: '原始状态' })]);
+  expect(snapshot.recoveryPoints.some(point => point.reason === 'pre-restore')).toBe(true);
+  expect(snapshot.calls.some(call => call.command === 'restore_recovery_point')).toBe(true);
+
+  page.once('dialog', dialog => dialog.accept());
+  await importPoint.getByRole('button', { name: '删除' }).click();
+  await expect(importPoint).toHaveCount(0);
+  snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'set_recovery_point_retained')).toBe(true);
+  expect(snapshot.calls.some(call => call.command === 'delete_recovery_point')).toBe(true);
 });
 
 test('@conditional-watchlist-boundary conflict restore preserves region fields and clears history', async ({ page }) => {

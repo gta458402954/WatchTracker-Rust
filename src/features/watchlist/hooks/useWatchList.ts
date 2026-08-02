@@ -50,7 +50,7 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
     try {
       const result = await task;
       if (result.ok && result.records && revisionRef.current === startedRevision) {
-        await replaceAllRecords(result.records);
+        await replaceAllRecords(result.records, 'sync');
         const reloaded = await getAllRecordsAsync();
         recordsRef.current = reloaded;
         setRecords(reloaded);
@@ -129,7 +129,7 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
       clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
     }
-    await replaceAllRecords(newRecords);
+    await replaceAllRecords(newRecords, 'import');
     const persisted = await getAllRecordsAsync();
     revisionRef.current++;
     recordsRef.current = persisted;

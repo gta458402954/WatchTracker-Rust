@@ -1,9 +1,13 @@
 use crate::app_paths::AppPaths;
 use crate::models::WatchRecord;
-use rusqlite::{params, Connection, DatabaseName, OpenFlags, OptionalExtension, Result, Row};
+use crate::recovery_points;
+#[cfg(test)]
+use rusqlite::OpenFlags;
+use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use serde::Serialize;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::PathBuf;
 
 pub const CURRENT_DB_VERSION: i32 = 18;
 const KNOWN_DOWNGRADE_VERSION: i32 = 19;
@@ -68,7 +72,7 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
     }
 
     if current_version == KNOWN_DOWNGRADE_VERSION {
-        let backup = match create_verified_v19_backup(&conn, paths.backups()) {
+        let backup = match recovery_points::create(&conn, paths, "migration") {
             Ok(backup) => backup,
             Err(error) => {
                 log::error!("V19 backup failed before downgrade: {error}");
@@ -78,13 +82,13 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
         if let Err(error) = downgrade_v19_to_v18(&conn) {
             log::error!(
                 "V19 to V18 downgrade failed and was rolled back; verified backup remains at {}: {error}",
-                backup.display(),
+                backup.id,
             );
             return Ok(blocked_state(conn, "v19_downgrade_failed", current_version));
         }
         log::info!(
             "Database safely downgraded from V19 to V18; verified pre-migration backup: {}",
-            backup.display(),
+            backup.id,
         );
     }
 
@@ -133,38 +137,6 @@ fn record_columns(conn: &Connection) -> Result<HashSet<String>> {
         .query_map([], |row| row.get(0))?
         .collect::<Result<HashSet<_>>>()?;
     Ok(columns)
-}
-
-fn create_verified_v19_backup(
-    conn: &Connection,
-    backups: &Path,
-) -> std::result::Result<PathBuf, String> {
-    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
-    let path = backups.join(format!(
-        "watchtracker-pre-v19-to-v18-{timestamp}-{}.db",
-        std::process::id(),
-    ));
-    conn.backup(DatabaseName::Main, &path, None)
-        .map_err(|error| {
-            format!(
-                "Could not create SQLite backup at {}: {error}",
-                path.display()
-            )
-        })?;
-
-    let verification = (|| -> Result<()> {
-        let backup = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let integrity: String = backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-        if integrity != "ok" || existing_db_version(&backup)? != KNOWN_DOWNGRADE_VERSION {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        Ok(())
-    })();
-    if let Err(error) = verification {
-        let _ = std::fs::remove_file(&path);
-        return Err(format!("Backup verification failed: {error}"));
-    }
-    Ok(path)
 }
 
 fn downgrade_v19_to_v18(conn: &Connection) -> Result<()> {
@@ -995,6 +967,7 @@ mod tests {
         let backups = std::fs::read_dir(paths.backups())
             .expect("read backup directory")
             .map(|entry| entry.expect("read backup entry").path())
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("db"))
             .collect::<Vec<_>>();
         assert_eq!(backups.len(), 1);
         let backup = Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -1024,7 +997,13 @@ mod tests {
         assert!(columns.contains("chinese_name"));
         assert!(!columns.contains("chineseName"));
         assert_eq!(
-            std::fs::read_dir(paths.backups()).unwrap().count(),
+            std::fs::read_dir(paths.backups())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(
+                    |entry| entry.path().extension().and_then(|value| value.to_str()) == Some("db")
+                )
+                .count(),
             1,
             "verified pre-migration backup must remain available",
         );

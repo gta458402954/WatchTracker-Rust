@@ -436,6 +436,7 @@ export default function App() {
           onSync={syncNow}
           onRestoreConflict={restoreRecord}
           onUpdateRecord={updateRecord}
+          onDatabaseRestored={loadRecords}
           syncInterval={syncInterval}
           onSyncIntervalChange={setSyncInterval}
           onNotify={notify}

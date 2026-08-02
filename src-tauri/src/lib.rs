@@ -9,6 +9,7 @@ mod error;
 mod models;
 mod net;
 mod record_validation;
+mod recovery_points;
 
 #[cfg(test)]
 mod db_atomic_tests;
@@ -95,6 +96,9 @@ pub fn run() {
         .setup(|app| {
             let paths = AppPaths::resolve(app.handle())?;
             setup_logging(&paths)?;
+            if let Err(error) = recovery_points::cleanup_temporary_files(&paths) {
+                log::warn!("Could not clean stale recovery-point temporary files: {error}");
+            }
             log::info!(
                 "Application starting with {} data root: {} (database: {}, posters: {}, backups: {})",
                 paths.mode().as_str(),
@@ -117,6 +121,12 @@ pub fn run() {
             commands::update_record,
             commands::delete_record,
             commands::replace_all_records,
+            commands::create_recovery_point,
+            commands::list_recovery_points,
+            commands::set_recovery_point_retained,
+            commands::delete_recovery_point,
+            commands::restore_recovery_point,
+            commands::open_backup_directory,
             commands::get_setting,
             commands::set_setting,
             commands::vacuum_db,

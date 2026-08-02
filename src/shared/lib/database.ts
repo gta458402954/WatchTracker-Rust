@@ -20,8 +20,58 @@ export async function deleteRecord(id: string): Promise<void> {
   await invoke('delete_record', { id });
 }
 
-export async function replaceAllRecords(records: WatchRecord[]): Promise<void> {
-  return invoke('replace_all_records', { records });
+export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'pre-restore';
+
+export interface RecoveryPoint {
+  id: string;
+  createdAt: string;
+  reason: RecoveryReason;
+  databaseVersion: number;
+  recordCount: number;
+  sizeBytes: number;
+  sha256: string;
+  retained: boolean;
+  integrityOk: boolean;
+}
+
+export interface RecoveryPointList {
+  points: RecoveryPoint[];
+  totalBytes: number;
+  capacityBytes: number;
+  capacityExceeded: boolean;
+}
+
+export interface RecoveryResult {
+  preRestorePointId: string;
+  recordCount: number;
+}
+
+export async function replaceAllRecords(records: WatchRecord[], reason: 'import' | 'sync'): Promise<void> {
+  return invoke('replace_all_records', { records, reason });
+}
+
+export async function createRecoveryPoint(reason: RecoveryReason): Promise<RecoveryPoint> {
+  return invoke('create_recovery_point', { reason });
+}
+
+export async function listRecoveryPoints(): Promise<RecoveryPointList> {
+  return invoke('list_recovery_points');
+}
+
+export async function setRecoveryPointRetained(id: string, retained: boolean): Promise<void> {
+  return invoke('set_recovery_point_retained', { id, retained });
+}
+
+export async function deleteRecoveryPoint(id: string): Promise<void> {
+  return invoke('delete_recovery_point', { id });
+}
+
+export async function restoreRecoveryPoint(id: string): Promise<RecoveryResult> {
+  return invoke('restore_recovery_point', { id });
+}
+
+export async function openBackupDirectory(): Promise<void> {
+  return invoke('open_backup_directory');
 }
 
 export async function downloadPosterAsync(path: string): Promise<boolean> {

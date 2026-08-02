@@ -3,7 +3,23 @@ import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
   saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
 } from '../../../shared/lib/webdav';
-import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
+import {
+  createRecoveryPoint,
+  deleteRecoveryPoint,
+  getSettingAsync,
+  getTmdbDetailAsync,
+  listRecoveryPoints,
+  openBackupDirectory,
+  restoreRecoveryPoint,
+  safeDecrypt,
+  safeEncrypt,
+  searchTmdbAsync,
+  setRecoveryPointRetained,
+  setSettingAsync,
+  vacuumDbAsync,
+  type RecoveryPoint,
+  type RecoveryPointList,
+} from '../../../shared/lib/database';
 import { MEDIA_TYPES, mediaTypeOf, regionsOf, type TmdbMedia } from '../../../shared/lib/classification';
 import {
   BATCH_METADATA_STATE_KEY,
@@ -34,6 +50,7 @@ interface SettingsModalProps {
   onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
   onRestoreConflict?: (record: WatchRecord) => Promise<void>;
   onUpdateRecord: (id: string, updates: UpdateWatchRecord) => Promise<void>;
+  onDatabaseRestored: () => Promise<WatchRecord[]>;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
   onNotify?: (tone: NoticeTone, message: string) => void;
@@ -65,8 +82,21 @@ interface BatchApplyResult {
   reason?: string;
 }
 
+const RECOVERY_REASON_LABELS: Record<RecoveryPoint['reason'], string> = {
+  import: '全量导入前',
+  sync: '同步落盘前',
+  'batch-metadata': '批量补全前',
+  migration: '数据库迁移前',
+  'pre-restore': '恢复操作前',
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function SettingsModal({
-  onClose, records, onImport, onSync, onRestoreConflict, onUpdateRecord,
+  onClose, records, onImport, onSync, onRestoreConflict, onUpdateRecord, onDatabaseRestored,
   syncInterval, onSyncIntervalChange, onNotify
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
@@ -91,6 +121,9 @@ export default function SettingsModal({
   const [tmdbSaved, setTmdbSaved] = useState(false);
 
   const [vacuumStatus, setVacuumStatus] = useState<string>('');
+  const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPointList | null>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState('');
+  const [recoveryBusyId, setRecoveryBusyId] = useState<string | null>(null);
 
   // 批量同步状态
   const [batchPhase, setBatchPhase] = useState<BatchPhase>('idle');
@@ -165,6 +198,19 @@ export default function SettingsModal({
       .catch(error => showFailure('Settings.LoadConflicts', '读取同步冲突', error));
     return () => { cancelled = true; };
   }, [records, showFailure]);
+
+  const refreshRecoveryPoints = useCallback(async () => {
+    try {
+      setRecoveryPoints(await listRecoveryPoints());
+    } catch (error) {
+      showFailure('Settings.ListRecoveryPoints', '读取自动恢复点', error, setRecoveryStatus);
+    }
+  }, [showFailure]);
+
+  function handleOpenToolsTab() {
+    setActiveTab('tools');
+    void refreshRecoveryPoints();
+  }
 
   // 保存 TMDB 密钥
   async function handleSaveTmdbKey() {
@@ -396,6 +442,57 @@ export default function SettingsModal({
     throw lastError;
   }
 
+  async function handleToggleRecoveryRetention(point: RecoveryPoint) {
+    setRecoveryBusyId(point.id);
+    try {
+      await setRecoveryPointRetained(point.id, !point.retained);
+      setRecoveryStatus(point.retained ? '已取消手工保留。' : '已标记为手工保留，不会自动轮转删除。');
+      await refreshRecoveryPoints();
+    } catch (error) {
+      showFailure('Settings.RetainRecoveryPoint', '更新恢复点保留状态', error, setRecoveryStatus);
+    } finally {
+      setRecoveryBusyId(null);
+    }
+  }
+
+  async function handleDeleteRecoveryPoint(point: RecoveryPoint) {
+    if (!confirm(`确定删除 ${new Date(point.createdAt).toLocaleString('zh-CN')} 的恢复点吗？此文件删除后无法恢复。`)) return;
+    setRecoveryBusyId(point.id);
+    try {
+      await deleteRecoveryPoint(point.id);
+      setRecoveryStatus('恢复点已删除。');
+      await refreshRecoveryPoints();
+    } catch (error) {
+      showFailure('Settings.DeleteRecoveryPoint', '删除恢复点', error, setRecoveryStatus);
+    } finally {
+      setRecoveryBusyId(null);
+    }
+  }
+
+  async function handleRestoreRecoveryPoint(point: RecoveryPoint) {
+    const preview = [
+      `恢复点：${new Date(point.createdAt).toLocaleString('zh-CN')}（${RECOVERY_REASON_LABELS[point.reason]}）`,
+      `数据库版本：当前 V18 → 快照 V${point.databaseVersion}`,
+      `记录数量：当前 ${records.length} → 快照 ${point.recordCount}`,
+      '',
+      '恢复会替换整个本地数据库；程序会先自动保存当前数据库。确定继续吗？',
+    ].join('\n');
+    if (!confirm(preview)) return;
+    setRecoveryBusyId(point.id);
+    setRecoveryStatus('正在验证并恢复数据库...');
+    try {
+      const result = await restoreRecoveryPoint(point.id);
+      await onDatabaseRestored();
+      await refreshRecoveryPoints();
+      setRecoveryStatus(`✅ 已恢复 ${result.recordCount} 条记录；恢复前状态也已保存。`);
+      showSuccess('数据库恢复完成。');
+    } catch (error) {
+      showFailure('Settings.RestoreRecoveryPoint', '恢复数据库', error, setRecoveryStatus);
+    } finally {
+      setRecoveryBusyId(null);
+    }
+  }
+
   async function getTmdbDetailWithRetry(id: number, mediaType: 'movie' | 'tv'): Promise<TmdbMedia> {
     let lastError: unknown = new Error('TMDB detail failed');
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -580,6 +677,20 @@ export default function SettingsModal({
       return;
     }
 
+    const actionableCount = selected.filter(plan => {
+      const current = recordsRef.current.find(record => record.id === plan.recordId);
+      return current && !current.isLocked && retainMissingMetadataPatch(current, plan.updates).fields.length > 0;
+    }).length;
+    if (actionableCount >= 2) {
+      setBatchStatus('正在创建批量写入前恢复点...');
+      try {
+        await createRecoveryPoint('batch-metadata');
+      } catch (error) {
+        showFailure('Settings.BatchMetadataRecoveryPoint', '创建批量写入前恢复点', error, setBatchStatus);
+        return;
+      }
+    }
+
     batchCancelRef.current = false;
     setBatchPhase('applying');
     setBatchProgress(0);
@@ -710,7 +821,7 @@ export default function SettingsModal({
               <span className="text-lg">🏷️</span> 类型与标签
             </button>
             <button
-              onClick={() => setActiveTab('tools')}
+              onClick={handleOpenToolsTab}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
                 activeTab === 'tools'
                   ? 'bg-indigo-50 text-indigo-700 font-bold'
@@ -1069,6 +1180,96 @@ export default function SettingsModal({
                     📥 导出备份 JSON
                   </button>
                 </div>
+              </div>
+
+              {/* Automatic Recovery Points */}
+              <div aria-label="自动恢复点" className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
+                <div className="flex items-center justify-between gap-3 border-b border-gray-50 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">🛟</span>
+                    <div>
+                      <h4 className="font-bold text-gray-800">高风险操作自动恢复点</h4>
+                      <p className="text-[11px] text-gray-400">导入、同步全量落盘、两条以上批量补全及恢复前自动保存完整 SQLite 状态</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void refreshRecoveryPoints()}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-50"
+                  >
+                    刷新
+                  </button>
+                </div>
+
+                {recoveryPoints && (
+                  <div className="flex items-center justify-between text-[11px] text-gray-500">
+                    <span>{recoveryPoints.points.length} 个恢复点 · {formatBytes(recoveryPoints.totalBytes)}</span>
+                    <span>自动保留最近 10 个 · 上限 {formatBytes(recoveryPoints.capacityBytes)}</span>
+                  </div>
+                )}
+                {recoveryPoints?.capacityExceeded && (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    手工保留的恢复点使总容量超过上限；程序不会自动删除手工保留项，请按需清理。
+                  </p>
+                )}
+
+                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                  {recoveryPoints?.points.map(point => (
+                    <div
+                      key={point.id}
+                      aria-label={`恢复点 ${RECOVERY_REASON_LABELS[point.reason]}`}
+                      className="rounded-2xl border border-gray-100 bg-gray-50 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-gray-800">
+                            {new Date(point.createdAt).toLocaleString('zh-CN')} · {RECOVERY_REASON_LABELS[point.reason]}
+                          </p>
+                          <p className="mt-1 text-[10px] text-gray-500">
+                            V{point.databaseVersion} · {point.recordCount} 条 · {formatBytes(point.sizeBytes)} · {point.integrityOk ? '校验正常' : '校验失败'}
+                            {point.retained && ' · 已手工保留'}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 text-[10px] font-bold ${point.integrityOk ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {!point.integrityOk ? '不可用' : point.databaseVersion === 18 ? '可恢复' : '仅供迁移回退'}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => void handleRestoreRecoveryPoint(point)}
+                          disabled={!point.integrityOk || point.databaseVersion !== 18 || recoveryBusyId !== null}
+                          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-indigo-700 disabled:bg-gray-300"
+                        >
+                          恢复
+                        </button>
+                        <button
+                          onClick={() => void handleToggleRecoveryRetention(point)}
+                          disabled={recoveryBusyId !== null}
+                          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          {point.retained ? '取消保留' : '手工保留'}
+                        </button>
+                        <button
+                          onClick={() => void handleDeleteRecoveryPoint(point)}
+                          disabled={recoveryBusyId !== null}
+                          className="rounded-lg border border-red-100 bg-white px-3 py-1.5 text-[10px] font-bold text-red-500 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {recoveryPoints && recoveryPoints.points.length === 0 && (
+                    <p className="py-5 text-center text-xs text-gray-400">尚无自动恢复点；首次高风险操作前会自动创建。</p>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => void openBackupDirectory().catch(error => showFailure('Settings.OpenBackupDirectory', '打开备份目录', error, setRecoveryStatus))}
+                  className="w-full rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50"
+                >
+                  打开 backups 目录
+                </button>
+                {recoveryStatus && <p className="text-center text-xs font-medium text-indigo-600">{recoveryStatus}</p>}
               </div>
 
               {/* Database Maintenance */}
