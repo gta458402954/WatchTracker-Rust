@@ -88,7 +88,7 @@ Rust SyncCommit 把本地和合并结果转换为 ID 映射，只对内容实际
 
 - Rust：59/59。覆盖暂存与 CRUD 同事务、连续编辑合并、发布意图恢复或被新确认版本取代、generation 隔离和数组换序零业务写入。
 - Node：68/68。
-- Playwright：49/49。新增发布意图先落盘、匹配远端版本不重复 PUT和严格同设备伪冲突迁移。
+- Playwright：50/50。覆盖发布意图先落盘、匹配远端版本不重复 PUT、严格同设备伪冲突迁移，以及坚果云未加引号 ETag 的 `PROPFIND + WebDAV If` 条件路径。
 - typecheck、lint、生产 build、Rust fmt 与 clippy 全部通过。
 - 未连接真实 WebDAV；未修改真实便携版数据库。
 

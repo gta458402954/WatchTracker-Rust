@@ -17,6 +17,7 @@ export function classifySyncFailure(error?: string): SyncFailureDisposition {
   if (value.includes('stale_local_snapshot')) return 'stale-local';
   if (
     value.includes('conditional_write_unsupported')
+    || value.includes('conditional_validator_rejected')
     || value.includes('unsupported_remote_schema')
     || value.includes('legacy_remote_changed')
     || value.includes('未配置凭据')

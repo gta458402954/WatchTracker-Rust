@@ -1578,7 +1578,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Current Basis: 已有 Tombstone、锁定保留、冲突历史和本地 generation；这些不等于远端 compare-and-swap。
 - Approved Design: `docs/SYNC_CONSISTENCY_DESIGN.md` 已由用户批准。使用独立 `records-v3.json`、ETag 条件写入/首次 `If-None-Match: *`、最多 3 次 412 重拉、完整本地三方基线、字段级合并、持久未解决冲突，以及 Rust `get_sync_snapshot`/`commit_sync_result(expectedGeneration)` 原子边界；数据库保持 V18。坚果云兼容修复将强 ETag 映射到 HTTP `If-Match`、弱 ETag 映射到 WebDAV `If`。
 - Confirmed Decisions: 不同字段自动合并，同字段和删除/编辑冲突由用户选择；无合法条件 ETag 时禁止上传；其他同步设备必须升级到 v3，旧 v2 文件只首次迁移或显式导入。
-- Implementation: `syncMerge.ts` 提供不依赖墙上时钟的三方字段合并、删除语义和冲突冻结；`webdav.ts` 使用独立 v3 资源、ETag 条件 PUT、最多三次 412 重拉、commitId 验证、v2 首次迁移及旧客户端变化阻断。普通 GET/PUT 响应缺少 ETag 时，以受限 `PROPFIND Depth: 0` 获取标准 `DAV:getetag`；强 ETag 使用 HTTP `If-Match`，坚果云弱 ETag 使用 RFC 4918 WebDAV `If`，未加引号的服务器验证器经严格字符校验后规范化为 HTTP ETag，仍无合法验证器才阻断上传。Rust 提供稳定设备 UUID、结构化 WebDAV 响应、条件头白名单、同步快照、`expectedGeneration` CAS、恢复点和单事务 SyncCommit/冲突解决。设置页显示具体冲突字段并提供本机/云端或保留/删除选择。
+- Implementation: `syncMerge.ts` 提供不依赖墙上时钟的三方字段合并、删除语义和冲突冻结；`webdav.ts` 使用独立 v3 资源、ETag 条件 PUT、最多三次 412 重拉、commitId 验证、v2 首次迁移及旧客户端变化阻断。GET 返回规范强 ETag 时使用 HTTP `If-Match`；弱、缺失或未加引号的验证器先经受限 `PROPFIND Depth: 0` 获取 `DAV:getetag`，再使用 RFC 4918 WebDAV `If`。连续三次 412 时比较脱敏验证器指纹：指纹变化才是 `remote_busy`，同一指纹持续被拒绝则停止自动重试并报告 `conditional_validator_rejected`。Rust 提供稳定设备 UUID、结构化 WebDAV 响应、条件头白名单、脱敏条件指纹日志、同步快照、`expectedGeneration` CAS、恢复点和单事务 SyncCommit/冲突解决。设置页显示具体冲突字段并提供本机/云端或保留/删除选择。
 - Acceptance Evidence: Node 纯函数覆盖不同时钟、不同字段、同字段、删除/编辑、锁定、未知 schema、畸形 tombstone、冲突冻结和系统字段差异；Rust 临时库覆盖条件头、稳定设备 ID、原子提交、过期 generation 零副作用、注入失败整体回滚、恢复点保留及冲突选择；Playwright mock 覆盖 v2→v3、首次条件创建、强/弱 ETag、412 重试/上限、PUT 无 ETag 的 commitId 验证、本地并发修改 CAS、无合法 ETag 阻断、未来 schema 拒绝、旧客户端变化检测/显式导入和冲突 UI。真实 WebDAV 与正式数据库均未用于测试。
 - Boundary: 未实现持久化 outbox、启动/聚焦/周期主动拉取或 WebDAV 目标隔离；分别由 `TASK-D-SYNC-002/003` 跟踪。
 
@@ -1609,7 +1609,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Implementation: SQLite 继续保持 V18，两份新状态以版本化 JSON 保存于 `settings`。启动或任何同步触发都先 GET 云端；远端 commitId 与 payload 指纹匹配发布意图时，先确认此前上传，再由同一 SyncCommit 清理对应暂存项。SyncCommit 按记录 ID 计算 upsert/delete，不再因数组排序差异全量替换。
 - Legacy Repair: 仅当远端 writerId、本机 deviceId、记录 revActor/rev 递增关系和当前远端候选逐项吻合时，自动移除历史遗留的 `base = null` 整条记录伪冲突；任何证据不足仍保留给用户选择。
 - Status/UI: 顶部和设置页区分未发布暂存、发布确认恢复、冲突与普通 outbox，不把“远端已写、本地待确认”显示成同步完成。
-- Acceptance Evidence: Rust 临时库验证 CRUD 与暂存同事务、连续编辑按 ID 合并、匹配或被新远端版本取代的发布意图清理，以及 records 数组换序零业务写入；Playwright mock 验证发布意图先于 PUT、匹配 commit 与 payload 指纹后恢复且不重复 PUT、同设备历史伪冲突安全转回上传。完整门禁为 Node 68/68、Playwright 49/49、Rust 59/59、typecheck、lint、build、fmt 和 clippy 全部通过；未连接真实 WebDAV，未写真实便携版数据库。
+- Acceptance Evidence: Rust 临时库验证 CRUD 与暂存同事务、连续编辑按 ID 合并、匹配或被新远端版本取代的发布意图清理，以及 records 数组换序零业务写入；Playwright mock 验证发布意图先于 PUT、匹配 commit 与 payload 指纹后恢复且不重复 PUT、同设备历史伪冲突安全转回上传、未加引号 ETag 的 `PROPFIND + WebDAV If`、固定验证器拒绝与真实变化分流。完整门禁为 Node 68/68、Playwright 50/50、Rust 59/59、typecheck、lint、build、fmt 和 clippy 全部通过；未连接真实 WebDAV，未写真实便携版数据库。
 
 ### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
 

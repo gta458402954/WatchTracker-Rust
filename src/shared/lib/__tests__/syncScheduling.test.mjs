@@ -25,6 +25,7 @@ test('sync failures distinguish retry, local races, and user blockers', () => {
   assert.equal(classifySyncFailure('stale_local_snapshot'), 'stale-local');
   assert.equal(classifySyncFailure('HTTP Error: 401'), 'blocked');
   assert.equal(classifySyncFailure('conditional_write_unsupported'), 'blocked');
+  assert.equal(classifySyncFailure('conditional_validator_rejected'), 'blocked');
   assert.equal(classifySyncFailure('unsupported_remote_schema'), 'blocked');
 });
 

@@ -501,7 +501,7 @@ test('@expected-sync-v3 uses the WebDAV If header for a weak ETag', async ({ pag
   expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
 });
 
-test('@expected-sync-v3 normalizes an unquoted server ETag before If-Match', async ({ page }) => {
+test('@expected-sync-v3 routes an unquoted server ETag through PROPFIND and WebDAV If', async ({ page }) => {
   const base = record('unquoted-etag-server');
   await setupMockIpc(page, {
     records: [record('unquoted-etag-server', { notes: 'safe local change' })],
@@ -522,7 +522,8 @@ test('@expected-sync-v3 normalizes an unquoted server ETag before If-Match', asy
   const snapshot = await mockSnapshot(page);
   const puts = snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT');
   expect(puts).toHaveLength(2);
-  expect(puts.every(call => call.args.ifMatch === '"jianguoyun-unquoted-etag"' && call.args.ifDavEtag === null)).toBe(true);
+  expect(snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PROPFIND')).toHaveLength(2);
+  expect(puts.every(call => call.args.ifMatch === null && call.args.ifDavEtag === '"jianguoyun-unquoted-etag"')).toBe(true);
   expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
 });
 
@@ -610,7 +611,7 @@ test('@expected-sync-v3 uses DAV getetag when GET and PUT omit ETag headers', as
   const propfinds = snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PROPFIND');
   expect(propfinds).toHaveLength(2);
   const put = snapshot.calls.find(call => call.command === 'webdav_request' && call.args.method === 'PUT');
-  expect(put?.args.ifMatch).toBe('"v3-1"');
+  expect(put?.args.ifDavEtag).toBe('"v3-1"');
   expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
   expect(snapshot.settings.sync_v3_remote_etag).toBe('"v3-2"');
 });
@@ -686,12 +687,37 @@ test('@expected-sync-v3 stops after three consecutive precondition failures', as
     },
     webdavV3Remote: v3Payload([base]),
     webdavPreconditionFailures: 3,
+    rotateEtagOnPreconditionFailure: true,
   });
   await page.goto('/');
   const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
   expect(result).toMatchObject({ ok: false, error: 'remote_busy' });
   const snapshot = await mockSnapshot(page);
   expect(snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toHaveLength(3);
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(false);
+});
+
+test('@expected-sync-v3 stops retrying when the same conditional validator is repeatedly rejected', async ({ page }) => {
+  const base = record('rejected-validator', { notes: 'base' });
+  await setupMockIpc(page, {
+    records: [record('rejected-validator', { notes: 'local' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavV3Etag: 'jianguoyun-unquoted-etag',
+    webdavPreconditionFailures: 3,
+  });
+  await page.goto('/');
+
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+
+  expect(result).toMatchObject({ ok: false, error: 'conditional_validator_rejected' });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toHaveLength(3);
+  expect(snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PROPFIND')).toHaveLength(3);
   expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(false);
 });
 

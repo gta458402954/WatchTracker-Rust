@@ -46,6 +46,8 @@ export function syncFailureMessage(error?: string): string | null {
   switch (error) {
     case 'conditional_write_unsupported':
       return '服务器未提供安全条件写入能力，已禁止上传；本地数据没有被覆盖。';
+    case 'conditional_validator_rejected':
+      return '服务器持续拒绝同一个安全写入条件，已停止重试；本地数据没有被覆盖。';
     case 'remote_busy':
       return '云端数据持续变化，请稍后重试。';
     case 'stale_local_snapshot':
@@ -189,17 +191,15 @@ async function conditionalValidatorForResource(
   proxy: string | null,
   resource: string,
 ): Promise<ConditionalValidator> {
-  const responseEtag = normalizedEntityTag(response.etag);
-  if (strongEtag(responseEtag)) return { etag: responseEtag, header: 'if-match' };
+  const rawResponseEtag = response.etag?.trim() ?? null;
+  const responseEtag = normalizedEntityTag(rawResponseEtag);
+  if (rawResponseEtag && entityTagKind(rawResponseEtag) === 'strong') {
+    return { etag: rawResponseEtag, header: 'if-match' };
+  }
   const properties = await webdavRequest('PROPFIND', creds, proxy, resource);
-  const propertyEtag = successful(properties.status)
-    ? (normalizedEntityTag(properties.etag) ?? davEtagFromPropfind(properties.text))
-    : null;
-  const candidates = [propertyEtag, responseEtag].filter((value): value is string => Boolean(value));
-  const strong = candidates.find(value => entityTagKind(value) === 'strong');
-  if (strong) return { etag: strong, header: 'if-match' };
-  const weak = candidates.find(value => entityTagKind(value) === 'weak');
-  if (weak) return { etag: weak, header: 'dav-if' };
+  const propertyEtag = successful(properties.status) ? davEtagFromPropfind(properties.text) : null;
+  if (propertyEtag) return { etag: propertyEtag, header: 'dav-if' };
+  if (responseEtag) return { etag: responseEtag, header: 'dav-if' };
   throw new Error('conditional_write_unsupported');
 }
 
@@ -229,6 +229,7 @@ function syncError(error: unknown): SyncResult {
   }
   if (message.includes('unsupported_remote_schema')) return { ok: false, error: 'unsupported_remote_schema' };
   if (message.includes('conditional_write_unsupported')) return { ok: false, error: 'conditional_write_unsupported' };
+  if (message.includes('conditional_validator_rejected')) return { ok: false, error: 'conditional_validator_rejected' };
   if (message.includes('legacy_remote_changed')) return { ok: false, error: 'legacy_remote_changed' };
   return { ok: false, error: message };
 }
@@ -244,6 +245,7 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
     if (!successful(folder.status) && folder.status !== 405) throw new Error(`HTTP Error: ${folder.status}`);
     const snapshot = await getSyncSnapshot();
     const localSide: SyncMergeSide = { records: snapshot.records, tombstones: snapshot.tombstones };
+    const rejectedValidatorFingerprints: string[] = [];
 
     for (let attempt = 0; attempt < MAX_PRECONDITION_RETRIES; attempt++) {
       const v3Response = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
@@ -327,7 +329,13 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
           creating ? '*' : null,
           !creating && validator?.header === 'dav-if' ? validator.etag : null,
         );
-        if (put.status === 412) continue;
+        if (put.status === 412) {
+          rejectedValidatorFingerprints.push(await contentFingerprint({
+            mode: creating ? 'if-none-match' : validator?.header,
+            etag: creating ? '*' : validator?.etag,
+          }));
+          continue;
+        }
         if (!successful(put.status)) throw new Error(`HTTP Error: ${put.status}`);
         confirmedPayload = nextPayload;
         confirmedEtag = put.etag;
@@ -364,6 +372,10 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
         conflictCount: merged.conflicts.length,
         legacyImported,
       };
+    }
+    if (rejectedValidatorFingerprints.length === MAX_PRECONDITION_RETRIES
+      && new Set(rejectedValidatorFingerprints).size === 1) {
+      return { ok: false, error: 'conditional_validator_rejected' };
     }
     return { ok: false, error: 'remote_busy' };
   } catch (error) {

@@ -32,6 +32,7 @@ function safeFailureCode(error?: string): string {
   const value = error ?? '';
   const known = [
     'remote_busy', 'stale_local_snapshot', 'conditional_write_unsupported',
+    'conditional_validator_rejected',
     'unsupported_remote_schema', 'legacy_remote_changed',
   ].find(code => value.includes(code));
   if (known) return known;
@@ -144,7 +145,8 @@ export function useWatchList(
       const runtime = await refreshSyncRuntime();
       if (runtime.scheduler.paused || !await hasCreds()) return;
       const retryFixedConditionalWriteOnStartup = trigger === 'startup'
-        && runtime.scheduler.lastErrorCode === 'conditional_write_unsupported';
+        && ['conditional_write_unsupported', 'conditional_validator_rejected']
+          .includes(runtime.scheduler.lastErrorCode ?? '');
       if (runtime.scheduler.lastErrorCode && !runtime.scheduler.nextAttemptAt
         && trigger !== 'resume' && !retryFixedConditionalWriteOnStartup) return;
       if (trigger !== 'online' && trigger !== 'resume' && !isDue(runtime.scheduler.nextAttemptAt, Date.now())) {

@@ -2,6 +2,7 @@ use crate::app_paths::AppPaths;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -367,8 +368,35 @@ fn etag_shape(value: Option<&str>) -> &'static str {
     }
 }
 
+fn validator_fingerprint(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, String> {
     log::info!("[WebDAV] {} Request to: {}", request.method, request.url);
+    if request.method == "PUT" {
+        if let Some(value) = request.if_match.as_deref() {
+            log::info!(
+                "[WebDAV] PUT condition: if-match; validator fingerprint: {}",
+                validator_fingerprint(value)
+            );
+        } else if let Some(value) = request.if_dav_etag.as_deref() {
+            log::info!(
+                "[WebDAV] PUT condition: dav-if; validator fingerprint: {}",
+                validator_fingerprint(value)
+            );
+        } else if let Some(value) = request.if_none_match.as_deref() {
+            log::info!(
+                "[WebDAV] PUT condition: if-none-match; validator fingerprint: {}",
+                validator_fingerprint(value)
+            );
+        }
+    }
 
     let mut builder = Client::builder();
     if let Some(p) = request.proxy {

@@ -82,7 +82,7 @@ React UI
 
 已经实现：
 
-- 独立 `records-v3.json`、ETag 条件写入和 412 重拉：强 ETag 使用 HTTP `If-Match`，坚果云返回弱 ETag 时使用 WebDAV `If`，未加引号的服务器验证器经严格校验后规范化为 HTTP ETag，首次创建使用 `If-None-Match: *`；普通响应无 ETag 时以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，仍无合法 ETag 才禁止上传；
+- 独立 `records-v3.json`、ETag 条件写入和 412 重拉：GET 返回规范强 ETag 时使用 HTTP `If-Match`；弱、缺失或未加引号的验证器先以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，再使用 WebDAV `If`；首次创建使用 `If-None-Match: *`，仍无合法验证器才禁止上传；连续三次 412 只有在验证器指纹确实变化时才报告 `remote_busy`，固定指纹被拒绝则停止自动重试并保留本地数据；
 - 共同 baseline 三方字段合并、删除 Tombstone、锁定保护和持久冲突中心；
 - `get_sync_snapshot`、`commit_sync_result(expectedGeneration)`、恢复点和本地原子落盘；
 - 旧数组/schema v2 首次迁移、旧客户端后续写入检测和显式冲突导入；
@@ -112,7 +112,7 @@ React UI
 npm run typecheck  PASS
 npm run lint       PASS
 npm run test       PASS（68/68）
-npx playwright test PASS（49/49）
+npx playwright test PASS（50/50）
 npm run build      PASS
 cargo fmt/clippy   PASS
 cargo test --locked PASS（59/59）

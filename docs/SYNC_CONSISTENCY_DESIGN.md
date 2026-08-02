@@ -72,8 +72,8 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 - 已存在资源：强 ETag 以 HTTP `If-Match` 提交；服务器只提供规范弱 ETag 时，以 WebDAV `If: ([W/"…"])` 提交。两种条件失败均必须返回 412，并进入重拉重算。
 - 首次创建：PUT 必须携带 `If-None-Match: *`。
 - 412：表示资源已变化，不落本地合并结果；重新 GET、重新三方合并并重试，建议最多 3 次。
-- 连续 3 次 412：停止并提示“云端数据持续变化，请稍后重试”，不进行无条件覆盖。
-- GET/PUT 响应缺少 ETag 时，先以受限的 `PROPFIND Depth: 0` 读取标准 `DAV:getetag`。强 ETag 使用 HTTP `If-Match`；规范弱 ETag 使用 RFC 4918 WebDAV `If` 条件；服务器返回未加引号的非标准验证器时，只在非空且不含引号或控制字符后将其规范化为带引号 ETag。GET/PROPFIND 均没有可安全规范化的实体标签时进入安全只读模式，允许下载和预览，不允许自动 PUT。
+- 连续 3 次 412：比较每轮条件类型与验证器的脱敏 SHA-256 指纹。指纹变化时停止并提示“云端数据持续变化，请稍后重试”；三轮指纹相同时报告服务器拒绝该条件格式并停止自动重试。两种情况都不进行无条件覆盖。
+- GET 返回规范强 ETag 时使用 HTTP `If-Match`。GET 返回弱、缺失或未加引号的非标准验证器时，先以受限的 `PROPFIND Depth: 0` 读取标准 `DAV:getetag`，再使用 RFC 4918 WebDAV `If` 条件；未加引号值只在非空且不含引号或控制字符时规范化。GET/PROPFIND 均没有可安全规范化的实体标签时进入安全只读模式，允许下载和预览，不允许自动 PUT。
 - PUT 成功但响应未返回新 ETag：立即 GET 验证 `commitId`，以验证响应的 ETag/内容作为新基线。
 
 依据：WebDAV RFC 4918 明确指出时间戳不如 ETag 适合避免 lost update；HTTP RFC 9110 规定 `If-Match` 不满足时应以 412 阻止状态变更。实现不采用 WebDAV LOCK，因为部署差异、锁续期和崩溃后的锁恢复会扩大本任务复杂度。
@@ -145,7 +145,8 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 ## 9. 失败状态与用户提示
 
 - `remote_precondition_failed`：内部重拉重试，不立即制造冲突。
-- `remote_busy`：3 次 412 后提示稍后重试。
+- `remote_busy`：3 次 412 且条件验证器指纹持续变化，提示稍后重试。
+- `conditional_validator_rejected`：3 次 412 的条件验证器指纹相同；停止自动重试并说明服务器拒绝安全写入条件，本地数据未覆盖。
 - `conditional_write_unsupported`：服务器无可用于 HTTP/WebDAV 条件写入的合法 ETag；禁止上传，说明数据仍在本地。
 - `stale_local_snapshot`：同步期间本地有新修改；不覆盖本地，自动安排下一轮。
 - `local_commit_failed_after_remote_success`：提示云端已安全提交、本地尚未确认；下轮重新协调。
@@ -187,6 +188,6 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 
 ## 13. 实施结果
 
-2026-08-02 已按本设计完成 schema v3 条件同步。实现包含纯函数三方合并、冲突冻结、独立 `records-v3.json`、ETag 条件写入、三次 412 重拉、PUT 后 commitId 验证、稳定设备 UUID、Rust `get_sync_snapshot`/`commit_sync_result`、本地 generation CAS、同步恢复点、原子冲突选择、旧版文件变化检测和显式冲突导入。针对坚果云兼容性，已增加受限 `PROPFIND Depth: 0` 的 `DAV:getetag` 回退，并将强 ETag 映射到 HTTP `If-Match`、弱 ETag 映射到 RFC 4918 WebDAV `If`；安全门禁和零无条件 PUT 要求不变。数据库继续保持 V18。
+2026-08-02 已按本设计完成 schema v3 条件同步。实现包含纯函数三方合并、冲突冻结、独立 `records-v3.json`、ETag 条件写入、三次 412 重拉、PUT 后 commitId 验证、稳定设备 UUID、Rust `get_sync_snapshot`/`commit_sync_result`、本地 generation CAS、同步恢复点、原子冲突选择、旧版文件变化检测和显式冲突导入。针对坚果云兼容性，规范强 ETag 映射到 HTTP `If-Match`；弱、缺失或未加引号的验证器经受限 `PROPFIND Depth: 0` 获取 `DAV:getetag` 后映射到 RFC 4918 WebDAV `If`。三次 412 会用脱敏验证器指纹区分真实远端变化与固定条件被拒绝；安全门禁和零无条件 PUT 要求不变。数据库继续保持 V18。
 
 `TASK-D-SYNC-002` 的持久化 outbox、异常退出后重试、启动/聚焦/周期主动拉取，以及 `TASK-D-SYNC-003` 的目标命名空间隔离均未混入本任务。

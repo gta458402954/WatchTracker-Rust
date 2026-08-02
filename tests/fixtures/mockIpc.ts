@@ -16,6 +16,7 @@ export interface MockIpcOptions {
   webdavV3Remote?: SyncPayloadV3 | null;
   webdavV3Etag?: string | null;
   webdavPreconditionFailures?: number;
+  rotateEtagOnPreconditionFailure?: boolean;
   mutateLocalDuringPut?: boolean;
   omitPutEtag?: boolean;
   omitGetEtag?: boolean;
@@ -49,7 +50,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -443,6 +444,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (request.method === 'PUT' && String(request.url).endsWith('records-v3.json')) {
                 if (remainingPreconditionFailures > 0) {
                   remainingPreconditionFailures -= 1;
+                  if (rotateEtagOnPreconditionFailure) v3Etag = `"external-${remainingPreconditionFailures}"`;
                   return { status: 412, body: null, etag: v3Etag };
                 }
                 const normalizedV3Etag = v3Etag && !v3Etag.includes('"') ? `"${v3Etag}"` : v3Etag;
@@ -482,6 +484,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       webdavV3Remote: options.webdavV3Remote ?? null,
       webdavV3Etag: options.webdavV3Etag === undefined ? '"v3-1"' : options.webdavV3Etag,
       webdavPreconditionFailures: options.webdavPreconditionFailures ?? 0,
+      rotateEtagOnPreconditionFailure: options.rotateEtagOnPreconditionFailure ?? false,
       mutateLocalDuringPut: options.mutateLocalDuringPut ?? false,
       omitPutEtag: options.omitPutEtag ?? false,
       omitGetEtag: options.omitGetEtag ?? false,
