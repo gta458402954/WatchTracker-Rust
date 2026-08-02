@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001/002` 已实现，剩余为 1 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001/002` 与 `TASK-D-SYNC-001-R2` 已实现，剩余为 1 个 `SPECIFIED`、12 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1490,6 +1490,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-DATA-004` | R0 | 数据恢复 | IMPLEMENTED | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | IMPLEMENTED | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | IMPLEMENTED | 持久 outbox、主动拉取与退避已实现 |
+| `TASK-D-SYNC-001-R2` | R0 | 同步恢复与增量落盘 | IMPLEMENTED | 版本暂存、发布意图与伪冲突修复 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
@@ -1596,6 +1597,19 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Boundary: 保持 V18；不实施 WebDAV target ID、账号/URL 切换迁移、凭据保护或后台常驻服务，这些仍由 `TASK-D-SYNC-003`、`TASK-D-SEC-001` 及后续任务跟踪。
 - Implementation: `sync_outbox_v1` 以 generation 高水位合并本地写入，`sync_scheduler_v1` 持久保存暂停、失败、next attempt 和最近远端检查；Rust 本地写事务原子入队，SyncCommit 按 `expectedGeneration` 原子确认。前端单一协调器接入编辑 debounce、启动、focus/visibility、online、独立周期和手动触发，并实现串行化、退避和通知去重。纯 clean pull 不创建恢复点或递增 generation。
 - Acceptance Evidence: Rust 临时库覆盖 outbox 与记录/代数同事务、注入失败回滚、连续更新合并、过期 CAS 保留、成功/非确认提交、暂停/失败持久化、畸形 outbox 阻断、恢复点还原重新入队及 clean pull 无写放大；Node 覆盖拉取周期、失败分类、退避/抖动、聚焦冷却和时钟回拨；Playwright mock 覆盖 pending 跨重载、暂停恢复、focus 拉取远端-only 修改、503 持久退避和 401 阻断。真实 WebDAV 与正式数据库未用于测试。
+
+### TASK-D-SYNC-001-R2：版本暂存、发布恢复与按 ID 增量落盘
+
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
+- Priority: R0
+- Problem: 远端 PUT 已成功但本地 SyncCommit 失败时，旧实现没有可恢复的发布凭据；下一轮可能在无 baseline 情况下把本机和刚上传的云端数据当作整条记录冲突。记录数组顺序变化还会触发 1,000 余条全量重写。
+- Approved Design: `docs/SYNC_STAGING_DESIGN.md`。所有本地记录事务同时维护按记录 ID 合并的 `sync_staging_v1`；PUT 前先持久化 `sync_publish_intent_v1`（commitId、前序 commitId、generation、包含的暂存项和 payload SHA-256）；每轮同步固定为 Pull → Merge → 必要时 Push → 本地 Commit。
+- Implementation: SQLite 继续保持 V18，两份新状态以版本化 JSON 保存于 `settings`。启动或任何同步触发都先 GET 云端；远端 commitId 与 payload 指纹匹配发布意图时，先确认此前上传，再由同一 SyncCommit 清理对应暂存项。SyncCommit 按记录 ID 计算 upsert/delete，不再因数组排序差异全量替换。
+- Legacy Repair: 仅当远端 writerId、本机 deviceId、记录 revActor/rev 递增关系和当前远端候选逐项吻合时，自动移除历史遗留的 `base = null` 整条记录伪冲突；任何证据不足仍保留给用户选择。
+- Status/UI: 顶部和设置页区分未发布暂存、发布确认恢复、冲突与普通 outbox，不把“远端已写、本地待确认”显示成同步完成。
+- Acceptance Evidence: Rust 临时库验证 CRUD 与暂存同事务、连续编辑按 ID 合并、匹配或被新远端版本取代的发布意图清理，以及 records 数组换序零业务写入；Playwright mock 验证发布意图先于 PUT、匹配 commit 与 payload 指纹后恢复且不重复 PUT、同设备历史伪冲突安全转回上传。完整门禁为 Node 68/68、Playwright 49/49、Rust 59/59、typecheck、lint、build、fmt 和 clippy 全部通过；未连接真实 WebDAV，未写真实便携版数据库。
 
 ### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
 

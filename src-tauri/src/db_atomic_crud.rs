@@ -38,9 +38,10 @@ pub fn insert_record_atomic(
         tombstones.retain(|tombstone| tombstone.id != id);
         set_tombstones_tx(&transaction, &tombstones)?;
     }
-    mark_local_records_mutated(&transaction, "record-insert")?;
+    let generation = mark_local_records_mutated(&transaction, "record-insert")?;
     let persisted = db::get_record(&transaction, &id)?
         .ok_or_else(|| AppError::General(format!("Record not found after upsert: {id}")))?;
+    crate::sync_staging::stage_upsert(&transaction, &persisted, generation)?;
     transaction.commit()?;
     Ok(persisted)
 }
@@ -74,7 +75,8 @@ pub fn delete_record_atomic(
         rev_actor: actor_id.to_string(),
     });
     set_tombstones_tx(&transaction, &tombstones)?;
-    mark_local_records_mutated(&transaction, "record-delete")?;
+    let generation = mark_local_records_mutated(&transaction, "record-delete")?;
+    crate::sync_staging::stage_delete(&transaction, id, generation)?;
     transaction.commit()?;
     Ok(())
 }
@@ -98,7 +100,8 @@ pub fn replace_all_records_atomic(
             .collect(),
     )?;
     db::replace_all_records_tx(&transaction, records)?;
-    mark_local_records_mutated(&transaction, "records-replace")?;
+    let generation = mark_local_records_mutated(&transaction, "records-replace")?;
+    crate::sync_staging::rebuild_from_current(&transaction, generation)?;
     transaction.commit()?;
     Ok(())
 }

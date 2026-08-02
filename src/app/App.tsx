@@ -332,7 +332,10 @@ export default function App() {
         syncMsg={syncMsg}
         onQuickSync={handleQuickSync}
         isSyncPaused={isSyncPaused}
-        syncPending={syncRuntime?.outbox.pending ?? false}
+        syncPending={Boolean(syncRuntime && (
+          syncRuntime.outbox.pending || syncRuntime.stagedCount > 0
+          || syncRuntime.publishPending || syncRuntime.conflictCount > 0
+        ))}
         onToggleSyncPause={toggleSyncPause}
         viewMode={viewMode}
         onViewModeChange={setViewMode}

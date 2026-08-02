@@ -100,7 +100,7 @@ export function useWatchList(
         await loadRecordsOnly();
         const runtime = await refreshSyncRuntime();
         if (result.conflictCount && !manual) {
-          onBackgroundError?.(`自动同步完成，有 ${result.conflictCount} 项冲突需要在设置中选择。`);
+          onBackgroundError?.(`云端核对完成，有 ${result.conflictCount} 项冲突需要在设置中选择。`);
         }
         if (runtime.outbox.pending) rerunRequestedRef.current = true;
       } else {

@@ -10,6 +10,7 @@ mod models;
 mod net;
 mod record_validation;
 mod recovery_points;
+mod sync_staging;
 mod sync_state;
 
 #[cfg(test)]
@@ -127,6 +128,7 @@ pub fn run() {
             commands::set_auto_sync_paused,
             commands::record_sync_failure,
             commands::commit_sync_result,
+            commands::prepare_sync_publish_intent,
             commands::resolve_sync_conflict,
             commands::create_recovery_point,
             commands::list_recovery_points,

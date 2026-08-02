@@ -9,6 +9,7 @@ mod tests {
     };
     use crate::db_atomic_update::update_record_atomic;
     use crate::models::{Patch, RecordStatus, UpdateWatchRecord, WatchRecord};
+    use crate::sync_staging::get_staging;
     use rusqlite::Connection;
 
     fn record(id: &str) -> WatchRecord {
@@ -97,6 +98,11 @@ mod tests {
                 rev_actor: String::new(),
             }]
         );
+        let staging = get_staging(&conn).unwrap();
+        assert_eq!(staging.entries.len(), 1);
+        assert_eq!(staging.entries[0].id, "inserted");
+        assert!(staging.entries[0].base.is_none());
+        assert!(staging.entries[0].local.is_some());
     }
 
     #[test]
@@ -371,6 +377,18 @@ mod tests {
         assert_eq!(outbox.reasons, vec!["record-update"]);
         assert!(outbox.first_queued_at.is_some());
         assert!(outbox.last_queued_at.is_some());
+        let staging = get_staging(&conn).unwrap();
+        assert_eq!(staging.entries.len(), 1);
+        assert_eq!(staging.entries[0].first_generation, 1);
+        assert_eq!(staging.entries[0].last_generation, 3);
+        assert_eq!(
+            staging.entries[0]
+                .local
+                .as_ref()
+                .and_then(|value| value.get("progress"))
+                .and_then(serde_json::Value::as_str),
+            Some("3")
+        );
     }
 
     #[test]

@@ -9,10 +9,12 @@ use crate::error::AppError;
 use crate::models::WatchRecord;
 use crate::record_validation::prepare_import_batch;
 use crate::recovery_points;
+use crate::sync_staging::{SyncPublishIntent, SyncStaging};
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 const DEVICE_ID_KEY: &str = "sync_device_id_v1";
@@ -58,6 +60,8 @@ pub struct SyncRuntimeState {
     pub scheduler: SyncSchedulerState,
     pub conflict_count: usize,
     pub last_commit: Option<Value>,
+    pub staged_count: usize,
+    pub publish_pending: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +78,8 @@ pub struct SyncSnapshot {
     pub v2_source_fingerprint: Option<String>,
     pub outbox: SyncOutbox,
     pub scheduler: SyncSchedulerState,
+    pub staging: SyncStaging,
+    pub publish_intent: Option<SyncPublishIntent>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +256,8 @@ pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
         v2_source_fingerprint: get_setting_tx(conn, V2_FINGERPRINT_KEY)?,
         outbox,
         scheduler: scheduler_state(conn)?,
+        staging: crate::sync_staging::get_staging(conn)?,
+        publish_intent: crate::sync_staging::get_publish_intent(conn)?,
     })
 }
 
@@ -261,6 +269,8 @@ pub fn runtime_state(conn: &Connection) -> Result<SyncRuntimeState, AppError> {
             scheduler: state.scheduler,
             conflict_count: state.conflicts.len(),
             last_commit: state.last_commit,
+            staged_count: state.staging.entries.len(),
+            publish_pending: state.publish_intent.is_some(),
         });
     };
     let conflicts = match parse_optional_json(get_setting_tx(conn, CONFLICTS_KEY)?, CONFLICTS_KEY)?
@@ -278,7 +288,17 @@ pub fn runtime_state(conn: &Connection) -> Result<SyncRuntimeState, AppError> {
         scheduler: scheduler_state(conn)?,
         conflict_count: conflicts.len(),
         last_commit: parse_optional_json(get_setting_tx(conn, LAST_COMMIT_KEY)?, LAST_COMMIT_KEY)?,
+        staged_count: crate::sync_staging::get_staging(conn)?.entries.len(),
+        publish_pending: crate::sync_staging::get_publish_intent(conn)?.is_some(),
     })
+}
+
+pub fn prepare_publish_intent(
+    conn: &Connection,
+    input: crate::sync_staging::PreparePublishIntentInput,
+) -> Result<SyncPublishIntent, AppError> {
+    let generation = get_records_generation(conn)?;
+    crate::sync_staging::prepare_publish_intent(conn, generation, input)
 }
 
 pub fn set_paused(conn: &Connection, paused: bool) -> Result<SyncRuntimeState, AppError> {
@@ -324,12 +344,52 @@ pub fn commit(
     let records = prepare_import_batch(input.records)?;
     let existing_records = db::get_all_records(conn)?;
     let existing_tombstones = get_tombstones_tx(conn)?;
-    let records_changed = serde_json::to_value(&existing_records).map_err(|error| {
-        AppError::General(format!("Could not compare existing sync records: {error}"))
-    })? != serde_json::to_value(&records).map_err(|error| {
-        AppError::General(format!("Could not compare incoming sync records: {error}"))
-    })?;
-    let business_state_changed = records_changed || existing_tombstones != input.tombstones;
+    let existing_by_id: BTreeMap<_, _> = existing_records
+        .iter()
+        .map(|record| (record.id.clone(), record))
+        .collect();
+    let incoming_by_id: BTreeMap<_, _> = records
+        .iter()
+        .map(|record| (record.id.clone(), record))
+        .collect();
+    let locked_ids: HashSet<_> = existing_records
+        .iter()
+        .filter(|record| record.is_locked.unwrap_or(false))
+        .map(|record| record.id.clone())
+        .collect();
+    let mut upserts = Vec::new();
+    for (id, incoming) in &incoming_by_id {
+        if locked_ids.contains(id) {
+            continue;
+        }
+        let changed = existing_by_id.get(id).map_or(true, |existing| {
+            serde_json::to_value(*existing).ok() != serde_json::to_value(*incoming).ok()
+        });
+        if changed {
+            upserts.push((*incoming).clone());
+        }
+    }
+    let deletes: Vec<_> = existing_by_id
+        .keys()
+        .filter(|id| !locked_ids.contains(*id) && !incoming_by_id.contains_key(*id))
+        .cloned()
+        .collect();
+    let tombstone_values = |items: &[Tombstone]| -> BTreeMap<String, Value> {
+        items
+            .iter()
+            .filter_map(|item| {
+                serde_json::to_value(item)
+                    .ok()
+                    .map(|value| (item.id.clone(), value))
+            })
+            .collect()
+    };
+    let tombstones_changed =
+        tombstone_values(&existing_tombstones) != tombstone_values(&input.tombstones);
+    let business_state_changed = !upserts.is_empty() || !deletes.is_empty() || tombstones_changed;
+    let upsert_count = upserts.len();
+    let delete_count = deletes.len();
+    let unchanged_count = incoming_by_id.len().saturating_sub(upsert_count);
     let baseline = serde_json::to_string(&input.baseline).map_err(|error| {
         AppError::General(format!("Could not serialize sync baseline: {error}"))
     })?;
@@ -339,6 +399,11 @@ pub fn commit(
     let last_commit = serde_json::to_string(&input.last_commit).map_err(|error| {
         AppError::General(format!("Could not serialize last sync commit: {error}"))
     })?;
+    let committed_id = input
+        .baseline
+        .get("commitId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     if business_state_changed {
         recovery_points::create(conn, paths, "sync")?;
@@ -348,8 +413,24 @@ pub fn commit(
         return Err(AppError::General("stale_local_snapshot".to_string()));
     }
     if business_state_changed {
-        db::replace_all_records_tx(&transaction, records)?;
-        set_tombstones_tx(&transaction, &input.tombstones)?;
+        for id in &deletes {
+            transaction.execute(
+                "DELETE FROM records WHERE id = ?1 AND (isLocked IS NULL OR isLocked = 0)",
+                [id],
+            )?;
+        }
+        for record in upserts {
+            db::insert_record(&transaction, record)?;
+        }
+        if tombstones_changed {
+            set_tombstones_tx(&transaction, &input.tombstones)?;
+        }
+        log::info!(
+            "[Sync] Applied record delta: {} upserts, {} deletes, {} unchanged",
+            upsert_count,
+            delete_count,
+            unchanged_count,
+        );
     }
     set_setting_tx(&transaction, BASELINE_KEY, &baseline)?;
     set_setting_tx(&transaction, CONFLICTS_KEY, &conflicts)?;
@@ -364,6 +445,15 @@ pub fn commit(
         input.expected_generation
     };
     if input.acknowledge_outbox {
+        if let Some(committed_id) = committed_id.as_deref() {
+            crate::sync_staging::finish_publish(
+                &transaction,
+                committed_id,
+                input.expected_generation,
+            )?;
+        } else if crate::sync_staging::get_publish_intent(&transaction)?.is_some() {
+            return Err(AppError::General("Missing committed sync ID".to_string()));
+        }
         acknowledge_sync_outbox(&transaction, input.expected_generation)?;
         let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mut scheduler = scheduler_state(&transaction)?;
@@ -442,7 +532,12 @@ pub fn resolve_conflict(
             AppError::General(format!("Could not serialize conflicts: {error}"))
         })?,
     )?;
-    mark_local_records_mutated(&transaction, "conflict-resolution")?;
+    let generation = mark_local_records_mutated(&transaction, "conflict-resolution")?;
+    if let Some(record) = db::get_record(&transaction, id)? {
+        crate::sync_staging::stage_upsert(&transaction, &record, generation)?;
+    } else {
+        crate::sync_staging::stage_delete(&transaction, id, generation)?;
+    }
     transaction.commit()?;
     Ok(())
 }
@@ -452,7 +547,9 @@ mod tests {
     use super::*;
     use crate::app_paths::AppPaths;
     use crate::db;
+    use crate::db_atomic_crud::insert_record_atomic;
     use crate::db_atomic_helpers::set_setting_tx;
+    use crate::sync_staging::{get_publish_intent, get_staging, PreparePublishIntentInput};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -571,6 +668,87 @@ mod tests {
                 .count(),
             backups_before
         );
+    }
+
+    #[test]
+    fn publish_intent_survives_until_matching_commit_and_clears_captured_staging() {
+        let mut test = TestDatabase::new("publish-intent");
+        let staged = insert_record_atomic(
+            &mut test.conn,
+            TestDatabase::record("staged"),
+            "fixture-device",
+        )
+        .unwrap();
+        let intent = prepare_publish_intent(
+            &test.conn,
+            PreparePublishIntentInput {
+                commit_id: "recoverable-commit".into(),
+                previous_commit_id: Some("previous".into()),
+                expected_generation: 1,
+                payload_fingerprint: "payload-sha".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(intent.included_entries.len(), 1);
+        assert!(get_publish_intent(&test.conn).unwrap().is_some());
+
+        let mut input = test.input(1);
+        input.records = vec![staged];
+        input.baseline = serde_json::json!({
+            "schemaVersion": 3,
+            "commitId": "recoverable-commit",
+            "records": input.records.clone(),
+            "tombstones": []
+        });
+        input.last_commit = serde_json::json!({"commitId": "recoverable-commit"});
+        commit(&mut test.conn, &test.paths, input).unwrap();
+
+        assert!(get_publish_intent(&test.conn).unwrap().is_none());
+        assert!(get_staging(&test.conn).unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn newer_confirmed_remote_commit_supersedes_an_uncertain_publish_intent() {
+        let mut test = TestDatabase::new("superseded-publish-intent");
+        let staged = insert_record_atomic(
+            &mut test.conn,
+            TestDatabase::record("staged"),
+            "fixture-device",
+        )
+        .unwrap();
+        prepare_publish_intent(
+            &test.conn,
+            PreparePublishIntentInput {
+                commit_id: "uncertain-commit".into(),
+                previous_commit_id: Some("previous".into()),
+                expected_generation: 1,
+                payload_fingerprint: "payload-sha".into(),
+            },
+        )
+        .unwrap();
+
+        let mut input = test.input(1);
+        input.records = vec![staged];
+        input.baseline["commitId"] = serde_json::json!("newer-confirmed-commit");
+        commit(&mut test.conn, &test.paths, input).unwrap();
+
+        assert!(get_publish_intent(&test.conn).unwrap().is_none());
+        assert!(get_staging(&test.conn).unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn sync_record_comparison_is_independent_of_array_order() {
+        let mut test = TestDatabase::new("record-order");
+        let mut first = test.input(0);
+        first.records = vec![TestDatabase::record("a"), TestDatabase::record("b")];
+        commit(&mut test.conn, &test.paths, first).unwrap();
+        let generation = get_records_generation(&test.conn).unwrap();
+
+        let mut reordered = test.input(generation);
+        reordered.records = vec![TestDatabase::record("b"), TestDatabase::record("a")];
+        let result = commit(&mut test.conn, &test.paths, reordered).unwrap();
+
+        assert_eq!(result.records_generation, generation);
     }
 
     #[test]

@@ -115,7 +115,7 @@ pub fn update_record_atomic(
         tombstones.retain(|tombstone| tombstone.id != id);
         set_tombstones_tx(&transaction, &tombstones)?;
     }
-    mark_local_records_mutated(&transaction, "record-update")?;
+    let generation = mark_local_records_mutated(&transaction, "record-update")?;
     let record = db::get_record(&transaction, id)?
         .ok_or_else(|| AppError::General(format!("Record not found after update: {id}")))?;
     if names_changed && record.original_name.is_empty() && record.chinese_name.is_empty() {
@@ -123,6 +123,7 @@ pub fn update_record_atomic(
             "Invalid name: at least one title is required".to_string(),
         ));
     }
+    crate::sync_staging::stage_upsert(&transaction, &record, generation)?;
     transaction.commit()?;
     Ok(record)
 }

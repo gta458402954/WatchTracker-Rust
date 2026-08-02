@@ -238,6 +238,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 v2SourceFingerprint: snapshot.settings.sync_v2_source_fingerprint || null,
                 outbox: structuredClone(outbox),
                 scheduler: structuredClone(scheduler),
+                staging: parse('sync_staging_v1') || { version: 1, entries: [] },
+                publishIntent: parse('sync_publish_intent_v1'),
               };
             }
             case 'get_sync_runtime_state':
@@ -246,6 +248,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
                 conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
                 lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
+                stagedCount: JSON.parse(snapshot.settings.sync_staging_v1 || '{"entries":[]}').entries.length,
+                publishPending: Boolean(snapshot.settings.sync_publish_intent_v1),
               };
             case 'set_auto_sync_paused':
               requireKeys(command, args, ['paused']);
@@ -256,6 +260,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
                 conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
                 lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
+                stagedCount: JSON.parse(snapshot.settings.sync_staging_v1 || '{"entries":[]}').entries.length,
+                publishPending: Boolean(snapshot.settings.sync_publish_intent_v1),
               };
             case 'record_sync_failure':
               requireKeys(command, args, ['code', 'nextAttemptAt']);
@@ -268,7 +274,29 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
                 conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
                 lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
+                stagedCount: JSON.parse(snapshot.settings.sync_staging_v1 || '{"entries":[]}').entries.length,
+                publishPending: Boolean(snapshot.settings.sync_publish_intent_v1),
               };
+            case 'prepare_sync_publish_intent': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as {
+                commitId: string; previousCommitId: string | null;
+                expectedGeneration: number; payloadFingerprint: string;
+              };
+              if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
+              const staging = JSON.parse(snapshot.settings.sync_staging_v1 || '{"entries":[]}') as {
+                entries: Array<{ id: string; lastGeneration: number }>;
+              };
+              const intent = {
+                version: 1, ...input,
+                includedEntries: staging.entries
+                  .filter(entry => entry.lastGeneration <= input.expectedGeneration)
+                  .map(entry => ({ id: entry.id, lastGeneration: entry.lastGeneration })),
+                createdAt: new Date().toISOString(),
+              };
+              snapshot.settings.sync_publish_intent_v1 = JSON.stringify(intent);
+              return structuredClone(intent);
+            }
             case 'commit_sync_result': {
               requireKeys(command, args, ['input']);
               const input = args.input as {
@@ -293,6 +321,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               snapshot.settings.sync_v3_conflicts = JSON.stringify(input.conflicts);
               snapshot.settings.sync_v3_remote_etag = input.remoteEtag;
               snapshot.settings.sync_v3_last_commit = JSON.stringify(input.lastCommit);
+              const intent = snapshot.settings.sync_publish_intent_v1
+                ? JSON.parse(snapshot.settings.sync_publish_intent_v1) as { commitId: string }
+                : null;
+              if (intent?.commitId === input.baseline.commitId) delete snapshot.settings.sync_publish_intent_v1;
               if (input.v2SourceFingerprint) snapshot.settings.sync_v2_source_fingerprint = input.v2SourceFingerprint;
               if (businessStateChanged) recordsGeneration += 1;
               if (input.acknowledgeOutbox && outbox.pending && outbox.dirtyGeneration <= input.expectedGeneration) {

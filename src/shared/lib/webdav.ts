@@ -5,6 +5,7 @@ import {
   commitSyncResult,
   getSettingAsync,
   getSyncSnapshot,
+  prepareSyncPublishIntent,
   safeDecrypt,
   safeEncrypt,
   setSettingAsync,
@@ -258,7 +259,12 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
         validator = await conditionalValidatorForResource(v3Response, creds, proxy, V3_RESOURCE);
         remotePayload = parseSyncPayloadV3(v3Response.body);
         remoteSide = sideOfPayload(remotePayload);
-        baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : { records: [], tombstones: [] };
+        const recoverablePublishedIntent = snapshot.publishIntent?.commitId === remotePayload.commitId
+          && snapshot.publishIntent.payloadFingerprint === await contentFingerprint(remotePayload);
+        const sameDeviceBootstrap = !snapshot.baseline && remotePayload.writerId === snapshot.deviceId;
+        baseSide = snapshot.baseline
+          ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline))
+          : (recoverablePublishedIntent || sameDeviceBootstrap ? remoteSide : { records: [], tombstones: [] });
         const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
         if (legacyResponse.status === 200) {
           const currentFingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
@@ -292,8 +298,16 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       }
 
       const now = new Date().toISOString();
+      const activeConflicts = snapshot.conflicts.filter(conflict => {
+        if (conflict.base || remotePayload.writerId !== snapshot.deviceId
+          || !conflict.local || !conflict.remote
+          || conflict.local.revActor !== snapshot.deviceId
+          || (conflict.local.rev ?? 0) <= (conflict.remote.rev ?? 0)) return true;
+        const currentRemote = remoteSide.records.find(record => record.id === conflict.id);
+        return !currentRemote || !syncValuesEqual(currentRemote, conflict.remote);
+      });
       const merged = mergeSyncStates(
-        baseSide, localSide, remoteSide, snapshot.deviceId, now, snapshot.conflicts,
+        baseSide, localSide, remoteSide, snapshot.deviceId, now, activeConflicts,
       );
       const remoteChanged = !syncValuesEqual(merged.remote, remoteSide);
       let confirmedPayload = remotePayload;
@@ -301,6 +315,12 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
 
       if (creating || remoteChanged) {
         const nextPayload = payloadForCommit(remotePayload, merged.remote, snapshot.deviceId, now);
+        await prepareSyncPublishIntent({
+          commitId: nextPayload.commitId,
+          previousCommitId: remotePayload.commitId || null,
+          expectedGeneration: snapshot.recordsGeneration,
+          payloadFingerprint: await contentFingerprint(nextPayload),
+        });
         const put = await webdavRequest(
           'PUT', creds, proxy, V3_RESOURCE, JSON.stringify(nextPayload),
           !creating && validator?.header === 'if-match' ? validator.etag : null,

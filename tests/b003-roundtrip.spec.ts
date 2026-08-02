@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import type { WatchRecord } from '../src/shared/types';
 import type { SyncPayloadV3 } from '../src/shared/lib/syncMerge';
 import { mockSnapshot, setupMockIpc } from './fixtures/mockIpc';
@@ -523,6 +524,68 @@ test('@expected-sync-v3 normalizes an unquoted server ETag before If-Match', asy
   expect(puts).toHaveLength(2);
   expect(puts.every(call => call.args.ifMatch === '"jianguoyun-unquoted-etag"' && call.args.ifDavEtag === null)).toBe(true);
   expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
+});
+
+test('@expected-sync-v3 recovers a verified publish intent before considering another upload', async ({ page }) => {
+  const remote = v3Payload([record('intent-recovery')], {
+    commitId: 'already-published',
+    writerId: 'previous-device',
+  });
+  await setupMockIpc(page, {
+    records: structuredClone(remote.records),
+    webdavV3Remote: remote,
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_publish_intent_v1: JSON.stringify({
+        version: 1, commitId: 'already-published', previousCommitId: 'previous',
+        expectedGeneration: 0, includedEntries: [],
+        payloadFingerprint: createHash('sha256').update(JSON.stringify(remote)).digest('hex'),
+        createdAt: '2026-08-02T00:00:00.000Z',
+      }),
+    },
+  });
+  await page.goto('/');
+
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+
+  expect(result.ok).toBe(true);
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(false);
+  expect(snapshot.settings.sync_publish_intent_v1).toBeUndefined();
+  expect(JSON.parse(snapshot.settings.sync_v3_baseline as string).commitId).toBe('already-published');
+});
+
+test('@expected-sync-v3 converts a same-device orphan conflict back into a staged upload', async ({ page }) => {
+  const old = record('orphan-record', { notes: 'remote old', rev: 1, revActor: 'legacy' });
+  const local = record('orphan-record', { notes: 'local staged', rev: 2, revActor: 'mock-device' });
+  const remote = v3Payload([old], { writerId: 'mock-device' });
+  await setupMockIpc(page, {
+    records: [local],
+    webdavV3Remote: remote,
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(remote),
+      sync_v3_conflicts: JSON.stringify([{
+        id: 'orphan-record', kind: 'edit-edit', fields: ['record'], base: null,
+        local, remote: old, localDeleted: false, remoteDeleted: false,
+        detectedAt: '2026-08-02T00:00:00.000Z',
+      }]),
+    },
+  });
+  await page.goto('/');
+
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+
+  expect(result).toMatchObject({ ok: true, conflictCount: 0 });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('local staged');
+  expect(JSON.parse(snapshot.settings.sync_v3_conflicts as string)).toEqual([]);
+  const prepareIndex = snapshot.calls.findIndex(call => call.command === 'prepare_sync_publish_intent');
+  const putIndex = snapshot.calls.findIndex(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(prepareIndex).toBeGreaterThanOrEqual(0);
+  expect(putIndex).toBeGreaterThan(prepareIndex);
 });
 
 test('@expected-sync-v3 uses DAV getetag when GET and PUT omit ETag headers', async ({ page }) => {

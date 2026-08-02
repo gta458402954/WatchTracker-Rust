@@ -63,6 +63,32 @@ export interface SyncSnapshot {
   v2SourceFingerprint: string | null;
   outbox: SyncOutboxState;
   scheduler: SyncSchedulerState;
+  staging: SyncStagingState;
+  publishIntent: SyncPublishIntent | null;
+}
+
+export interface StagedRecordState {
+  id: string;
+  operation: 'upsert' | 'delete';
+  base: WatchRecord | null;
+  local: WatchRecord | null;
+  firstGeneration: number;
+  lastGeneration: number;
+}
+
+export interface SyncStagingState {
+  version: 1;
+  entries: StagedRecordState[];
+}
+
+export interface SyncPublishIntent {
+  version: 1;
+  commitId: string;
+  previousCommitId: string | null;
+  expectedGeneration: number;
+  includedEntries: Array<{ id: string; lastGeneration: number }>;
+  payloadFingerprint: string;
+  createdAt: string;
 }
 
 export interface SyncOutboxState {
@@ -90,6 +116,8 @@ export interface SyncRuntimeState {
   scheduler: SyncSchedulerState;
   conflictCount: number;
   lastCommit: unknown | null;
+  stagedCount: number;
+  publishPending: boolean;
 }
 
 export interface SyncCommitInput {
@@ -127,6 +155,15 @@ export async function recordSyncFailure(code: string, nextAttemptAt: string | nu
 
 export async function commitSyncResult(input: SyncCommitInput): Promise<SyncCommitResult> {
   return invoke('commit_sync_result', { input });
+}
+
+export async function prepareSyncPublishIntent(input: {
+  commitId: string;
+  previousCommitId: string | null;
+  expectedGeneration: number;
+  payloadFingerprint: string;
+}): Promise<SyncPublishIntent> {
+  return invoke('prepare_sync_publish_intent', { input });
 }
 
 export type SyncConflictResolution = 'local' | 'remote' | 'keep' | 'delete';

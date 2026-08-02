@@ -307,7 +307,7 @@ export default function SettingsModal({
       const result = onSync ? await onSync() : await syncToWebDAV(records);
       if (result.ok) {
         setSyncConflicts(await clearResolvedSyncConflicts(records));
-        setSyncStatus(result.conflictCount ? `⚠️ 同步完成，有 ${result.conflictCount} 项冲突需要选择` : '✅ 同步成功');
+        setSyncStatus(result.conflictCount ? `⚠️ 云端核对完成，有 ${result.conflictCount} 项冲突等待选择` : '✅ 同步成功');
         showSuccess('WebDAV 同步完成。');
       } else {
         const safeMessage = syncFailureMessage(result.error);
@@ -1183,7 +1183,12 @@ export default function SettingsModal({
                   </div>
                   {syncRuntime && (
                     <div data-testid="sync-runtime-status" className="rounded-2xl bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-500">
-                      <div>{syncRuntime.scheduler.paused ? '自动同步已暂停' : syncRuntime.outbox.pending ? '有本地修改等待同步' : '没有待同步的本地修改'}</div>
+                      <div>{syncRuntime.scheduler.paused ? '自动同步已暂停'
+                        : syncRuntime.conflictCount > 0 ? `${syncRuntime.conflictCount} 项冲突等待处理`
+                          : syncRuntime.publishPending ? '正在恢复未完成的云端发布'
+                            : syncRuntime.stagedCount > 0 ? `${syncRuntime.stagedCount} 项本地版本等待上传`
+                              : syncRuntime.outbox.pending ? '有本地修改等待同步'
+                                : '本机与云端已核对'}</div>
                       {syncRuntime.scheduler.lastSuccessAt && <div>最近成功：{new Date(syncRuntime.scheduler.lastSuccessAt).toLocaleString('zh-CN')}</div>}
                       {syncRuntime.scheduler.nextAttemptAt && <div>下次重试：{new Date(syncRuntime.scheduler.nextAttemptAt).toLocaleString('zh-CN')}</div>}
                       {syncRuntime.scheduler.lastErrorCode && <div>当前状态：{syncRuntime.scheduler.lastErrorCode}</div>}

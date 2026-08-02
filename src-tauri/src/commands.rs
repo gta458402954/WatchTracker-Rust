@@ -188,6 +188,15 @@ pub fn commit_sync_result(
 }
 
 #[tauri::command]
+pub fn prepare_sync_publish_intent(
+    state: State<DbState>,
+    input: crate::sync_staging::PreparePublishIntentInput,
+) -> Result<crate::sync_staging::SyncPublishIntent, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    sync_state::prepare_publish_intent(&conn, input)
+}
+
+#[tauri::command]
 pub fn resolve_sync_conflict(
     state: State<DbState>,
     id: String,
