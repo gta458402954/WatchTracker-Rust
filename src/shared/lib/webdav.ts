@@ -121,6 +121,19 @@ function entityTagKind(value: string | null | undefined): 'strong' | 'weak' | nu
   return weak ? 'weak' : 'strong';
 }
 
+function normalizedEntityTag(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (entityTagKind(trimmed)) return trimmed;
+  const weak = trimmed.startsWith('W/');
+  const opaque = weak ? trimmed.slice(2) : trimmed;
+  if (!opaque || [...opaque].some(character => {
+    const code = character.charCodeAt(0);
+    return character === '"' || code < 32 || code === 127;
+  })) return null;
+  return `${weak ? 'W/' : ''}"${opaque}"`;
+}
+
 function strongEtag(value: string | null | undefined): value is string {
   return entityTagKind(value) === 'strong';
 }
@@ -163,7 +176,8 @@ function davEtagFromPropfind(text: string | null): string | null {
   if (document.querySelector('parsererror')) return null;
   for (const element of Array.from(document.getElementsByTagNameNS('*', 'getetag'))) {
     const value = element.textContent?.trim() ?? '';
-    if (entityTagKind(value)) return value;
+    const normalized = normalizedEntityTag(value);
+    if (normalized) return normalized;
   }
   return null;
 }
@@ -174,12 +188,13 @@ async function conditionalValidatorForResource(
   proxy: string | null,
   resource: string,
 ): Promise<ConditionalValidator> {
-  if (strongEtag(response.etag)) return { etag: response.etag, header: 'if-match' };
+  const responseEtag = normalizedEntityTag(response.etag);
+  if (strongEtag(responseEtag)) return { etag: responseEtag, header: 'if-match' };
   const properties = await webdavRequest('PROPFIND', creds, proxy, resource);
   const propertyEtag = successful(properties.status)
-    ? (properties.etag && entityTagKind(properties.etag) ? properties.etag : davEtagFromPropfind(properties.text))
+    ? (normalizedEntityTag(properties.etag) ?? davEtagFromPropfind(properties.text))
     : null;
-  const candidates = [propertyEtag, response.etag].filter((value): value is string => Boolean(value));
+  const candidates = [propertyEtag, responseEtag].filter((value): value is string => Boolean(value));
   const strong = candidates.find(value => entityTagKind(value) === 'strong');
   if (strong) return { etag: strong, header: 'if-match' };
   const weak = candidates.find(value => entityTagKind(value) === 'weak');

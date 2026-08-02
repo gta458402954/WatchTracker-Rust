@@ -413,7 +413,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                   remainingPreconditionFailures -= 1;
                   return { status: 412, body: null, etag: v3Etag };
                 }
-                const existingPreconditionMatches = request.ifMatch === v3Etag || request.ifDavEtag === v3Etag;
+                const normalizedV3Etag = v3Etag && !v3Etag.includes('"') ? `"${v3Etag}"` : v3Etag;
+                const existingPreconditionMatches = request.ifMatch === normalizedV3Etag || request.ifDavEtag === normalizedV3Etag;
                 if (snapshot.webdavV3Remote && !existingPreconditionMatches) return { status: 412, body: null, etag: v3Etag };
                 if (!snapshot.webdavV3Remote && request.ifNoneMatch !== '*') return { status: 412, body: null, etag: null };
                 snapshot.webdavV3Remote = JSON.parse(String(request.body));

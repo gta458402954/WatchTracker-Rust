@@ -73,7 +73,7 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 - 首次创建：PUT 必须携带 `If-None-Match: *`。
 - 412：表示资源已变化，不落本地合并结果；重新 GET、重新三方合并并重试，建议最多 3 次。
 - 连续 3 次 412：停止并提示“云端数据持续变化，请稍后重试”，不进行无条件覆盖。
-- GET/PUT 响应缺少 ETag 时，先以受限的 `PROPFIND Depth: 0` 读取标准 `DAV:getetag`。强 ETag 使用 HTTP `If-Match`；规范弱 ETag 使用 RFC 4918 WebDAV `If` 条件。GET/PROPFIND 均没有合法实体标签时进入安全只读模式，允许下载和预览，不允许自动 PUT。
+- GET/PUT 响应缺少 ETag 时，先以受限的 `PROPFIND Depth: 0` 读取标准 `DAV:getetag`。强 ETag 使用 HTTP `If-Match`；规范弱 ETag 使用 RFC 4918 WebDAV `If` 条件；服务器返回未加引号的非标准验证器时，只在非空且不含引号或控制字符后将其规范化为带引号 ETag。GET/PROPFIND 均没有可安全规范化的实体标签时进入安全只读模式，允许下载和预览，不允许自动 PUT。
 - PUT 成功但响应未返回新 ETag：立即 GET 验证 `commitId`，以验证响应的 ETag/内容作为新基线。
 
 依据：WebDAV RFC 4918 明确指出时间戳不如 ETag 适合避免 lost update；HTTP RFC 9110 规定 `If-Match` 不满足时应以 412 阻止状态变更。实现不采用 WebDAV LOCK，因为部署差异、锁续期和崩溃后的锁恢复会扩大本任务复杂度。

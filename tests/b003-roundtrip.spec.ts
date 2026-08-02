@@ -500,6 +500,31 @@ test('@expected-sync-v3 uses the WebDAV If header for a weak ETag', async ({ pag
   expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
 });
 
+test('@expected-sync-v3 normalizes an unquoted server ETag before If-Match', async ({ page }) => {
+  const base = record('unquoted-etag-server');
+  await setupMockIpc(page, {
+    records: [record('unquoted-etag-server', { notes: 'safe local change' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavV3Etag: 'jianguoyun-unquoted-etag',
+    webdavPreconditionFailures: 1,
+  });
+  await page.goto('/');
+
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+
+  expect(result.ok).toBe(true);
+  const snapshot = await mockSnapshot(page);
+  const puts = snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(puts).toHaveLength(2);
+  expect(puts.every(call => call.args.ifMatch === '"jianguoyun-unquoted-etag"' && call.args.ifDavEtag === null)).toBe(true);
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
+});
+
 test('@expected-sync-v3 uses DAV getetag when GET and PUT omit ETag headers', async ({ page }) => {
   const base = record('propfind-server');
   const local = record('propfind-server', { notes: 'safe local change' });

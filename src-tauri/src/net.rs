@@ -352,6 +352,21 @@ pub struct WebDavRequest {
     pub if_dav_etag: Option<String>,
 }
 
+fn etag_shape(value: Option<&str>) -> &'static str {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return "missing";
+    };
+    if value.starts_with("W/\"") && value.ends_with('"') {
+        "weak"
+    } else if value.starts_with('"') && value.ends_with('"') {
+        "strong"
+    } else if !value.contains(['\r', '\n', '"']) {
+        "unquoted"
+    } else {
+        "invalid"
+    }
+}
+
 pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, String> {
     log::info!("[WebDAV] {} Request to: {}", request.method, request.url);
 
@@ -417,9 +432,9 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
 
     if request.method == "GET" && status.is_success() {
         log::info!(
-            "[WebDAV] GET completed with status {}; ETag header present: {}",
+            "[WebDAV] GET completed with status {}; ETag shape: {}",
             status.as_u16(),
-            etag.is_some()
+            etag_shape(etag.as_deref())
         );
         let json: Value = res.json().await.map_err(|e| {
             log::error!("[WebDAV] JSON parse error: {}", e);
@@ -451,10 +466,10 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
     }
 
     log::info!(
-        "[WebDAV] {} completed with status {}; ETag header present: {}",
+        "[WebDAV] {} completed with status {}; ETag shape: {}",
         request.method,
         status.as_u16(),
-        etag.is_some()
+        etag_shape(etag.as_deref())
     );
 
     Ok(WebDavResponse {
