@@ -1,5 +1,5 @@
 use crate::db;
-use crate::db_atomic_helpers::{get_tombstones_tx, mark_records_mutated, set_tombstones_tx};
+use crate::db_atomic_helpers::{get_tombstones_tx, mark_local_records_mutated, set_tombstones_tx};
 use crate::error::AppError;
 use crate::models::{Patch, RecordStatus, UpdateWatchRecord, WatchRecord};
 use crate::record_validation::prepare_update;
@@ -115,7 +115,7 @@ pub fn update_record_atomic(
         tombstones.retain(|tombstone| tombstone.id != id);
         set_tombstones_tx(&transaction, &tombstones)?;
     }
-    mark_records_mutated(&transaction)?;
+    mark_local_records_mutated(&transaction, "record-update")?;
     let record = db::get_record(&transaction, id)?
         .ok_or_else(|| AppError::General(format!("Record not found after update: {id}")))?;
     if names_changed && record.original_name.is_empty() && record.chinese_name.is_empty() {

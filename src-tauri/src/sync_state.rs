@@ -1,8 +1,9 @@
 use crate::app_paths::AppPaths;
 use crate::db;
 use crate::db_atomic_helpers::{
-    get_records_generation, get_setting_tx, get_tombstones_tx, mark_records_mutated,
-    set_setting_tx, set_tombstones_tx, Tombstone,
+    acknowledge_sync_outbox, get_records_generation, get_setting_tx, get_sync_outbox,
+    get_tombstones_tx, mark_local_records_mutated, mark_records_mutated, set_setting_tx,
+    set_sync_outbox, set_tombstones_tx, SyncOutbox, Tombstone,
 };
 use crate::error::AppError;
 use crate::models::WatchRecord;
@@ -20,6 +21,44 @@ const ETAG_KEY: &str = "sync_v3_remote_etag";
 const CONFLICTS_KEY: &str = "sync_v3_conflicts";
 const LAST_COMMIT_KEY: &str = "sync_v3_last_commit";
 const V2_FINGERPRINT_KEY: &str = "sync_v2_source_fingerprint";
+const SCHEDULER_KEY: &str = "sync_scheduler_v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SyncSchedulerState {
+    pub version: u8,
+    pub paused: bool,
+    pub consecutive_failures: u32,
+    pub next_attempt_at: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub last_success_at: Option<String>,
+    pub last_error_code: Option<String>,
+    pub last_remote_check_at: Option<String>,
+}
+
+impl Default for SyncSchedulerState {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            paused: false,
+            consecutive_failures: 0,
+            next_attempt_at: None,
+            last_attempt_at: None,
+            last_success_at: None,
+            last_error_code: None,
+            last_remote_check_at: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRuntimeState {
+    pub outbox: SyncOutbox,
+    pub scheduler: SyncSchedulerState,
+    pub conflict_count: usize,
+    pub last_commit: Option<Value>,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +72,8 @@ pub struct SyncSnapshot {
     pub remote_etag: Option<String>,
     pub last_commit: Option<Value>,
     pub v2_source_fingerprint: Option<String>,
+    pub outbox: SyncOutbox,
+    pub scheduler: SyncSchedulerState,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +88,8 @@ pub struct SyncCommitInput {
     pub remote_etag: String,
     pub last_commit: Value,
     pub v2_source_fingerprint: Option<String>,
+    #[serde(default)]
+    pub acknowledge_outbox: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +116,94 @@ fn parse_optional_json(raw: Option<String>, key: &str) -> Result<Option<Value>, 
     .transpose()
 }
 
+fn scheduler_state(conn: &Connection) -> Result<SyncSchedulerState, AppError> {
+    let Some(raw) = get_setting_tx(conn, SCHEDULER_KEY)? else {
+        return Ok(SyncSchedulerState::default());
+    };
+    let state: SyncSchedulerState = serde_json::from_str(&raw)
+        .map_err(|error| AppError::General(format!("Invalid {SCHEDULER_KEY}: {error}")))?;
+    if state.version != 1 {
+        return Err(AppError::General(format!(
+            "Invalid {SCHEDULER_KEY} version"
+        )));
+    }
+    Ok(state)
+}
+
+fn set_scheduler_state(conn: &Connection, state: &SyncSchedulerState) -> Result<(), AppError> {
+    let raw = serde_json::to_string(state).map_err(|error| {
+        AppError::General(format!("Could not serialize sync scheduler: {error}"))
+    })?;
+    set_setting_tx(conn, SCHEDULER_KEY, &raw)?;
+    Ok(())
+}
+
+fn state_without_conflicts(value: &Value, conflicts: &[Value]) -> Value {
+    let conflict_ids = conflicts
+        .iter()
+        .filter_map(|item| item.get("id").and_then(Value::as_str))
+        .collect::<std::collections::HashSet<_>>();
+    let mut items = value.as_array().cloned().unwrap_or_default();
+    items.retain(|item| {
+        item.get("id")
+            .and_then(Value::as_str)
+            .map_or(true, |id| !conflict_ids.contains(id))
+    });
+    items.sort_by(|left, right| {
+        left.get("id")
+            .and_then(Value::as_str)
+            .cmp(&right.get("id").and_then(Value::as_str))
+    });
+    Value::Array(items)
+}
+
+fn initialize_outbox(
+    conn: &Connection,
+    generation: i64,
+    records: &[WatchRecord],
+    tombstones: &[Tombstone],
+    baseline: Option<&Value>,
+    conflicts: &[Value],
+) -> Result<SyncOutbox, AppError> {
+    if let Some(outbox) = get_sync_outbox(conn)? {
+        return Ok(outbox);
+    }
+    let mut outbox = SyncOutbox::clean(generation);
+    if let Some(baseline) = baseline {
+        let local_records = state_without_conflicts(
+            &serde_json::to_value(records).map_err(|error| {
+                AppError::General(format!("Could not serialize local sync records: {error}"))
+            })?,
+            conflicts,
+        );
+        let local_tombstones = state_without_conflicts(
+            &serde_json::to_value(tombstones).map_err(|error| {
+                AppError::General(format!("Could not serialize local tombstones: {error}"))
+            })?,
+            conflicts,
+        );
+        let remote_records = state_without_conflicts(
+            baseline.get("records").unwrap_or(&Value::Array(Vec::new())),
+            conflicts,
+        );
+        let remote_tombstones = state_without_conflicts(
+            baseline
+                .get("tombstones")
+                .unwrap_or(&Value::Array(Vec::new())),
+            conflicts,
+        );
+        if local_records != remote_records || local_tombstones != remote_tombstones {
+            let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            outbox.pending = true;
+            outbox.reasons.push("upgrade-bootstrap".to_string());
+            outbox.first_queued_at = Some(now.clone());
+            outbox.last_queued_at = Some(now);
+        }
+    }
+    set_sync_outbox(conn, &outbox)?;
+    Ok(outbox)
+}
+
 pub(crate) fn device_id(conn: &Connection) -> Result<String, AppError> {
     if let Some(existing) = get_setting_tx(conn, DEVICE_ID_KEY)? {
         if !existing.trim().is_empty() {
@@ -95,17 +226,88 @@ pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
         }
         None => Vec::new(),
     };
+    let records = db::get_all_records(conn)?;
+    let tombstones = get_tombstones_tx(conn)?;
+    let records_generation = get_records_generation(conn)?;
+    let baseline = parse_optional_json(get_setting_tx(conn, BASELINE_KEY)?, BASELINE_KEY)?;
+    let outbox = initialize_outbox(
+        conn,
+        records_generation,
+        &records,
+        &tombstones,
+        baseline.as_ref(),
+        &conflicts,
+    )?;
     Ok(SyncSnapshot {
-        records: db::get_all_records(conn)?,
-        tombstones: get_tombstones_tx(conn)?,
-        records_generation: get_records_generation(conn)?,
-        baseline: parse_optional_json(get_setting_tx(conn, BASELINE_KEY)?, BASELINE_KEY)?,
+        records,
+        tombstones,
+        records_generation,
+        baseline,
         device_id: device_id(conn)?,
         conflicts,
         remote_etag: get_setting_tx(conn, ETAG_KEY)?,
         last_commit: parse_optional_json(get_setting_tx(conn, LAST_COMMIT_KEY)?, LAST_COMMIT_KEY)?,
         v2_source_fingerprint: get_setting_tx(conn, V2_FINGERPRINT_KEY)?,
+        outbox,
+        scheduler: scheduler_state(conn)?,
     })
+}
+
+pub fn runtime_state(conn: &Connection) -> Result<SyncRuntimeState, AppError> {
+    let Some(outbox) = get_sync_outbox(conn)? else {
+        let state = snapshot(conn)?;
+        return Ok(SyncRuntimeState {
+            outbox: state.outbox,
+            scheduler: state.scheduler,
+            conflict_count: state.conflicts.len(),
+            last_commit: state.last_commit,
+        });
+    };
+    let conflicts = match parse_optional_json(get_setting_tx(conn, CONFLICTS_KEY)?, CONFLICTS_KEY)?
+    {
+        Some(Value::Array(items)) => items,
+        Some(_) => {
+            return Err(AppError::General(
+                "Invalid sync_v3_conflicts: expected array".into(),
+            ))
+        }
+        None => Vec::new(),
+    };
+    Ok(SyncRuntimeState {
+        outbox,
+        scheduler: scheduler_state(conn)?,
+        conflict_count: conflicts.len(),
+        last_commit: parse_optional_json(get_setting_tx(conn, LAST_COMMIT_KEY)?, LAST_COMMIT_KEY)?,
+    })
+}
+
+pub fn set_paused(conn: &Connection, paused: bool) -> Result<SyncRuntimeState, AppError> {
+    let mut scheduler = scheduler_state(conn)?;
+    scheduler.paused = paused;
+    if !paused {
+        scheduler.next_attempt_at = None;
+    }
+    set_scheduler_state(conn, &scheduler)?;
+    runtime_state(conn)
+}
+
+pub fn record_failure(
+    conn: &Connection,
+    code: &str,
+    next_attempt_at: Option<String>,
+) -> Result<SyncRuntimeState, AppError> {
+    let code = code.trim();
+    if code.is_empty() || code.len() > 80 {
+        return Err(AppError::General("Invalid sync error code".to_string()));
+    }
+    let mut scheduler = scheduler_state(conn)?;
+    scheduler.consecutive_failures = scheduler.consecutive_failures.saturating_add(1);
+    scheduler.last_attempt_at =
+        Some(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+    scheduler.last_error_code = Some(code.to_string());
+    scheduler.next_attempt_at = next_attempt_at;
+    set_scheduler_state(conn, &scheduler)?;
+    runtime_state(conn)
 }
 
 pub fn commit(
@@ -120,6 +322,14 @@ pub fn commit(
         return Err(AppError::General("Missing remote ETag".to_string()));
     }
     let records = prepare_import_batch(input.records)?;
+    let existing_records = db::get_all_records(conn)?;
+    let existing_tombstones = get_tombstones_tx(conn)?;
+    let records_changed = serde_json::to_value(&existing_records).map_err(|error| {
+        AppError::General(format!("Could not compare existing sync records: {error}"))
+    })? != serde_json::to_value(&records).map_err(|error| {
+        AppError::General(format!("Could not compare incoming sync records: {error}"))
+    })?;
+    let business_state_changed = records_changed || existing_tombstones != input.tombstones;
     let baseline = serde_json::to_string(&input.baseline).map_err(|error| {
         AppError::General(format!("Could not serialize sync baseline: {error}"))
     })?;
@@ -130,13 +340,17 @@ pub fn commit(
         AppError::General(format!("Could not serialize last sync commit: {error}"))
     })?;
 
-    recovery_points::create(conn, paths, "sync")?;
+    if business_state_changed {
+        recovery_points::create(conn, paths, "sync")?;
+    }
     let transaction = conn.transaction()?;
     if get_records_generation(&transaction)? != input.expected_generation {
         return Err(AppError::General("stale_local_snapshot".to_string()));
     }
-    db::replace_all_records_tx(&transaction, records)?;
-    set_tombstones_tx(&transaction, &input.tombstones)?;
+    if business_state_changed {
+        db::replace_all_records_tx(&transaction, records)?;
+        set_tombstones_tx(&transaction, &input.tombstones)?;
+    }
     set_setting_tx(&transaction, BASELINE_KEY, &baseline)?;
     set_setting_tx(&transaction, CONFLICTS_KEY, &conflicts)?;
     set_setting_tx(&transaction, ETAG_KEY, &input.remote_etag)?;
@@ -144,7 +358,23 @@ pub fn commit(
     if let Some(fingerprint) = input.v2_source_fingerprint {
         set_setting_tx(&transaction, V2_FINGERPRINT_KEY, &fingerprint)?;
     }
-    let generation = mark_records_mutated(&transaction)?;
+    let generation = if business_state_changed {
+        mark_records_mutated(&transaction)?
+    } else {
+        input.expected_generation
+    };
+    if input.acknowledge_outbox {
+        acknowledge_sync_outbox(&transaction, input.expected_generation)?;
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut scheduler = scheduler_state(&transaction)?;
+        scheduler.consecutive_failures = 0;
+        scheduler.next_attempt_at = None;
+        scheduler.last_attempt_at = Some(now.clone());
+        scheduler.last_success_at = Some(now.clone());
+        scheduler.last_remote_check_at = Some(now);
+        scheduler.last_error_code = None;
+        set_scheduler_state(&transaction, &scheduler)?;
+    }
     let record_count = db::get_all_records(&transaction)?.len();
     transaction.commit()?;
     Ok(SyncCommitResult {
@@ -212,7 +442,7 @@ pub fn resolve_conflict(
             AppError::General(format!("Could not serialize conflicts: {error}"))
         })?,
     )?;
-    mark_records_mutated(&transaction)?;
+    mark_local_records_mutated(&transaction, "conflict-resolution")?;
     transaction.commit()?;
     Ok(())
 }
@@ -282,6 +512,7 @@ mod tests {
                 remote_etag: "\"etag-1\"".into(),
                 last_commit: serde_json::json!({"commitId": "commit-1"}),
                 v2_source_fingerprint: Some("legacy-sha".into()),
+                acknowledge_outbox: true,
             }
         }
     }
@@ -318,15 +549,44 @@ mod tests {
     }
 
     #[test]
+    fn clean_remote_check_does_not_advance_generation_or_create_another_recovery_point() {
+        let mut test = TestDatabase::new("clean-check");
+        let first_input = test.input(0);
+        commit(&mut test.conn, &test.paths, first_input).unwrap();
+        let backups_before = fs::read_dir(test.paths.backups())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("db"))
+            .count();
+        let input = test.input(1);
+        let result = commit(&mut test.conn, &test.paths, input).unwrap();
+        assert_eq!(result.records_generation, 1);
+        assert_eq!(
+            fs::read_dir(test.paths.backups())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(
+                    |entry| entry.path().extension().and_then(|value| value.to_str()) == Some("db")
+                )
+                .count(),
+            backups_before
+        );
+    }
+
+    #[test]
     fn stale_generation_rejects_every_change_without_creating_a_snapshot() {
         let mut test = TestDatabase::new("stale");
-        set_setting_tx(&test.conn, "records_generation", "2").unwrap();
+        mark_local_records_mutated(&test.conn, "record-update").unwrap();
+        mark_local_records_mutated(&test.conn, "record-update").unwrap();
         let input = test.input(1);
         assert!(commit(&mut test.conn, &test.paths, input)
             .unwrap_err()
             .to_string()
             .contains("stale_local_snapshot"));
         assert!(db::get_all_records(&test.conn).unwrap().is_empty());
+        let outbox = get_sync_outbox(&test.conn).unwrap().unwrap();
+        assert!(outbox.pending);
+        assert_eq!(outbox.dirty_generation, 2);
         assert!(fs::read_dir(test.paths.backups()).unwrap().next().is_none());
     }
 
@@ -434,5 +694,74 @@ mod tests {
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].id, "delete-choice");
         assert!(!tombstones[0].rev_actor.is_empty());
+    }
+
+    #[test]
+    fn successful_sync_acknowledges_only_the_captured_outbox_generation() {
+        let mut test = TestDatabase::new("outbox-ack");
+        mark_local_records_mutated(&test.conn, "record-update").unwrap();
+        let input = test.input(1);
+        let result = commit(&mut test.conn, &test.paths, input).unwrap();
+        assert_eq!(result.records_generation, 2);
+        let state = snapshot(&test.conn).unwrap();
+        assert!(!state.outbox.pending);
+        assert_eq!(state.outbox.dirty_generation, 2);
+        assert!(state.scheduler.last_success_at.is_some());
+        assert_eq!(state.scheduler.consecutive_failures, 0);
+    }
+
+    #[test]
+    fn non_acknowledging_commit_preserves_pending_outbox() {
+        let mut test = TestDatabase::new("outbox-preserve");
+        mark_local_records_mutated(&test.conn, "record-update").unwrap();
+        let mut input = test.input(1);
+        input.acknowledge_outbox = false;
+        commit(&mut test.conn, &test.paths, input).unwrap();
+        let state = snapshot(&test.conn).unwrap();
+        assert!(state.outbox.pending);
+        assert_eq!(state.outbox.dirty_generation, 1);
+        assert!(state.scheduler.last_success_at.is_none());
+    }
+
+    #[test]
+    fn pause_and_failure_backoff_survive_runtime_state_reads() {
+        let test = TestDatabase::new("scheduler");
+        let paused = set_paused(&test.conn, true).unwrap();
+        assert!(paused.scheduler.paused);
+        let failed = record_failure(
+            &test.conn,
+            "http_503",
+            Some("2026-08-02T12:15:00.000Z".to_string()),
+        )
+        .unwrap();
+        assert!(failed.scheduler.paused);
+        assert_eq!(failed.scheduler.consecutive_failures, 1);
+        assert_eq!(
+            failed.scheduler.last_error_code.as_deref(),
+            Some("http_503")
+        );
+        assert_eq!(
+            runtime_state(&test.conn)
+                .unwrap()
+                .scheduler
+                .next_attempt_at
+                .as_deref(),
+            Some("2026-08-02T12:15:00.000Z")
+        );
+    }
+
+    #[test]
+    fn malformed_outbox_is_never_treated_as_clean() {
+        let test = TestDatabase::new("bad-outbox");
+        set_setting_tx(
+            &test.conn,
+            crate::db_atomic_helpers::SYNC_OUTBOX_KEY,
+            "{bad",
+        )
+        .unwrap();
+        assert!(snapshot(&test.conn)
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid sync_outbox_v1"));
     }
 }

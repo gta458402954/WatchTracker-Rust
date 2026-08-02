@@ -11,6 +11,7 @@ interface HeaderProps {
   syncMsg: string;
   onQuickSync: () => void;
   isSyncPaused: boolean;
+  syncPending: boolean;
   onToggleSyncPause: () => void;
   viewMode: 'list' | 'poster';
   onViewModeChange: (value: 'list' | 'poster') => void;
@@ -31,6 +32,7 @@ export default function Header({
   syncMsg,
   onQuickSync,
   isSyncPaused,
+  syncPending,
   onToggleSyncPause,
   viewMode,
   onViewModeChange,
@@ -143,7 +145,7 @@ export default function Header({
         {hasWebDAVCreds && (
           <button
             onClick={onToggleSyncPause}
-            title={isSyncPaused ? '已暂停自动同步，点击恢复' : '正在自动同步，点击暂停'}
+            title={isSyncPaused ? '已暂停自动同步，待同步修改会保留' : syncPending ? '有本地修改等待自动同步' : '自动同步已开启'}
             className={`h-9 px-3 flex items-center gap-1.5 rounded-xl border transition-colors ${
               isSyncPaused 
                 ? 'bg-amber-50 border-amber-200 text-amber-600' 
@@ -158,7 +160,7 @@ export default function Header({
             ) : (
               <>
                 <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                <span className="text-xs font-bold hidden md:block">同步中</span>
+                <span className="text-xs font-bold hidden md:block">{syncPending ? '待同步' : '自动同步'}</span>
               </>
             )}
           </button>

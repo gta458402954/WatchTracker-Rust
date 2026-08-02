@@ -5,7 +5,7 @@ mod tests {
         delete_record_atomic, insert_record_atomic, replace_all_records_atomic,
     };
     use crate::db_atomic_helpers::{
-        get_records_generation, get_tombstones_tx, set_setting_tx, Tombstone,
+        get_records_generation, get_sync_outbox, get_tombstones_tx, set_setting_tx, Tombstone,
     };
     use crate::db_atomic_update::update_record_atomic;
     use crate::models::{Patch, RecordStatus, UpdateWatchRecord, WatchRecord};
@@ -84,6 +84,10 @@ mod tests {
 
         assert!(db::get_record(&conn, "inserted").unwrap().is_some());
         assert_eq!(get_records_generation(&conn).unwrap(), 1);
+        let outbox = get_sync_outbox(&conn).unwrap().unwrap();
+        assert!(outbox.pending);
+        assert_eq!(outbox.dirty_generation, 1);
+        assert_eq!(outbox.reasons, vec!["record-insert"]);
         assert_eq!(
             get_tombstones_tx(&conn).unwrap(),
             vec![Tombstone {
@@ -104,6 +108,9 @@ mod tests {
 
         assert!(db::get_record(&conn, "deleted").unwrap().is_none());
         assert_eq!(get_records_generation(&conn).unwrap(), 1);
+        let outbox = get_sync_outbox(&conn).unwrap().unwrap();
+        assert!(outbox.pending);
+        assert_eq!(outbox.reasons, vec!["record-delete"]);
         let tombstones = get_tombstones_tx(&conn).unwrap();
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].id, "deleted");
@@ -314,6 +321,56 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(state(&conn, "rollback"), before);
         assert_eq!(get_tombstones_tx(&conn).unwrap(), tombstones);
+    }
+
+    #[test]
+    fn outbox_failure_rolls_back_the_local_record_and_generation() {
+        let mut conn = database();
+        db::insert_record(&conn, record("outbox-rollback")).unwrap();
+        let before = state(&conn, "outbox-rollback");
+        conn.execute_batch(
+            "CREATE TRIGGER fail_outbox BEFORE INSERT ON settings
+             WHEN NEW.key = 'sync_outbox_v1'
+             BEGIN SELECT RAISE(ABORT, 'injected outbox failure'); END;",
+        )
+        .unwrap();
+        let result = update_record_atomic(
+            &mut conn,
+            "outbox-rollback",
+            &UpdateWatchRecord {
+                notes: Some("must roll back".to_string()),
+                ..Default::default()
+            },
+            "actor",
+        );
+        assert!(result.is_err());
+        assert_eq!(state(&conn, "outbox-rollback"), before);
+        assert_eq!(get_records_generation(&conn).unwrap(), 0);
+        assert!(get_sync_outbox(&conn).unwrap().is_none());
+    }
+
+    #[test]
+    fn repeated_local_updates_coalesce_into_one_generation_high_watermark() {
+        let mut conn = database();
+        db::insert_record(&conn, record("coalesced")).unwrap();
+        for progress in ["1", "2", "3"] {
+            update_record_atomic(
+                &mut conn,
+                "coalesced",
+                &UpdateWatchRecord {
+                    progress: Some(progress.to_string()),
+                    ..Default::default()
+                },
+                "actor",
+            )
+            .unwrap();
+        }
+        let outbox = get_sync_outbox(&conn).unwrap().unwrap();
+        assert!(outbox.pending);
+        assert_eq!(outbox.dirty_generation, 3);
+        assert_eq!(outbox.reasons, vec!["record-update"]);
+        assert!(outbox.first_queued_at.is_some());
+        assert!(outbox.last_queued_at.is_some());
     }
 
     #[test]

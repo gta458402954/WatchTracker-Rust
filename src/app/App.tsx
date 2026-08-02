@@ -37,14 +37,15 @@ function localDateString(date = new Date()): string {
 
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
+  const [pullIntervalMinutes, setPullIntervalMinutes] = useState(15);
   const { notices, notify, dismiss } = useNotifications();
   const handleBackgroundError = useCallback((message: string) => {
     notify('warning', message);
   }, [notify]);
   const {
     records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow,
-    isSyncPaused, toggleSyncPause
-  } = useWatchList(syncInterval, handleBackgroundError);
+    syncRuntime, isSyncPaused, toggleSyncPause, notifySyncConfigurationChanged, reloadAndSchedule,
+  } = useWatchList(syncInterval, pullIntervalMinutes, handleBackgroundError);
 
   const [activeMediaType, setActiveMediaType] = useState<MediaType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -77,10 +78,12 @@ export default function App() {
       const result = await initializeApp({
         readCredentials: hasCreds,
         readSyncInterval: () => invoke<string | null>('get_setting', { key: 'sync_interval' }),
+        readPullInterval: () => invoke<string | null>('get_setting', { key: 'sync_pull_interval_minutes' }),
         readRecords: loadRecords,
       });
       setHasWebDAVCreds(result.hasWebDAVCredentials);
       setSyncInterval(result.syncInterval);
+      setPullIntervalMinutes(result.pullIntervalMinutes);
       setInitializationState('ready');
       try {
         const migrationNotice = await invoke<string | null>('get_setting', { key: 'database_migration_notice' });
@@ -329,6 +332,7 @@ export default function App() {
         syncMsg={syncMsg}
         onQuickSync={handleQuickSync}
         isSyncPaused={isSyncPaused}
+        syncPending={syncRuntime?.outbox.pending ?? false}
         onToggleSyncPause={toggleSyncPause}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
@@ -438,13 +442,17 @@ export default function App() {
             setShowSettings(false);
             const credsOk = await hasCreds();
             setHasWebDAVCreds(credsOk);
+            if (credsOk) await notifySyncConfigurationChanged();
           }}
           onImport={handleImport}
           onSync={syncNow}
           onUpdateRecord={updateRecord}
-          onDatabaseRestored={loadRecords}
+          onDatabaseRestored={reloadAndSchedule}
           syncInterval={syncInterval}
           onSyncIntervalChange={setSyncInterval}
+          pullIntervalMinutes={pullIntervalMinutes}
+          onPullIntervalChange={setPullIntervalMinutes}
+          syncRuntime={syncRuntime}
           onNotify={notify}
         />
       )}

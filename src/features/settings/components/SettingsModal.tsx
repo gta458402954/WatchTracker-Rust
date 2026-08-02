@@ -20,6 +20,7 @@ import {
   vacuumDbAsync,
   type RecoveryPoint,
   type RecoveryPointList,
+  type SyncRuntimeState,
 } from '../../../shared/lib/database';
 import { MEDIA_TYPES, mediaTypeOf, regionsOf, type TmdbMedia } from '../../../shared/lib/classification';
 import {
@@ -53,6 +54,9 @@ interface SettingsModalProps {
   onDatabaseRestored: () => Promise<WatchRecord[]>;
   syncInterval: number;
   onSyncIntervalChange: (val: number) => void;
+  pullIntervalMinutes: number;
+  onPullIntervalChange: (val: number) => void;
+  syncRuntime: SyncRuntimeState | null;
   onNotify?: (tone: NoticeTone, message: string) => void;
 }
 
@@ -107,7 +111,7 @@ function formatBytes(bytes: number): string {
 
 export default function SettingsModal({
   onClose, records, onImport, onSync, onUpdateRecord, onDatabaseRestored,
-  syncInterval, onSyncIntervalChange, onNotify
+  syncInterval, onSyncIntervalChange, pullIntervalMinutes, onPullIntervalChange, syncRuntime, onNotify
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
 
@@ -122,6 +126,7 @@ export default function SettingsModal({
 
   // 自动同步频率状态
   const [localInterval, setLocalInterval] = useState(syncInterval);
+  const [localPullInterval, setLocalPullInterval] = useState(pullIntervalMinutes);
 
   // 代理设置状态
   const [proxy, setProxy] = useState('');
@@ -460,6 +465,18 @@ export default function SettingsModal({
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
     }
     throw lastError;
+  }
+
+  async function handleSavePullInterval() {
+    try {
+      await setSettingAsync('sync_pull_interval_minutes', localPullInterval.toString());
+      onPullIntervalChange(localPullInterval);
+      setSyncStatus('✅ 主动拉取周期已更新');
+      showSuccess('主动拉取周期已更新。');
+    } catch (error) {
+      showFailure('Settings.SavePullInterval', '保存主动拉取周期', error, setSyncStatus);
+    }
+    setTimeout(() => setSyncStatus(''), 3000);
   }
 
   async function handleToggleRecoveryRetention(point: RecoveryPoint) {
@@ -1139,6 +1156,39 @@ export default function SettingsModal({
                   >
                     💾 应用同步频率
                   </button>
+                  <div className="border-t border-gray-100 pt-4 space-y-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-500 font-medium">主动检查云端</span>
+                      <select
+                        value={localPullInterval}
+                        onChange={event => setLocalPullInterval(Number.parseInt(event.target.value, 10))}
+                        className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700"
+                      >
+                        <option value={0}>关闭周期检查</option>
+                        <option value={5}>每 5 分钟</option>
+                        <option value={15}>每 15 分钟</option>
+                        <option value={30}>每 30 分钟</option>
+                        <option value={60}>每 60 分钟</option>
+                      </select>
+                    </div>
+                    <p className="text-[11px] leading-5 text-gray-400">
+                      启动、重新聚焦和网络恢复仍会检查云端；暂停自动同步时所有自动检查都会停止。
+                    </p>
+                    <button
+                      onClick={handleSavePullInterval}
+                      className="py-2 px-5 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-sm"
+                    >
+                      💾 应用主动拉取周期
+                    </button>
+                  </div>
+                  {syncRuntime && (
+                    <div data-testid="sync-runtime-status" className="rounded-2xl bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-500">
+                      <div>{syncRuntime.scheduler.paused ? '自动同步已暂停' : syncRuntime.outbox.pending ? '有本地修改等待同步' : '没有待同步的本地修改'}</div>
+                      {syncRuntime.scheduler.lastSuccessAt && <div>最近成功：{new Date(syncRuntime.scheduler.lastSuccessAt).toLocaleString('zh-CN')}</div>}
+                      {syncRuntime.scheduler.nextAttemptAt && <div>下次重试：{new Date(syncRuntime.scheduler.nextAttemptAt).toLocaleString('zh-CN')}</div>}
+                      {syncRuntime.scheduler.lastErrorCode && <div>当前状态：{syncRuntime.scheduler.lastErrorCode}</div>}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

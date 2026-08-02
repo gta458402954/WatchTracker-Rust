@@ -1,12 +1,16 @@
+import { parsePullInterval } from '../shared/lib/syncScheduling.ts';
+
 export interface InitializationDependencies {
   readCredentials: () => Promise<boolean>;
   readSyncInterval: () => Promise<string | null>;
+  readPullInterval: () => Promise<string | null>;
   readRecords: () => Promise<unknown>;
 }
 
 export interface InitialAppData {
   hasWebDAVCredentials: boolean;
   syncInterval: number;
+  pullIntervalMinutes: number;
 }
 
 export function parseSyncInterval(value: string | null, fallback = 30): number {
@@ -20,10 +24,12 @@ export async function initializeApp(
 ): Promise<InitialAppData> {
   const hasWebDAVCredentials = await dependencies.readCredentials();
   const savedInterval = await dependencies.readSyncInterval();
+  const savedPullInterval = await dependencies.readPullInterval();
   await dependencies.readRecords();
 
   return {
     hasWebDAVCredentials,
     syncInterval: parseSyncInterval(savedInterval),
+    pullIntervalMinutes: parsePullInterval(savedPullInterval),
   };
 }

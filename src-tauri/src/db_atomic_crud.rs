@@ -1,6 +1,6 @@
 use crate::db;
 use crate::db_atomic_helpers::{
-    get_tombstones_tx, mark_records_mutated, set_tombstones_tx, Tombstone,
+    get_tombstones_tx, mark_local_records_mutated, set_tombstones_tx, Tombstone,
 };
 use crate::error::AppError;
 use crate::models::WatchRecord;
@@ -38,7 +38,7 @@ pub fn insert_record_atomic(
         tombstones.retain(|tombstone| tombstone.id != id);
         set_tombstones_tx(&transaction, &tombstones)?;
     }
-    mark_records_mutated(&transaction)?;
+    mark_local_records_mutated(&transaction, "record-insert")?;
     let persisted = db::get_record(&transaction, &id)?
         .ok_or_else(|| AppError::General(format!("Record not found after upsert: {id}")))?;
     transaction.commit()?;
@@ -74,7 +74,7 @@ pub fn delete_record_atomic(
         rev_actor: actor_id.to_string(),
     });
     set_tombstones_tx(&transaction, &tombstones)?;
-    mark_records_mutated(&transaction)?;
+    mark_local_records_mutated(&transaction, "record-delete")?;
     transaction.commit()?;
     Ok(())
 }
@@ -98,7 +98,7 @@ pub fn replace_all_records_atomic(
             .collect(),
     )?;
     db::replace_all_records_tx(&transaction, records)?;
-    mark_records_mutated(&transaction)?;
+    mark_local_records_mutated(&transaction, "records-replace")?;
     transaction.commit()?;
     Ok(())
 }

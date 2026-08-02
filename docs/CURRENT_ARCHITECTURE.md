@@ -9,7 +9,7 @@
 - 前端使用 React Hook `useWatchList` 管理记录状态；当前没有 Zustand 依赖或 `src/store/useWatchListStore.ts`。
 - SQLite schema 当前为 V18，records 表使用 `createdAt`、`originalName`、`revActor` 等 camelCase 列名。
 - 本地新增、更新、删除和全量替换由 Rust/SQLite 事务实现，并在同一事务中维护 Tombstone 与 `records_generation`。
-- WebDAV 当前使用独立 schema v3、强 ETag 条件写入、三方字段合并和原子 `SyncCommit`；尚未实现持久化 outbox 或主动拉取。
+- WebDAV 当前使用独立 schema v3、强 ETag 条件写入、三方字段合并、原子 `SyncCommit`、持久 outbox 和主动拉取。
 - 数据根目录由单一 `AppPaths` 解析，数据库、日志、海报和备份共享同一个结果。
 - 前端初始化明确区分 `loading | ready | error`；读取失败不会伪装成空列表，并提供重试入口。
 
@@ -24,8 +24,9 @@ Tauri setup
 → 打开 SQLite
 → 在事务中执行必要 migration
 → 注册 Tauri state/IPC
-→ React 读取凭据、同步间隔和 records
+→ React 读取凭据、编辑防抖、主动拉取周期、records 与持久同步状态
 → ready 或可重试 error
+→ 未暂停时按 pending 状态补跑或主动检查云端
 ```
 
 ### 本地写入
@@ -36,9 +37,10 @@ React UI
 → typed Tauri IPC
 → Rust DTO/数值校验
 → SQLite transaction(record + tombstone + generation)
+→ 同事务提升 sync_outbox_v1 高水位
 → 返回持久化结果
 → 更新 React state
-→ 可选调度 WebDAV 同步
+→ 单一协调器合并 debounce/启动/聚焦/online/周期触发
 ```
 
 本地 SQLite 提交与 WebDAV 请求不是一个分布式事务。网络失败不得回滚已经成功的本地写入，也不得清空本地列表。
@@ -53,6 +55,7 @@ React UI
 | `src/shared/lib/database.ts` | TypeScript 到 Tauri 的类型化 IPC |
 | `src/shared/lib/webdav.ts` | schema v3 条件同步、v2 首次迁移、Tombstone 和 WebDAV 传输 |
 | `src/shared/lib/syncMerge.ts` | 基于共同 baseline 的纯函数三方合并与冲突冻结 |
+| `src/shared/lib/syncScheduling.ts` | 主动拉取到期、失败分类和持久退避纯函数 |
 | `src/shared/lib/classification.ts` | 媒体类型和地区规范化 |
 | `src/shared/lib/filtering.ts` | 地区选项、组合筛选及失效选择处理 |
 | `src-tauri/src/app_paths.rs` | 统一数据根目录、可写性和子目录验证 |
@@ -84,18 +87,20 @@ React UI
 - `get_sync_snapshot`、`commit_sync_result(expectedGeneration)`、恢复点和本地原子落盘；
 - 旧数组/schema v2 首次迁移、旧客户端后续写入检测和显式冲突导入；
 - 网络失败与本地 SQLite 状态隔离。
+- generation 高水位持久 outbox，所有本地业务写事务原子入队；
+- 启动、聚焦/可见、网络恢复和独立周期主动拉取，暂停/退避跨重启保留；
+- clean pull 不创建恢复点或递增 records generation。
 
 尚未实现：
 
 - Zustand 状态主链路；
-- 持久化 dirty/outbox、启动或窗口聚焦主动拉取；
 - WebDAV 账号/URL 切换时的同步元数据隔离。
 
 这些能力保留在路线图中，应从已验证不变量和测试逐项重新实现，不应整体复制历史故障快照。
 
 路线图已按领域拆分，不再使用旧的 `TASK-D-R0`~`TASK-D-R3` 优先级大包。同步相关能力分别由 `TASK-D-SYNC-001`（冲突/版本/条件提交）、`TASK-D-SYNC-002`（持久化 outbox/主动拉取）和 `TASK-D-SYNC-003`（目标隔离）跟踪；状态层模块拆分属于独立的 `TASK-D-ARCH-002`，不默认要求引入 Zustand。
 
-`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已经实现。同步使用独立 `records-v3.json` 和强 ETag 条件提交：不同字段按本地共同基线三方合并，同字段、删除/编辑和锁定差异进入持久冲突中心；Rust 以 `expectedGeneration` 和单事务 SyncCommit 防止网络等待期间的新本地修改被覆盖。旧 schema v2 只首次迁移，后续旧客户端变化会阻断自动混合并允许显式导入冲突中心。数据库仍为 V18，高风险落盘继续先创建恢复点。当前下一项 R0 任务是 `TASK-D-SYNC-002`（持久化 outbox 与主动拉取），专项设计已写入 `docs/SYNC_RELIABILITY_DESIGN.md`，尚未实施。完整清单和状态以 `.agent-work/TASKS.md` 为准。
+`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001/002` 已经实现。同步使用独立 `records-v3.json` 和强 ETag 条件提交：不同字段按本地共同基线三方合并，同字段、删除/编辑和锁定差异进入持久冲突中心；Rust 以 `expectedGeneration` 和单事务 SyncCommit 防止网络等待期间的新本地修改被覆盖。所有本地业务写入同时提升持久 outbox，自动协调器在启动、聚焦、网络恢复和周期到期时补跑或拉取，并跨重启保留暂停与退避。旧 schema v2 只首次迁移，后续旧客户端变化会阻断自动混合并允许显式导入冲突中心。数据库仍为 V18，高风险落盘继续先创建恢复点。当前下一项 R0 任务是 `TASK-D-SYNC-003`（WebDAV 目标隔离与安全切换），尚需专项设计。完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 
@@ -104,11 +109,11 @@ React UI
 ```text
 npm run typecheck  PASS
 npm run lint       PASS
-npm run test       PASS（64/64）
-npx playwright test PASS（39/39）
+npm run test       PASS（68/68）
+npx playwright test PASS（43/43）
 npm run build      PASS
 cargo fmt/clippy   PASS
-cargo test --locked PASS（49/49）
+cargo test --locked PASS（56/56）
 ```
 
 便携版发布仍须从干净 Git 提交运行 Windows Tauri 构建，并在替换前后只读校验真实数据库。

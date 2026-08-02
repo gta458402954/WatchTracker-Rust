@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import type { WatchRecord } from '../../src/shared/types';
 import type { TmdbMedia } from '../../src/shared/lib/classification';
-import type { RecoveryPoint } from '../../src/shared/lib/database';
+import type { RecoveryPoint, SyncOutboxState, SyncSchedulerState } from '../../src/shared/lib/database';
 import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from '../../src/shared/lib/syncMerge';
 
 export interface MockIpcOptions {
@@ -18,6 +18,8 @@ export interface MockIpcOptions {
   webdavPreconditionFailures?: number;
   mutateLocalDuringPut?: boolean;
   omitPutEtag?: boolean;
+  webdavFailureStatus?: number;
+  webdavFailureCount?: number;
   databaseCompatibilityIssue?: {
     code: 'unsupported_newer_database' | 'v19_downgrade_failed';
     detectedVersion: number;
@@ -46,8 +48,12 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, mutateLocalDuringPut, omitPutEtag, databaseCompatibilityIssue, recoveryPoints }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, mutateLocalDuringPut, omitPutEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
+      const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
+      const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
+        recordsGeneration: number; outbox: SyncOutboxState; scheduler: SyncSchedulerState;
+      } : null;
       const snapshot: MockSnapshot = {
         calls: [],
         records: controlledRecords ? JSON.parse(controlledRecords) : structuredClone(records),
@@ -60,13 +66,47 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       const remainingUpdateFailures = structuredClone(updateFailureCounts);
       const recoveryRecords: Record<string, WatchRecord[]> = {};
       let recoverySequence = snapshot.recoveryPoints.length;
-      let recordsGeneration = 0;
+      let recordsGeneration = restoredRuntime?.recordsGeneration ?? 0;
+      const outbox: SyncOutboxState = (() => {
+        if (restoredRuntime) return structuredClone(restoredRuntime.outbox);
+        try { return JSON.parse(snapshot.settings.sync_outbox_v1 || 'null') || {
+          version: 1, pending: false, dirtyGeneration: 0, reasons: [], firstQueuedAt: null, lastQueuedAt: null,
+        }; } catch { throw new Error('Invalid sync_outbox_v1'); }
+      })();
+      let scheduler: SyncSchedulerState = (() => {
+        if (restoredRuntime) return structuredClone(restoredRuntime.scheduler);
+        try { return JSON.parse(snapshot.settings.sync_scheduler_v1 || 'null') || {
+          version: 1, paused: false, consecutiveFailures: 0, nextAttemptAt: null, lastAttemptAt: null,
+          lastSuccessAt: null, lastErrorCode: null, lastRemoteCheckAt: null,
+        }; } catch { throw new Error('Invalid sync_scheduler_v1'); }
+      })();
       let v3Etag: string | null = webdavV3Etag;
       let remainingPreconditionFailures = webdavPreconditionFailures;
+      let remainingWebdavFailures = webdavFailureCount;
       let shouldMutateLocalDuringPut = mutateLocalDuringPut;
       let tombstones: SyncTombstoneV3[] = (() => {
         try { return JSON.parse(snapshot.settings.sync_tombstones || '[]'); } catch { return []; }
       })();
+
+      const persistRuntime = () => {
+        snapshot.settings.sync_outbox_v1 = JSON.stringify(outbox);
+        snapshot.settings.sync_scheduler_v1 = JSON.stringify(scheduler);
+        sessionStorage.setItem('__WATCHTRACKER_SYNC_RUNTIME__', JSON.stringify({ recordsGeneration, outbox, scheduler }));
+        sessionStorage.setItem('__WATCHTRACKER_CONTROLLED_RECORDS__', JSON.stringify(snapshot.records));
+      };
+
+      const queueOutbox = (reason: string) => {
+        const now = new Date().toISOString();
+        if (!outbox.pending) {
+          outbox.firstQueuedAt = now;
+          outbox.reasons = [];
+        }
+        outbox.pending = true;
+        outbox.dirtyGeneration = recordsGeneration;
+        outbox.lastQueuedAt = now;
+        if (!outbox.reasons.includes(reason)) outbox.reasons = [...outbox.reasons.slice(-7), reason];
+        persistRuntime();
+      };
 
       const makeRecoveryPoint = (reason: RecoveryPoint['reason']) => {
         recoverySequence += 1;
@@ -136,6 +176,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (existingIndex >= 0) snapshot.records[existingIndex] = persisted;
               else snapshot.records.unshift(persisted);
               recordsGeneration += 1;
+              queueOutbox('record-insert');
               return structuredClone(persisted);
             }
             case 'update_record': {
@@ -160,6 +201,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               };
               snapshot.records[index] = persisted;
               recordsGeneration += 1;
+              queueOutbox('record-update');
               return structuredClone(persisted);
             }
             case 'delete_record':
@@ -168,12 +210,14 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               tombstones = tombstones.filter(item => item.id !== args.id);
               tombstones.push({ id: args.id as string, deletedAt: new Date().toISOString(), rev: 0, revActor: 'mock-device' });
               recordsGeneration += 1;
+              queueOutbox('record-delete');
               return null;
             case 'replace_all_records':
               requireKeys(command, args, ['reason', 'records']);
               makeRecoveryPoint(args.reason as 'import' | 'sync');
               snapshot.records = structuredClone(args.records as WatchRecord[]);
               recordsGeneration += 1;
+              queueOutbox('records-replace');
               return null;
             case 'get_sync_snapshot': {
               requireKeys(command, args, []);
@@ -191,8 +235,39 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 remoteEtag: snapshot.settings.sync_v3_remote_etag || null,
                 lastCommit: parse('sync_v3_last_commit'),
                 v2SourceFingerprint: snapshot.settings.sync_v2_source_fingerprint || null,
+                outbox: structuredClone(outbox),
+                scheduler: structuredClone(scheduler),
               };
             }
+            case 'get_sync_runtime_state':
+              requireKeys(command, args, []);
+              return {
+                outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
+                conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
+                lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
+              };
+            case 'set_auto_sync_paused':
+              requireKeys(command, args, ['paused']);
+              scheduler.paused = args.paused as boolean;
+              if (!scheduler.paused) scheduler.nextAttemptAt = null;
+              persistRuntime();
+              return {
+                outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
+                conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
+                lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
+              };
+            case 'record_sync_failure':
+              requireKeys(command, args, ['code', 'nextAttemptAt']);
+              scheduler.consecutiveFailures += 1;
+              scheduler.lastAttemptAt = new Date().toISOString();
+              scheduler.lastErrorCode = args.code as string;
+              scheduler.nextAttemptAt = args.nextAttemptAt as string | null;
+              persistRuntime();
+              return {
+                outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
+                conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
+                lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
+              };
             case 'commit_sync_result': {
               requireKeys(command, args, ['input']);
               const input = args.input as {
@@ -204,9 +279,12 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 remoteEtag: string;
                 lastCommit: unknown;
                 v2SourceFingerprint: string | null;
+                acknowledgeOutbox: boolean;
               };
               if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
-              makeRecoveryPoint('sync');
+              const businessStateChanged = JSON.stringify(snapshot.records) !== JSON.stringify(input.records)
+                || JSON.stringify(tombstones) !== JSON.stringify(input.tombstones);
+              if (businessStateChanged) makeRecoveryPoint('sync');
               snapshot.records = structuredClone(input.records);
               tombstones = structuredClone(input.tombstones);
               snapshot.settings.sync_tombstones = JSON.stringify(tombstones);
@@ -215,7 +293,22 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               snapshot.settings.sync_v3_remote_etag = input.remoteEtag;
               snapshot.settings.sync_v3_last_commit = JSON.stringify(input.lastCommit);
               if (input.v2SourceFingerprint) snapshot.settings.sync_v2_source_fingerprint = input.v2SourceFingerprint;
-              recordsGeneration += 1;
+              if (businessStateChanged) recordsGeneration += 1;
+              if (input.acknowledgeOutbox && outbox.pending && outbox.dirtyGeneration <= input.expectedGeneration) {
+                outbox.pending = false;
+                outbox.reasons = [];
+                outbox.firstQueuedAt = null;
+                outbox.lastQueuedAt = null;
+              }
+              if (input.acknowledgeOutbox) {
+                outbox.dirtyGeneration = recordsGeneration;
+                const now = new Date().toISOString();
+                scheduler = {
+                  ...scheduler, consecutiveFailures: 0, nextAttemptAt: null, lastAttemptAt: now,
+                  lastSuccessAt: now, lastErrorCode: null, lastRemoteCheckAt: now,
+                };
+              }
+              persistRuntime();
               return { recordsGeneration, recordCount: snapshot.records.length };
             }
             case 'resolve_sync_conflict': {
@@ -233,6 +326,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               else tombstones.push({ id: conflict.id, deletedAt: new Date().toISOString(), rev: 0, revActor: 'mock-device' });
               snapshot.settings.sync_v3_conflicts = JSON.stringify(conflicts.filter(item => item.id !== conflict.id));
               recordsGeneration += 1;
+              queueOutbox('conflict-resolution');
               return null;
             }
             case 'create_recovery_point':
@@ -266,6 +360,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (!restored) throw new Error('Recovery point not found');
               const preRestore = makeRecoveryPoint('pre-restore');
               snapshot.records = structuredClone(restored);
+              recordsGeneration += 1;
+              queueOutbox('recovery-restore');
               return { preRestorePointId: preRestore.id, recordCount: snapshot.records.length };
             }
             case 'open_backup_directory':
@@ -293,6 +389,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               requireKeys(command, args, ['request']);
               {
               const request = args.request as Record<string, unknown>;
+              if (remainingWebdavFailures > 0) {
+                remainingWebdavFailures -= 1;
+                return { status: webdavFailureStatus, body: null, etag: null };
+              }
               if (request.method === 'MKCOL') return { status: 405, body: null, etag: null };
               if (request.method === 'GET') {
                 if (String(request.url).endsWith('records-v3.json')) {
@@ -315,6 +415,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                   shouldMutateLocalDuringPut = false;
                   recordsGeneration += 1;
                   if (snapshot.records[0]) snapshot.records[0].notes = 'edited during sync';
+                  queueOutbox('record-update');
                 }
                 return { status: 204, body: null, etag: omitPutEtag ? null : v3Etag };
               }
@@ -343,6 +444,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       webdavPreconditionFailures: options.webdavPreconditionFailures ?? 0,
       mutateLocalDuringPut: options.mutateLocalDuringPut ?? false,
       omitPutEtag: options.omitPutEtag ?? false,
+      webdavFailureStatus: options.webdavFailureStatus ?? 503,
+      webdavFailureCount: options.webdavFailureCount ?? 0,
       databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,
       recoveryPoints: options.recoveryPoints ?? [],
     },

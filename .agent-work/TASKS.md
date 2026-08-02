@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已实现，剩余为 2 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001/002` 已实现，剩余为 1 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1489,7 +1489,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-DATA-003` | R0 | 数据正确性 | IMPLEMENTED | 国家解析与平台字段保护 |
 | `TASK-D-DATA-004` | R0 | 数据恢复 | IMPLEMENTED | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | IMPLEMENTED | R0 冲突与版本记录 |
-| `TASK-D-SYNC-002` | R0 | 同步可靠性 | SPECIFIED | 专项设计见 `docs/SYNC_RELIABILITY_DESIGN.md` |
+| `TASK-D-SYNC-002` | R0 | 同步可靠性 | IMPLEMENTED | 持久 outbox、主动拉取与退避已实现 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
@@ -1585,7 +1585,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 - Phase: DEFERRED
 - Owner: Unassigned
-- Status: SPECIFIED
+- Status: IMPLEMENTED
 - Priority: R0
 - Scope: 持久化 dirty/outbox、崩溃恢复补跑、暂停/恢复语义，以及启动、窗口聚焦、网络恢复和可配置周期拉取。
 - Current Basis: 当前仅有写入后内存 debounce 和单进程 in-flight 串行化；退出会丢失定时意图，没有无本地修改时的主动发现。
@@ -1594,6 +1594,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Trigger Model: 启动、窗口重新聚焦、页面重新可见、网络恢复和周期到期进入同一串行协调器；运行中触发只请求基于最新 SQLite 状态再跑一次，不复用旧 snapshot，也不阻塞应用退出。
 - Failure Model: 网络/5xx/remote busy 持久退避，`stale_local_snapshot` 快速重读，认证和安全门禁停止自动重试；outbox 无过期时间，通知按错误码去重。
 - Boundary: 保持 V18；不实施 WebDAV target ID、账号/URL 切换迁移、凭据保护或后台常驻服务，这些仍由 `TASK-D-SYNC-003`、`TASK-D-SEC-001` 及后续任务跟踪。
+- Implementation: `sync_outbox_v1` 以 generation 高水位合并本地写入，`sync_scheduler_v1` 持久保存暂停、失败、next attempt 和最近远端检查；Rust 本地写事务原子入队，SyncCommit 按 `expectedGeneration` 原子确认。前端单一协调器接入编辑 debounce、启动、focus/visibility、online、独立周期和手动触发，并实现串行化、退避和通知去重。纯 clean pull 不创建恢复点或递增 generation。
+- Acceptance Evidence: Rust 临时库覆盖 outbox 与记录/代数同事务、注入失败回滚、连续更新合并、过期 CAS 保留、成功/非确认提交、暂停/失败持久化、畸形 outbox 阻断、恢复点还原重新入队及 clean pull 无写放大；Node 覆盖拉取周期、失败分类、退避/抖动、聚焦冷却和时钟回拨；Playwright mock 覆盖 pending 跨重载、暂停恢复、focus 拉取远端-only 修改、503 持久退避和 401 阻断。真实 WebDAV 与正式数据库未用于测试。
 
 ### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
 

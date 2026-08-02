@@ -279,7 +279,7 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 | R0 | 数据正确性 | `TASK-D-DATA-003` | 国家解析统一与平台字段保护 | IMPLEMENTED | 国家判断与 TMDB 平台推测已集中到共享纯函数；普通保存不再按国家清空平台，电影、剧集、具体季和批量补全精确区分 CN/HK/TW，只在平台缺失且非 CN 时写入规范化推测值 |
 | R0 | 数据恢复 | `TASK-D-DATA-004` | 高风险操作自动恢复点 | IMPLEMENTED | 导入、同步全量落盘、V19 migration、至少 2 条实际批量补全写入及恢复前会创建经完整性/版本/条数/SHA 校验的 SQLite 恢复点；支持 10 个自动点、500MB 软容量、永久保留、管理界面和失败回退 |
 | R0 | 同步一致性 | `TASK-D-SYNC-001` | 同步冲突、版本域与条件提交 | IMPLEMENTED | 已实现独立 `records-v3.json`、强 ETag 条件写入与 412 重拉、三方字段合并、持久冲突选择、`expectedGeneration` 和原子本地 SyncCommit；旧客户端变化会被阻断并可显式导入冲突中心，数据库保持 V18 |
-| R0 | 同步可靠性 | `TASK-D-SYNC-002` | 持久化 outbox 与主动拉取 | SPECIFIED | 已完成单槽 generation 高水位 outbox、原子确认、暂停/恢复、串行主动拉取、持久退避和完整验收矩阵设计；见 `docs/SYNC_RELIABILITY_DESIGN.md` |
+| R0 | 同步可靠性 | `TASK-D-SYNC-002` | 持久化 outbox 与主动拉取 | IMPLEMENTED | 已实现单槽 generation 高水位 outbox、原子确认、跨重启暂停/补跑、启动/聚焦/网络恢复/周期主动拉取、持久退避和状态展示；保持 V18 |
 | R0 | 同步隔离 | `TASK-D-SYNC-003` | WebDAV 目标隔离与安全切换 | NEEDS-DESIGN | 当前 URL、凭据和同步设置是全局 setting；目标切换流程及未来 baseline/ETag/outbox 命名空间尚未设计 |
 | R0 | 凭据安全 | `TASK-D-SEC-001` | Windows 凭据保护与旧格式迁移 | NEEDS-DESIGN | 当前使用机器 ID 派生 AES-GCM 密钥，并兼容可逆的 `portable:v1`；尚未接入 Windows 凭据存储、显式迁移和不可恢复提示 |
 | R1 | 观看历史 | `TASK-D-HISTORY-001` | 逐集完成时间与完结状态 | SPECIFIED | 已有自由文本 `progress` 和 `totalEpisodes`；现行 schema 没有逐集事件表，需要新模型、migration、同步和三态语义 |

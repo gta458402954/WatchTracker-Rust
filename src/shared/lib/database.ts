@@ -61,6 +61,35 @@ export interface SyncSnapshot {
   remoteEtag: string | null;
   lastCommit: unknown | null;
   v2SourceFingerprint: string | null;
+  outbox: SyncOutboxState;
+  scheduler: SyncSchedulerState;
+}
+
+export interface SyncOutboxState {
+  version: 1;
+  pending: boolean;
+  dirtyGeneration: number;
+  reasons: string[];
+  firstQueuedAt: string | null;
+  lastQueuedAt: string | null;
+}
+
+export interface SyncSchedulerState {
+  version: 1;
+  paused: boolean;
+  consecutiveFailures: number;
+  nextAttemptAt: string | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastErrorCode: string | null;
+  lastRemoteCheckAt: string | null;
+}
+
+export interface SyncRuntimeState {
+  outbox: SyncOutboxState;
+  scheduler: SyncSchedulerState;
+  conflictCount: number;
+  lastCommit: unknown | null;
 }
 
 export interface SyncCommitInput {
@@ -72,6 +101,7 @@ export interface SyncCommitInput {
   remoteEtag: string;
   lastCommit: unknown;
   v2SourceFingerprint: string | null;
+  acknowledgeOutbox: boolean;
 }
 
 export interface SyncCommitResult {
@@ -81,6 +111,18 @@ export interface SyncCommitResult {
 
 export async function getSyncSnapshot(): Promise<SyncSnapshot> {
   return invoke('get_sync_snapshot');
+}
+
+export async function getSyncRuntimeState(): Promise<SyncRuntimeState> {
+  return invoke('get_sync_runtime_state');
+}
+
+export async function setAutoSyncPaused(paused: boolean): Promise<SyncRuntimeState> {
+  return invoke('set_auto_sync_paused', { paused });
+}
+
+export async function recordSyncFailure(code: string, nextAttemptAt: string | null): Promise<SyncRuntimeState> {
+  return invoke('record_sync_failure', { code, nextAttemptAt });
 }
 
 export async function commitSyncResult(input: SyncCommitInput): Promise<SyncCommitResult> {

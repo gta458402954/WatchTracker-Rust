@@ -1,5 +1,6 @@
 use crate::app_paths::AppPaths;
 use crate::db::CURRENT_DB_VERSION;
+use crate::db_atomic_helpers::mark_local_records_mutated;
 use crate::error::AppError;
 use chrono::{SecondsFormat, Utc};
 use rusqlite::{backup::Backup, Connection, DatabaseName, OpenFlags, OptionalExtension};
@@ -321,6 +322,19 @@ pub fn restore(
             ));
         }
     };
+    let queue_result = (|| -> Result<(), AppError> {
+        let transaction = conn.transaction()?;
+        mark_local_records_mutated(&transaction, "recovery-restore")?;
+        transaction.commit()?;
+        Ok(())
+    })();
+    if queue_result.is_err() {
+        let pre_restore_path = safe_point_path(paths, &pre_restore.id)?;
+        restore_from(&pre_restore_path, conn)?;
+        return Err(general(
+            "Restored database could not be queued for synchronization; current data was recovered",
+        ));
+    }
     rotate(paths)?;
     Ok(RecoveryResult {
         pre_restore_point_id: pre_restore.id,
@@ -417,8 +431,14 @@ mod tests {
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "7"
+            "8"
         );
+        let outbox = crate::db_atomic_helpers::get_sync_outbox(&test.conn)
+            .unwrap()
+            .unwrap();
+        assert!(outbox.pending);
+        assert_eq!(outbox.dirty_generation, 8);
+        assert_eq!(outbox.reasons, vec!["recovery-restore"]);
         assert!(list(&test.paths)
             .unwrap()
             .points

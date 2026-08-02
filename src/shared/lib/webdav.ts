@@ -271,6 +271,7 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
           committedAt: confirmedPayload.committedAt,
         },
         v2SourceFingerprint: legacyFingerprint,
+        acknowledgeOutbox: true,
       });
       return {
         ok: true,
@@ -369,6 +370,7 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
       remoteEtag: v3Response.etag,
       lastCommit: { revision: v3.revision, commitId: v3.commitId, committedAt: v3.committedAt },
       v2SourceFingerprint: fingerprint,
+      acknowledgeOutbox: false,
     });
     return { ok: true, records: snapshot.records, conflicts, conflictCount: imported.length };
   } catch (error) { return syncError(error); }

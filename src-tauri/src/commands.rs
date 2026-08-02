@@ -126,6 +126,33 @@ pub fn get_sync_snapshot(
 }
 
 #[tauri::command]
+pub fn get_sync_runtime_state(
+    state: State<DbState>,
+) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    sync_state::runtime_state(&conn)
+}
+
+#[tauri::command]
+pub fn set_auto_sync_paused(
+    state: State<DbState>,
+    paused: bool,
+) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    sync_state::set_paused(&conn, paused)
+}
+
+#[tauri::command]
+pub fn record_sync_failure(
+    state: State<DbState>,
+    code: String,
+    next_attempt_at: Option<String>,
+) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    sync_state::record_failure(&conn, &code, next_attempt_at)
+}
+
+#[tauri::command]
 pub fn commit_sync_result(
     state: State<DbState>,
     paths: State<AppPaths>,
