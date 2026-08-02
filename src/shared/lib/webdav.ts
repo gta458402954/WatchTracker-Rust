@@ -29,6 +29,7 @@ export interface WebDAVCreds { username: string; password: string; url?: string;
 interface LegacyTombstone { id: string; deletedAt: string; }
 interface LegacyPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: LegacyTombstone[]; }
 interface WebDavResponse { status: number; body: unknown | null; etag: string | null; text: string | null; }
+interface ConditionalValidator { etag: string; header: 'if-match' | 'dav-if'; }
 export interface SyncResult {
   ok: boolean;
   error?: string;
@@ -108,8 +109,24 @@ function sideOfLegacy(payload: LegacyPayload): SyncMergeSide {
   };
 }
 
+function entityTagKind(value: string | null | undefined): 'strong' | 'weak' | null {
+  if (!value) return null;
+  const weak = value.startsWith('W/');
+  const quoted = weak ? value.slice(2) : value;
+  if (quoted.length < 3 || !quoted.startsWith('"') || !quoted.endsWith('"')) return null;
+  if ([...quoted.slice(1, -1)].some(character => {
+    const code = character.charCodeAt(0);
+    return character === '"' || code < 32 || code === 127;
+  })) return null;
+  return weak ? 'weak' : 'strong';
+}
+
 function strongEtag(value: string | null | undefined): value is string {
-  return Boolean(value && value.startsWith('"') && value.endsWith('"') && !value.startsWith('W/'));
+  return entityTagKind(value) === 'strong';
+}
+
+function entityTag(value: string | null | undefined): value is string {
+  return entityTagKind(value) !== null;
 }
 
 function successful(status: number) { return status >= 200 && status < 300; }
@@ -128,11 +145,15 @@ async function webdavRequest(
   body: string | null = null,
   ifMatch: string | null = null,
   ifNoneMatch: string | null = null,
+  ifDavEtag: string | null = null,
 ): Promise<WebDavResponse> {
   const baseUrl = creds.url?.endsWith('/') ? creds.url : `${creds.url}/`;
   const url = method === 'MKCOL' ? baseUrl : `${baseUrl}${resource}`;
   return invoke('webdav_request', {
-    request: { method, url, username: creds.username, password: creds.password, proxy, body, ifMatch, ifNoneMatch },
+    request: {
+      method, url, username: creds.username, password: creds.password, proxy, body,
+      ifMatch, ifNoneMatch, ifDavEtag,
+    },
   });
 }
 
@@ -142,23 +163,28 @@ function davEtagFromPropfind(text: string | null): string | null {
   if (document.querySelector('parsererror')) return null;
   for (const element of Array.from(document.getElementsByTagNameNS('*', 'getetag'))) {
     const value = element.textContent?.trim() ?? '';
-    if (strongEtag(value)) return value;
+    if (entityTagKind(value)) return value;
   }
   return null;
 }
 
-async function strongEtagForResource(
+async function conditionalValidatorForResource(
   response: WebDavResponse,
   creds: WebDAVCreds,
   proxy: string | null,
   resource: string,
-): Promise<string> {
-  if (strongEtag(response.etag)) return response.etag;
+): Promise<ConditionalValidator> {
+  if (strongEtag(response.etag)) return { etag: response.etag, header: 'if-match' };
   const properties = await webdavRequest('PROPFIND', creds, proxy, resource);
-  if (!successful(properties.status)) throw new Error('conditional_write_unsupported');
-  const etag = strongEtag(properties.etag) ? properties.etag : davEtagFromPropfind(properties.text);
-  if (!strongEtag(etag)) throw new Error('conditional_write_unsupported');
-  return etag;
+  const propertyEtag = successful(properties.status)
+    ? (properties.etag && entityTagKind(properties.etag) ? properties.etag : davEtagFromPropfind(properties.text))
+    : null;
+  const candidates = [propertyEtag, response.etag].filter((value): value is string => Boolean(value));
+  const strong = candidates.find(value => entityTagKind(value) === 'strong');
+  if (strong) return { etag: strong, header: 'if-match' };
+  const weak = candidates.find(value => entityTagKind(value) === 'weak');
+  if (weak) return { etag: weak, header: 'dav-if' };
+  throw new Error('conditional_write_unsupported');
 }
 
 function payloadForCommit(
@@ -191,7 +217,7 @@ function syncError(error: unknown): SyncResult {
   return { ok: false, error: message };
 }
 
-/** Conditional v3 sync. Every upload is protected by If-Match or If-None-Match. */
+/** Conditional v3 sync. Every upload is protected by HTTP/WebDAV entity-tag conditions. */
 export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<SyncResult> {
   void _ignoredRecords;
   const creds = await getCreds();
@@ -208,13 +234,13 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       let remotePayload: SyncPayloadV3;
       let baseSide: SyncMergeSide;
       let remoteSide: SyncMergeSide;
-      let etag: string | null = null;
+      let validator: ConditionalValidator | null = null;
       let creating = false;
       let legacyImported = false;
       let legacyFingerprint = snapshot.v2SourceFingerprint;
 
       if (v3Response.status === 200) {
-        etag = await strongEtagForResource(v3Response, creds, proxy, V3_RESOURCE);
+        validator = await conditionalValidatorForResource(v3Response, creds, proxy, V3_RESOURCE);
         remotePayload = parseSyncPayloadV3(v3Response.body);
         remoteSide = sideOfPayload(remotePayload);
         baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : { records: [], tombstones: [] };
@@ -256,14 +282,15 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       );
       const remoteChanged = !syncValuesEqual(merged.remote, remoteSide);
       let confirmedPayload = remotePayload;
-      let confirmedEtag = etag;
+      let confirmedEtag = validator?.etag ?? null;
 
       if (creating || remoteChanged) {
         const nextPayload = payloadForCommit(remotePayload, merged.remote, snapshot.deviceId, now);
         const put = await webdavRequest(
           'PUT', creds, proxy, V3_RESOURCE, JSON.stringify(nextPayload),
-          creating ? null : etag,
+          !creating && validator?.header === 'if-match' ? validator.etag : null,
           creating ? '*' : null,
+          !creating && validator?.header === 'dav-if' ? validator.etag : null,
         );
         if (put.status === 412) continue;
         if (!successful(put.status)) throw new Error(`HTTP Error: ${put.status}`);
@@ -275,11 +302,11 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
           const verified = parseSyncPayloadV3(verification.body);
           if (verified.commitId !== nextPayload.commitId) continue;
           confirmedPayload = verified;
-          confirmedEtag = await strongEtagForResource(verification, creds, proxy, V3_RESOURCE);
+          confirmedEtag = (await conditionalValidatorForResource(verification, creds, proxy, V3_RESOURCE)).etag;
         }
       }
 
-      if (!strongEtag(confirmedEtag)) throw new Error('conditional_write_unsupported');
+      if (!entityTag(confirmedEtag)) throw new Error('conditional_write_unsupported');
       await commitSyncResult({
         expectedGeneration: snapshot.recordsGeneration,
         records: merged.local.records,
@@ -336,7 +363,7 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
     const snapshot = await getSyncSnapshot();
     const v3Response = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
     if (v3Response.status !== 200) throw new Error(`HTTP Error: ${v3Response.status}`);
-    const v3Etag = await strongEtagForResource(v3Response, creds, proxy, V3_RESOURCE);
+    const v3Etag = (await conditionalValidatorForResource(v3Response, creds, proxy, V3_RESOURCE)).etag;
     const v3 = parseSyncPayloadV3(v3Response.body);
     const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
     if (legacyResponse.status !== 200) throw new Error(`HTTP Error: ${legacyResponse.status}`);

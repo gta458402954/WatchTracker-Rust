@@ -454,7 +454,7 @@ test('@expected-sync-v3 retries a stale ETag and never falls back to uncondition
   expect(snapshot.webdavV3Remote?.records[0].notes).toBe('local change');
 });
 
-test('@expected-sync-v3 blocks upload when the server has no strong ETag', async ({ page }) => {
+test('@expected-sync-v3 blocks upload when the server has no usable ETag', async ({ page }) => {
   const base = record('unsafe-server');
   await setupMockIpc(page, {
     records: [record('unsafe-server', { notes: 'local change' })],
@@ -473,6 +473,31 @@ test('@expected-sync-v3 blocks upload when the server has no strong ETag', async
   expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(false);
   expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(false);
   expect(snapshot.records[0].notes).toBe('local change');
+});
+
+test('@expected-sync-v3 uses the WebDAV If header for a weak ETag', async ({ page }) => {
+  const base = record('weak-etag-server');
+  await setupMockIpc(page, {
+    records: [record('weak-etag-server', { notes: 'safe local change' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavV3Etag: 'W/"jianguoyun-etag"',
+    webdavPreconditionFailures: 1,
+  });
+  await page.goto('/');
+
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+
+  expect(result.ok).toBe(true);
+  const snapshot = await mockSnapshot(page);
+  const puts = snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(puts).toHaveLength(2);
+  expect(puts.every(call => call.args.ifMatch === null && call.args.ifDavEtag === 'W/"jianguoyun-etag"')).toBe(true);
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
 });
 
 test('@expected-sync-v3 uses DAV getetag when GET and PUT omit ETag headers', async ({ page }) => {

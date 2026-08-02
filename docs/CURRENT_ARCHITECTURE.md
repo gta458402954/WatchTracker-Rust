@@ -9,7 +9,7 @@
 - 前端使用 React Hook `useWatchList` 管理记录状态；当前没有 Zustand 依赖或 `src/store/useWatchListStore.ts`。
 - SQLite schema 当前为 V18，records 表使用 `createdAt`、`originalName`、`revActor` 等 camelCase 列名。
 - 本地新增、更新、删除和全量替换由 Rust/SQLite 事务实现，并在同一事务中维护 Tombstone 与 `records_generation`。
-- WebDAV 当前使用独立 schema v3、强 ETag 条件写入、三方字段合并、原子 `SyncCommit`、持久 outbox 和主动拉取。
+- WebDAV 当前使用独立 schema v3、ETag 条件写入、三方字段合并、原子 `SyncCommit`、持久 outbox 和主动拉取。
 - 数据根目录由单一 `AppPaths` 解析，数据库、日志、海报和备份共享同一个结果。
 - 前端初始化明确区分 `loading | ready | error`；读取失败不会伪装成空列表，并提供重试入口。
 
@@ -82,7 +82,7 @@ React UI
 
 已经实现：
 
-- 独立 `records-v3.json`、强 ETag、`If-Match`/`If-None-Match: *` 和 412 重拉；普通响应无 ETag 时以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，仍无强 ETag则禁止上传；
+- 独立 `records-v3.json`、ETag 条件写入和 412 重拉：强 ETag 使用 HTTP `If-Match`，坚果云返回弱 ETag 时使用 WebDAV `If`，首次创建使用 `If-None-Match: *`；普通响应无 ETag 时以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，仍无合法 ETag 才禁止上传；
 - 共同 baseline 三方字段合并、删除 Tombstone、锁定保护和持久冲突中心；
 - `get_sync_snapshot`、`commit_sync_result(expectedGeneration)`、恢复点和本地原子落盘；
 - 旧数组/schema v2 首次迁移、旧客户端后续写入检测和显式冲突导入；
@@ -100,7 +100,7 @@ React UI
 
 路线图已按领域拆分，不再使用旧的 `TASK-D-R0`~`TASK-D-R3` 优先级大包。同步相关能力分别由 `TASK-D-SYNC-001`（冲突/版本/条件提交）、`TASK-D-SYNC-002`（持久化 outbox/主动拉取）和 `TASK-D-SYNC-003`（目标隔离）跟踪；状态层模块拆分属于独立的 `TASK-D-ARCH-002`，不默认要求引入 Zustand。
 
-`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001/002` 已经实现。同步使用独立 `records-v3.json` 和强 ETag 条件提交：不同字段按本地共同基线三方合并，同字段、删除/编辑和锁定差异进入持久冲突中心；Rust 以 `expectedGeneration` 和单事务 SyncCommit 防止网络等待期间的新本地修改被覆盖。所有本地业务写入同时提升持久 outbox，自动协调器在启动、聚焦、网络恢复和周期到期时补跑或拉取，并跨重启保留暂停与退避。旧 schema v2 只首次迁移，后续旧客户端变化会阻断自动混合并允许显式导入冲突中心。数据库仍为 V18，高风险落盘继续先创建恢复点。当前下一项 R0 任务是 `TASK-D-SYNC-003`（WebDAV 目标隔离与安全切换），尚需专项设计。完整清单和状态以 `.agent-work/TASKS.md` 为准。
+`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001/002` 已经实现。同步使用独立 `records-v3.json` 和 ETag 条件提交（强 ETag 走 HTTP `If-Match`，弱 ETag 走 WebDAV `If`）：不同字段按本地共同基线三方合并，同字段、删除/编辑和锁定差异进入持久冲突中心；Rust 以 `expectedGeneration` 和单事务 SyncCommit 防止网络等待期间的新本地修改被覆盖。所有本地业务写入同时提升持久 outbox，自动协调器在启动、聚焦、网络恢复和周期到期时补跑或拉取，并跨重启保留暂停与退避。旧 schema v2 只首次迁移，后续旧客户端变化会阻断自动混合并允许显式导入冲突中心。数据库仍为 V18，高风险落盘继续先创建恢复点。当前下一项 R0 任务是 `TASK-D-SYNC-003`（WebDAV 目标隔离与安全切换），尚需专项设计。完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 
@@ -110,7 +110,7 @@ React UI
 npm run typecheck  PASS
 npm run lint       PASS
 npm run test       PASS（68/68）
-npx playwright test PASS（45/45）
+npx playwright test PASS（46/46）
 npm run build      PASS
 cargo fmt/clippy   PASS
 cargo test --locked PASS（56/56）

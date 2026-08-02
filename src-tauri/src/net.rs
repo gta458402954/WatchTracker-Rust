@@ -349,6 +349,7 @@ pub struct WebDavRequest {
     pub proxy: Option<String>,
     pub if_match: Option<String>,
     pub if_none_match: Option<String>,
+    pub if_dav_etag: Option<String>,
 }
 
 pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, String> {
@@ -389,6 +390,9 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
     }
     if let Some(value) = request.if_none_match {
         req_builder = req_builder.header(reqwest::header::IF_NONE_MATCH, value);
+    }
+    if let Some(value) = request.if_dav_etag {
+        req_builder = req_builder.header("If", format!("([{value}])"));
     }
 
     if request.method != "PROPFIND" {

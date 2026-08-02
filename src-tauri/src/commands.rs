@@ -26,15 +26,25 @@ fn validate_webdav_conditions(
     method: &str,
     if_match: Option<&str>,
     if_none_match: Option<&str>,
+    if_dav_etag: Option<&str>,
 ) -> Result<(), crate::error::AppError> {
-    if (if_match.is_some() || if_none_match.is_some()) && method != "PUT" {
+    if (if_match.is_some() || if_none_match.is_some() || if_dav_etag.is_some()) && method != "PUT" {
         return Err(crate::error::AppError::General(
             "Conditional headers are only allowed for WebDAV PUT".to_string(),
         ));
     }
-    if if_match.is_some() && if_none_match.is_some() {
+    if [
+        if_match.is_some(),
+        if_none_match.is_some(),
+        if_dav_etag.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count()
+        > 1
+    {
         return Err(crate::error::AppError::General(
-            "If-Match and If-None-Match cannot be combined".to_string(),
+            "WebDAV write preconditions cannot be combined".to_string(),
         ));
     }
     if let Some(value) = if_match {
@@ -53,6 +63,21 @@ fn validate_webdav_conditions(
         return Err(crate::error::AppError::General(
             "Invalid If-None-Match value".to_string(),
         ));
+    }
+    if let Some(value) = if_dav_etag {
+        let opaque = value
+            .strip_prefix("W/\"")
+            .and_then(|rest| rest.strip_suffix('"'));
+        let valid = opaque.is_some_and(|inner| {
+            !inner.is_empty()
+                && !inner.contains('"')
+                && !inner.chars().any(|character| character.is_control())
+        });
+        if !valid {
+            return Err(crate::error::AppError::General(
+                "Invalid weak WebDAV entity tag".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -338,6 +363,7 @@ pub async fn webdav_request(
         &request.method,
         request.if_match.as_deref(),
         request.if_none_match.as_deref(),
+        request.if_dav_etag.as_deref(),
     )?;
     net::webdav_request(request)
         .await
@@ -350,12 +376,18 @@ mod command_tests {
 
     #[test]
     fn webdav_condition_headers_accept_only_safe_put_preconditions() {
-        assert!(validate_webdav_conditions("PUT", Some("\"etag\""), None).is_ok());
-        assert!(validate_webdav_conditions("PUT", None, Some("*")).is_ok());
-        assert!(validate_webdav_conditions("PUT", Some("W/\"weak\""), None).is_err());
-        assert!(validate_webdav_conditions("PUT", Some("\"bad\r\nheader\""), None).is_err());
-        assert!(validate_webdav_conditions("GET", Some("\"etag\""), None).is_err());
-        assert!(validate_webdav_conditions("PROPFIND", None, None).is_ok());
-        assert!(validate_webdav_conditions("PUT", Some("\"etag\""), Some("*")).is_err());
+        assert!(validate_webdav_conditions("PUT", Some("\"etag\""), None, None).is_ok());
+        assert!(validate_webdav_conditions("PUT", None, Some("*"), None).is_ok());
+        assert!(validate_webdav_conditions("PUT", None, None, Some("W/\"weak\"")).is_ok());
+        assert!(validate_webdav_conditions("PUT", Some("W/\"weak\""), None, None).is_err());
+        assert!(validate_webdav_conditions("PUT", Some("\"bad\r\nheader\""), None, None).is_err());
+        assert!(validate_webdav_conditions("GET", Some("\"etag\""), None, None).is_err());
+        assert!(validate_webdav_conditions("PROPFIND", None, None, None).is_ok());
+        assert!(
+            validate_webdav_conditions("PUT", Some("\"etag\""), None, Some("W/\"weak\"")).is_err()
+        );
+        assert!(
+            validate_webdav_conditions("PUT", None, None, Some("W/\"bad\r\nheader\"")).is_err()
+        );
     }
 }

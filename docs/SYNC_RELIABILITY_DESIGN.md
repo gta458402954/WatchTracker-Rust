@@ -4,7 +4,7 @@
 >
 > 基线：`main@180d5d5`，数据库运行格式保持 V18
 >
-> 依赖：`TASK-D-SYNC-001` 已实现的 schema v3、强 ETag、三方合并、冲突冻结与 `expectedGeneration` CAS
+> 依赖：`TASK-D-SYNC-001` 已实现的 schema v3、ETag 条件写入、三方合并、冲突冻结与 `expectedGeneration` CAS
 >
 > 范围：本地修改的持久同步意图、崩溃恢复、自动同步暂停/恢复、启动/聚焦/网络恢复/周期主动拉取、失败分类与退避
 >
@@ -32,7 +32,7 @@
 - 失败后没有统一分类和退避；频繁编辑或聚焦可能重复提示同一错误。
 - `sync_interval` 当前含义是“编辑后的防抖秒数”，不能同时承担分钟级主动拉取周期。
 
-已有 schema v3 协调器可以安全重复执行：GET 使用强 ETag，PUT 使用条件请求，本地提交使用 generation CAS。因此本任务不新建另一套同步协议，只负责可靠地产生、保存和执行同步意图。
+已有 schema v3 协调器可以安全重复执行：GET/PROPFIND 获取 ETag，PUT 使用 HTTP `If-Match` 或 WebDAV `If` 条件，本地提交使用 generation CAS。因此本任务不新建另一套同步协议，只负责可靠地产生、保存和执行同步意图。
 
 ## 3. 推荐模型：单槽、可合并 outbox
 
@@ -121,7 +121,7 @@
 | 窗口重新聚焦/页面重新可见 | 距最近远端检查超过 30 秒才触发，防止 Alt-Tab 风暴 |
 | 浏览器 `online` 事件 | 只作为网络恢复提示；立即重读持久状态并尝试，不把 `navigator.onLine` 当作远端可用证明 |
 | 周期检查 | 使用独立的分钟级 `sync_pull_interval_minutes`，默认 15 分钟；建议选项为关闭、5、15、30、60 分钟 |
-| 用户立即同步 | 绕过暂停、debounce 和 `nextAttemptAt`，但不能绕过强 ETag、未知 schema 等安全门禁 |
+| 用户立即同步 | 绕过暂停、debounce 和 `nextAttemptAt`，但不能绕过 ETag 条件写入、未知 schema 等安全门禁 |
 | 恢复自动同步 | 有 pending 时立即补跑；否则立即主动拉取一次 |
 
 协调器在任意时刻最多执行一个 `syncToWebDAV`。运行中到达的新触发只设置内存 `rerunRequested`；当前轮结束后重新读取 SQLite 状态，按最新 generation、暂停和退避决定是否再执行。不得复用旧 snapshot 直接重试。
@@ -203,7 +203,7 @@
 - 暂停跨重启保持，暂停期间无自动请求，手动同步可用，恢复立即执行正确动作。
 - 断网/5xx 按 fake clock 退避，成功后清零；401/403 不自动轰炸服务器或通知。
 - 冲突成功进入冲突中心，解决后重新入队并发布。
-- 无强 ETag、未来 schema、旧客户端写入仍保持 SYNC-001 的零不安全 PUT 约束。
+- 无合法条件 ETag、未来 schema、旧客户端写入仍保持 SYNC-001 的零不安全 PUT 约束。
 
 自动化测试只使用临时数据库、mock WebDAV 和注入时钟。真实便携版数据库只允许部署前后只读完整性、版本、数量和哈希检查。
 
