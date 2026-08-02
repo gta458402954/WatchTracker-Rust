@@ -10,6 +10,7 @@ mod models;
 mod net;
 mod record_validation;
 mod recovery_points;
+mod sync_state;
 
 #[cfg(test)]
 mod db_atomic_tests;
@@ -121,6 +122,9 @@ pub fn run() {
             commands::update_record,
             commands::delete_record,
             commands::replace_all_records,
+            commands::get_sync_snapshot,
+            commands::commit_sync_result,
+            commands::resolve_sync_conflict,
             commands::create_recovery_point,
             commands::list_recovery_points,
             commands::set_recovery_point_retained,

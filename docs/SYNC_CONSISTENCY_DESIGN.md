@@ -1,6 +1,6 @@
 # TASK-D-SYNC-001：同步一致性专项设计
 
-> 状态：设计已批准，可进入实施
+> 状态：已实现
 >
 > 基线：`main@df1e175e`，数据库运行格式保持 V18
 >
@@ -184,3 +184,9 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 3. v3 使用独立 `records-v3.json`，其他同步设备需要升级；旧 v2 文件只在首次迁移或用户显式导入时读取。
 
 以上三项不再是实施阶段的开放问题。若后续需要改变，必须先更新本设计和兼容/测试矩阵。
+
+## 13. 实施结果
+
+2026-08-02 已按本设计完成 schema v3 条件同步。实现包含纯函数三方合并、冲突冻结、独立 `records-v3.json`、强 ETag、`If-Match`/`If-None-Match: *`、三次 412 重拉、PUT 后 commitId 验证、稳定设备 UUID、Rust `get_sync_snapshot`/`commit_sync_result`、本地 generation CAS、同步恢复点、原子冲突选择、旧版文件变化检测和显式冲突导入。数据库继续保持 V18。
+
+`TASK-D-SYNC-002` 的持久化 outbox、异常退出后重试、启动/聚焦/周期主动拉取，以及 `TASK-D-SYNC-003` 的目标命名空间隔离均未混入本任务。

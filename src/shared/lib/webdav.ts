@@ -1,46 +1,60 @@
-/** WebDAV 同步：按记录时间合并，兼容旧版 JSON 数组。 */
-import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt } from './database';
-import { WatchRecord } from '../types';
+/** WebDAV schema v3 synchronization with conditional writes and three-way merging. */
 import { invoke } from '@tauri-apps/api/core';
+import type { WatchRecord } from '../types';
+import {
+  commitSyncResult,
+  getSettingAsync,
+  getSyncSnapshot,
+  safeDecrypt,
+  safeEncrypt,
+  setSettingAsync,
+} from './database';
+import {
+  emptySyncPayload,
+  mergeSyncStates,
+  parseSyncPayloadV3,
+  syncValuesEqual,
+  type SyncConflictV3,
+  type SyncMergeSide,
+  type SyncPayloadV3,
+  type SyncTombstoneV3,
+} from './syncMerge';
 
 const DEFAULT_WEBDAV_BASE_URL = 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/';
-const TOMBSTONES_KEY = 'sync_tombstones';
-const CONFLICTS_KEY = 'sync_conflicts';
-const LAST_SUCCESSFUL_SYNC_KEY = 'sync_last_success_at';
-const CONFLICT_HISTORY_VERSION_KEY = 'sync_conflict_history_version';
-const CONFLICT_HISTORY_VERSION = '2';
+const V3_RESOURCE = 'records-v3.json';
+const LEGACY_RESOURCE = 'records.json';
+const MAX_PRECONDITION_RETRIES = 3;
 
 export interface WebDAVCreds { username: string; password: string; url?: string; }
-interface Tombstone { id: string; deletedAt: string; }
-interface SyncPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: Tombstone[]; }
-export interface SyncResult { ok: boolean; error?: string; records?: WatchRecord[]; conflictCount?: number; }
-export interface SyncConflict { id: string; kept: 'local' | 'remote'; at: string; discarded: WatchRecord; }
+interface LegacyTombstone { id: string; deletedAt: string; }
+interface LegacyPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: LegacyTombstone[]; }
+interface WebDavResponse { status: number; body: unknown | null; etag: string | null; }
+export interface SyncResult {
+  ok: boolean;
+  error?: string;
+  records?: WatchRecord[];
+  conflictCount?: number;
+  conflicts?: SyncConflictV3[];
+  staleLocal?: boolean;
+  legacyImported?: boolean;
+}
+export type SyncConflict = SyncConflictV3;
 
-/** 按键名规范化对象，避免云端 JSON 字段顺序不同造成伪冲突。 */
-function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, stableValue(item)]));
+export function syncFailureMessage(error?: string): string | null {
+  switch (error) {
+    case 'conditional_write_unsupported':
+      return '服务器未提供安全条件写入能力，已禁止上传；本地数据没有被覆盖。';
+    case 'remote_busy':
+      return '云端数据持续变化，请稍后重试。';
+    case 'stale_local_snapshot':
+      return '同步期间出现新的本地修改，本次未覆盖本地数据，请再次同步。';
+    case 'unsupported_remote_schema':
+      return '云端数据版本高于当前程序，已停止同步且未写入。';
+    case 'legacy_remote_changed':
+      return '检测到旧版程序仍在写入 records.json；请升级其他设备后再显式导入旧数据。';
+    default:
+      return null;
   }
-  return value;
-}
-function recordsEqual(left: WatchRecord, right: WatchRecord) {
-  return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
-}
-function conflictKey(conflict: SyncConflict) {
-  return `${conflict.id}:${conflict.kept}:${JSON.stringify(stableValue(conflict.discarded))}`;
-}
-function mergeConflictHistory(incoming: SyncConflict[], existing: SyncConflict[]) {
-  const known = new Set<string>();
-  return [...incoming, ...existing].filter(conflict => {
-    const key = conflictKey(conflict);
-    if (known.has(key)) return false;
-    known.add(key);
-    return true;
-  }).slice(0, 50);
 }
 
 export async function saveCreds(creds: WebDAVCreds) {
@@ -48,6 +62,7 @@ export async function saveCreds(creds: WebDAVCreds) {
   await setSettingAsync('webdav_creds', encrypted);
   if (creds.url) await setSettingAsync('webdav_url', creds.url);
 }
+
 export async function getCreds(): Promise<WebDAVCreds | null> {
   const stored = await getSettingAsync('webdav_creds');
   if (!stored) return null;
@@ -59,124 +74,311 @@ export async function getCreds(): Promise<WebDAVCreds | null> {
     return separator < 0 ? null : { username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1), url };
   } catch { return null; }
 }
+
 export async function clearCreds() { await setSettingAsync('webdav_creds', ''); }
 export async function hasCreds(): Promise<boolean> { return !!(await getCreds()); }
 
-function parsePayload(data: unknown): SyncPayload {
+function legacyPayload(data: unknown): LegacyPayload {
   if (Array.isArray(data)) return { schemaVersion: 2, updatedAt: '', records: data as WatchRecord[], tombstones: [] };
-  if (data && typeof data === 'object') {
-    const value = data as Partial<SyncPayload>;
-    return { schemaVersion: 2, updatedAt: value.updatedAt ?? '', records: Array.isArray(value.records) ? value.records : [], tombstones: Array.isArray(value.tombstones) ? value.tombstones : [] };
-  }
-  return { schemaVersion: 2, updatedAt: '', records: [], tombstones: [] };
-}
-function timeOf(record: WatchRecord) { const time = Date.parse(record.updatedAt || record.createdAt || ''); return Number.isNaN(time) ? 0 : time; }
-function timeOfDeletion(tombstone: Tombstone) { const time = Date.parse(tombstone.deletedAt); return Number.isNaN(time) ? 0 : time; }
-async function getTombstones(): Promise<Tombstone[]> {
-  try {
-    const value: unknown = JSON.parse((await getSettingAsync(TOMBSTONES_KEY)) || '[]');
-    return Array.isArray(value) ? value as Tombstone[] : [];
-  } catch { return []; }
-}
-async function setTombstones(tombstones: Tombstone[]) { await setSettingAsync(TOMBSTONES_KEY, JSON.stringify(tombstones)); }
-
-/** 删除墓碑会在下一次同步时上传，防止另一设备将已删记录重新带回。 */
-export async function markRecordDeleted(id: string) {
-  const tombstones = (await getTombstones()).filter(item => item.id !== id);
-  tombstones.push({ id, deletedAt: new Date().toISOString() });
-  await setTombstones(tombstones);
-}
-async function clearDeletion(id: string) { const tombstones = (await getTombstones()).filter(item => item.id !== id); await setTombstones(tombstones); }
-
-/**
- * 仅当本机与云端都在上次成功同步后修改同一条记录时，才生成冲突备份。
- * 单端正常更新会遇到云端旧版本，但那是待上传的更新，不是冲突。
- */
-function mergeSyncState(local: WatchRecord[], remote: SyncPayload, localTombstones: Tombstone[], lastSuccessfulSyncAt: string | null) {
-  const records = new Map<string, WatchRecord>();
-  const tombstones = new Map<string, Tombstone>();
-  const conflicts: SyncConflict[] = [];
-  const lastSync = Date.parse(lastSuccessfulSyncAt || '');
-  const hasSyncBaseline = !Number.isNaN(lastSync);
-  for (const tombstone of [...remote.tombstones, ...localTombstones]) {
-    const previous = tombstones.get(tombstone.id);
-    if (!previous || timeOfDeletion(tombstone) > timeOfDeletion(previous)) tombstones.set(tombstone.id, tombstone);
-  }
-  for (const record of remote.records) records.set(record.id, record);
-  for (const record of local) {
-    const previous = records.get(record.id);
-    if (!previous) { records.set(record.id, record); continue; }
-    const localWins = record.isLocked || timeOf(record) >= timeOf(previous);
-    const changedOnBothSides = hasSyncBaseline && timeOf(record) > lastSync && timeOf(previous) > lastSync;
-    if (!recordsEqual(record, previous) && changedOnBothSides) {
-      conflicts.push({ id: record.id, kept: localWins ? 'local' : 'remote', at: new Date().toISOString(), discarded: localWins ? previous : record });
-    }
-    if (localWins) records.set(record.id, record);
-  }
-  for (const [id, tombstone] of tombstones) {
-    const record = records.get(id);
-    if (record && (record.isLocked || timeOf(record) > timeOfDeletion(tombstone))) { tombstones.delete(id); continue; }
-    records.delete(id);
-  }
-  return { records: [...records.values()], tombstones: [...tombstones.values()], conflicts };
+  if (!data || typeof data !== 'object') throw new Error('invalid_remote_payload');
+  const value = data as Omit<Partial<LegacyPayload>, 'schemaVersion'> & { schemaVersion?: number };
+  if (typeof value.schemaVersion === 'number' && value.schemaVersion > 3) throw new Error('unsupported_remote_schema');
+  if (value.schemaVersion === 3) throw new Error('unexpected_v3_legacy_resource');
+  if (!Array.isArray(value.records)) throw new Error('invalid_remote_payload');
+  return {
+    schemaVersion: 2,
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
+    records: value.records,
+    tombstones: Array.isArray(value.tombstones) ? value.tombstones : [],
+  };
 }
 
-async function webdavRequest(method: 'MKCOL' | 'PUT' | 'GET', creds: WebDAVCreds, proxy: string | null, body?: string) {
+function sideOfPayload(payload: Pick<SyncPayloadV3, 'records' | 'tombstones'>): SyncMergeSide {
+  return { records: payload.records, tombstones: payload.tombstones };
+}
+
+function sideOfLegacy(payload: LegacyPayload): SyncMergeSide {
+  return {
+    records: payload.records,
+    tombstones: payload.tombstones.map((item): SyncTombstoneV3 => ({
+      ...item,
+      rev: 0,
+      revActor: 'legacy-v2',
+    })),
+  };
+}
+
+function strongEtag(value: string | null | undefined): value is string {
+  return Boolean(value && value.startsWith('"') && value.endsWith('"') && !value.startsWith('W/'));
+}
+
+function successful(status: number) { return status >= 200 && status < 300; }
+
+async function contentFingerprint(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function webdavRequest(
+  method: 'MKCOL' | 'PUT' | 'GET',
+  creds: WebDAVCreds,
+  proxy: string | null,
+  resource: string,
+  body: string | null = null,
+  ifMatch: string | null = null,
+  ifNoneMatch: string | null = null,
+): Promise<WebDavResponse> {
   const baseUrl = creds.url?.endsWith('/') ? creds.url : `${creds.url}/`;
-  const url = method === 'MKCOL' ? baseUrl : `${baseUrl}records.json`;
-  return invoke('webdav_request', { method, url, username: creds.username, password: creds.password, proxy, body });
+  const url = method === 'MKCOL' ? baseUrl : `${baseUrl}${resource}`;
+  return invoke('webdav_request', {
+    request: { method, url, username: creds.username, password: creds.password, proxy, body, ifMatch, ifNoneMatch },
+  });
 }
 
-/** 合并本机与云端数据，再写回云端。冲突仅记录真正的双端并发修改。 */
-export async function syncToWebDAV(localRecords: WatchRecord[]): Promise<SyncResult> {
+function payloadForCommit(
+  current: SyncPayloadV3,
+  remote: SyncMergeSide,
+  deviceId: string,
+  now: string,
+): SyncPayloadV3 {
+  return {
+    schemaVersion: 3,
+    documentId: current.documentId,
+    revision: current.revision + 1,
+    commitId: crypto.randomUUID(),
+    parentCommitId: current.commitId || null,
+    writerId: deviceId,
+    committedAt: now,
+    records: remote.records,
+    tombstones: remote.tombstones,
+  };
+}
+
+function syncError(error: unknown): SyncResult {
+  const message = String(error);
+  if (message.includes('stale_local_snapshot')) {
+    return { ok: false, error: 'stale_local_snapshot', staleLocal: true };
+  }
+  if (message.includes('unsupported_remote_schema')) return { ok: false, error: 'unsupported_remote_schema' };
+  if (message.includes('conditional_write_unsupported')) return { ok: false, error: 'conditional_write_unsupported' };
+  if (message.includes('legacy_remote_changed')) return { ok: false, error: 'legacy_remote_changed' };
+  return { ok: false, error: message };
+}
+
+/** Conditional v3 sync. Every upload is protected by If-Match or If-None-Match. */
+export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<SyncResult> {
+  void _ignoredRecords;
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
   const proxy = await getSettingAsync('network_proxy');
   try {
-    try { await webdavRequest('MKCOL', creds, proxy); } catch { /* 已存在时忽略 */ }
-    let remote = parsePayload([]);
-    try { remote = parsePayload(await webdavRequest('GET', creds, proxy)); } catch (error) { if (!String(error).includes('404')) throw error; }
-    const merged = mergeSyncState(localRecords, remote, await getTombstones(), await getSettingAsync(LAST_SUCCESSFUL_SYNC_KEY));
-    const payload: SyncPayload = { schemaVersion: 2, updatedAt: new Date().toISOString(), records: merged.records, tombstones: merged.tombstones };
-    await webdavRequest('PUT', creds, proxy, JSON.stringify(payload));
-    await setTombstones(merged.tombstones);
-    await setSettingAsync(LAST_SUCCESSFUL_SYNC_KEY, payload.updatedAt);
-    if (merged.conflicts.length) {
-      const old = JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]') as SyncConflict[];
-      await setSettingAsync(CONFLICTS_KEY, JSON.stringify(mergeConflictHistory(merged.conflicts, old)));
+    const folder = await webdavRequest('MKCOL', creds, proxy, V3_RESOURCE);
+    if (!successful(folder.status) && folder.status !== 405) throw new Error(`HTTP Error: ${folder.status}`);
+    const snapshot = await getSyncSnapshot();
+    const localSide: SyncMergeSide = { records: snapshot.records, tombstones: snapshot.tombstones };
+
+    for (let attempt = 0; attempt < MAX_PRECONDITION_RETRIES; attempt++) {
+      const v3Response = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
+      let remotePayload: SyncPayloadV3;
+      let baseSide: SyncMergeSide;
+      let remoteSide: SyncMergeSide;
+      let etag: string | null = null;
+      let creating = false;
+      let legacyImported = false;
+      let legacyFingerprint = snapshot.v2SourceFingerprint;
+
+      if (v3Response.status === 200) {
+        if (!strongEtag(v3Response.etag)) throw new Error('conditional_write_unsupported');
+        remotePayload = parseSyncPayloadV3(v3Response.body);
+        remoteSide = sideOfPayload(remotePayload);
+        baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : { records: [], tombstones: [] };
+        etag = v3Response.etag;
+        const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
+        if (legacyResponse.status === 200) {
+          const currentFingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
+          if (snapshot.v2SourceFingerprint && snapshot.v2SourceFingerprint !== currentFingerprint) {
+            throw new Error('legacy_remote_changed');
+          }
+          legacyFingerprint = currentFingerprint;
+        } else if (legacyResponse.status === 404) {
+          legacyFingerprint = 'missing';
+        }
+      } else if (v3Response.status === 404) {
+        creating = true;
+        const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
+        const now = new Date().toISOString();
+        remotePayload = emptySyncPayload(snapshot.deviceId, now);
+        if (legacyResponse.status === 200) {
+          const legacy = legacyPayload(legacyResponse.body);
+          remoteSide = sideOfLegacy(legacy);
+          baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : remoteSide;
+          legacyFingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
+          legacyImported = true;
+        } else if (legacyResponse.status === 404) {
+          remoteSide = { records: [], tombstones: [] };
+          baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : remoteSide;
+          legacyFingerprint = 'missing';
+        } else {
+          throw new Error(`HTTP Error: ${legacyResponse.status}`);
+        }
+      } else {
+        throw new Error(`HTTP Error: ${v3Response.status}`);
+      }
+
+      const now = new Date().toISOString();
+      const merged = mergeSyncStates(
+        baseSide, localSide, remoteSide, snapshot.deviceId, now, snapshot.conflicts,
+      );
+      const remoteChanged = !syncValuesEqual(merged.remote, remoteSide);
+      let confirmedPayload = remotePayload;
+      let confirmedEtag = etag;
+
+      if (creating || remoteChanged) {
+        const nextPayload = payloadForCommit(remotePayload, merged.remote, snapshot.deviceId, now);
+        const put = await webdavRequest(
+          'PUT', creds, proxy, V3_RESOURCE, JSON.stringify(nextPayload),
+          creating ? null : etag,
+          creating ? '*' : null,
+        );
+        if (put.status === 412) continue;
+        if (!successful(put.status)) throw new Error(`HTTP Error: ${put.status}`);
+        confirmedPayload = nextPayload;
+        confirmedEtag = put.etag;
+        if (!strongEtag(confirmedEtag)) {
+          const verification = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
+          if (verification.status !== 200 || !strongEtag(verification.etag)) {
+            throw new Error('conditional_write_unsupported');
+          }
+          const verified = parseSyncPayloadV3(verification.body);
+          if (verified.commitId !== nextPayload.commitId) continue;
+          confirmedPayload = verified;
+          confirmedEtag = verification.etag;
+        }
+      }
+
+      if (!strongEtag(confirmedEtag)) throw new Error('conditional_write_unsupported');
+      await commitSyncResult({
+        expectedGeneration: snapshot.recordsGeneration,
+        records: merged.local.records,
+        tombstones: merged.local.tombstones,
+        baseline: confirmedPayload,
+        conflicts: merged.conflicts,
+        remoteEtag: confirmedEtag,
+        lastCommit: {
+          revision: confirmedPayload.revision,
+          commitId: confirmedPayload.commitId,
+          committedAt: confirmedPayload.committedAt,
+        },
+        v2SourceFingerprint: legacyFingerprint,
+      });
+      return {
+        ok: true,
+        records: merged.local.records,
+        conflicts: merged.conflicts,
+        conflictCount: merged.conflicts.length,
+        legacyImported,
+      };
     }
-    return { ok: true, records: merged.records, conflictCount: merged.conflicts.length };
-  } catch (error) { return { ok: false, error: String(error) }; }
+    return { ok: false, error: 'remote_busy' };
+  } catch (error) {
+    return syncError(error);
+  }
 }
 
+/** Read-only remote preview/import. Never performs PUT. */
 export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: WatchRecord[]; error?: string }> {
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
-  try { return { ok: true, data: parsePayload(await webdavRequest('GET', creds, await getSettingAsync('network_proxy'))).records }; }
-  catch (error) { return { ok: false, error: String(error).includes('404') ? '云端暂无数据' : String(error) }; }
-}
-export async function getSyncConflicts(): Promise<SyncConflict[]> {
+  const proxy = await getSettingAsync('network_proxy');
   try {
-    const value: unknown = JSON.parse((await getSettingAsync(CONFLICTS_KEY)) || '[]');
-    return Array.isArray(value) ? value as SyncConflict[] : [];
-  } catch { return []; }
+    const v3 = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
+    if (v3.status === 200) return { ok: true, data: parseSyncPayloadV3(v3.body).records };
+    if (v3.status !== 404) return { ok: false, error: `HTTP Error: ${v3.status}` };
+    const legacy = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
+    if (legacy.status === 200) return { ok: true, data: legacyPayload(legacy.body).records };
+    return { ok: false, error: legacy.status === 404 ? '云端暂无数据' : `HTTP Error: ${legacy.status}` };
+  } catch (error) { return { ok: false, error: String(error) }; }
 }
-export async function clearSyncConflicts() { await setSettingAsync(CONFLICTS_KEY, '[]'); }
-/** 清除已与当前记录完全相同的旧冲突备份，保留真实差异以便恢复。 */
-export async function clearResolvedSyncConflicts(records: WatchRecord[]): Promise<SyncConflict[]> {
-  // 旧版本会把单端待上传更新错误写为冲突；此客户端只有一个数据源，可安全清理该历史。
-  if ((await getSettingAsync(CONFLICT_HISTORY_VERSION_KEY)) !== CONFLICT_HISTORY_VERSION) {
-    await setSettingAsync(CONFLICTS_KEY, '[]');
-    await setSettingAsync(CONFLICT_HISTORY_VERSION_KEY, CONFLICT_HISTORY_VERSION);
-    return [];
-  }
-  const currentById = new Map(records.map(record => [record.id, record]));
-  const conflicts = await getSyncConflicts();
-  const remaining = conflicts.filter(conflict => {
-    const current = currentById.get(conflict.id);
-    return !current || !recordsEqual(current, conflict.discarded);
-  });
-  if (remaining.length !== conflicts.length) await setSettingAsync(CONFLICTS_KEY, JSON.stringify(remaining));
-  return remaining;
+
+/**
+ * Read a changed legacy records.json into the conflict center. It never writes remote data and
+ * never replaces a local record automatically.
+ */
+export async function importLegacyChangesToConflictCenter(): Promise<SyncResult> {
+  const creds = await getCreds();
+  if (!creds) return { ok: false, error: '未配置凭据' };
+  const proxy = await getSettingAsync('network_proxy');
+  try {
+    const snapshot = await getSyncSnapshot();
+    const v3Response = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
+    if (v3Response.status !== 200) throw new Error(`HTTP Error: ${v3Response.status}`);
+    if (!strongEtag(v3Response.etag)) throw new Error('conditional_write_unsupported');
+    const v3 = parseSyncPayloadV3(v3Response.body);
+    const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
+    if (legacyResponse.status !== 200) throw new Error(`HTTP Error: ${legacyResponse.status}`);
+    const legacy = legacyPayload(legacyResponse.body);
+    const fingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
+    const localRecords = new Map(snapshot.records.map(record => [record.id, record]));
+    const localTombstones = new Set(snapshot.tombstones.map(item => item.id));
+    const baseRecords = new Map((snapshot.baseline?.records ?? []).map(record => [record.id, record]));
+    const v3Records = new Map(v3.records.map(record => [record.id, record]));
+    const legacyTombstones = new Set(legacy.tombstones.map(item => item.id));
+    const imported: SyncConflictV3[] = [];
+    const detectedAt = new Date().toISOString();
+    for (const legacyRecord of legacy.records) {
+      const currentRemote = v3Records.get(legacyRecord.id);
+      if (currentRemote && syncValuesEqual(currentRemote, legacyRecord)) continue;
+      const local = localRecords.get(legacyRecord.id) ?? null;
+      imported.push({
+        id: legacyRecord.id,
+        kind: local?.isLocked ? 'locked' : 'edit-edit',
+        fields: ['legacy-import'],
+        base: baseRecords.get(legacyRecord.id) ?? null,
+        local,
+        remote: legacyRecord,
+        localDeleted: localTombstones.has(legacyRecord.id),
+        remoteDeleted: false,
+        detectedAt,
+      });
+    }
+    for (const id of legacyTombstones) {
+      const local = localRecords.get(id) ?? null;
+      if (!local && !v3Records.has(id)) continue;
+      imported.push({
+        id,
+        kind: local?.isLocked ? 'locked' : 'delete-edit',
+        fields: [],
+        base: baseRecords.get(id) ?? null,
+        local,
+        remote: null,
+        localDeleted: localTombstones.has(id),
+        remoteDeleted: true,
+        detectedAt,
+      });
+    }
+    const byId = new Map(snapshot.conflicts.map(conflict => [conflict.id, conflict]));
+    for (const conflict of imported) byId.set(conflict.id, conflict);
+    const conflicts = [...byId.values()];
+    await commitSyncResult({
+      expectedGeneration: snapshot.recordsGeneration,
+      records: snapshot.records,
+      tombstones: snapshot.tombstones,
+      baseline: v3,
+      conflicts,
+      remoteEtag: v3Response.etag,
+      lastCommit: { revision: v3.revision, commitId: v3.commitId, committedAt: v3.committedAt },
+      v2SourceFingerprint: fingerprint,
+    });
+    return { ok: true, records: snapshot.records, conflicts, conflictCount: imported.length };
+  } catch (error) { return syncError(error); }
 }
-export async function clearRecordDeletion(id: string) { await clearDeletion(id); }
+
+export async function getSyncConflicts(): Promise<SyncConflictV3[]> {
+  return (await getSyncSnapshot()).conflicts;
+}
+
+export async function clearResolvedSyncConflicts(_records: WatchRecord[]): Promise<SyncConflictV3[]> {
+  void _records;
+  return getSyncConflicts();
+}

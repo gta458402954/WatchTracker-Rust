@@ -1,5 +1,6 @@
 use crate::app_paths::AppPaths;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -328,34 +329,55 @@ pub async fn download_poster(
     Ok(true)
 }
 
-pub async fn webdav_request(
-    method: &str,
-    url: &str,
-    username: &str,
-    password: &str,
-    body: Option<String>,
-    proxy: Option<String>,
-) -> Result<Value, String> {
-    log::info!("[WebDAV] {} Request to: {}", method, url);
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavResponse {
+    pub status: u16,
+    pub body: Option<Value>,
+    pub etag: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavRequest {
+    pub method: String,
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    pub body: Option<String>,
+    pub proxy: Option<String>,
+    pub if_match: Option<String>,
+    pub if_none_match: Option<String>,
+}
+
+pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, String> {
+    log::info!("[WebDAV] {} Request to: {}", request.method, request.url);
 
     let mut builder = Client::builder();
-    if let Some(p) = proxy {
+    if let Some(p) = request.proxy {
         if !p.trim().is_empty() {
             builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
         }
     }
     let client = builder.build().map_err(|e| e.to_string())?;
 
-    let mut req_builder = match method {
-        "MKCOL" => client.request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), url),
-        "PUT" => client.put(url),
-        "GET" => client.get(url),
-        _ => return Err(format!("Unsupported method: {}", method)),
+    let mut req_builder = match request.method.as_str() {
+        "MKCOL" => client.request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &request.url),
+        "PUT" => client.put(&request.url),
+        "GET" => client.get(&request.url),
+        _ => return Err(format!("Unsupported method: {}", request.method)),
     };
 
-    req_builder = req_builder.basic_auth(username, Some(password));
+    req_builder = req_builder.basic_auth(request.username, Some(request.password));
 
-    if let Some(b) = body {
+    if let Some(value) = request.if_match {
+        req_builder = req_builder.header(reqwest::header::IF_MATCH, value);
+    }
+    if let Some(value) = request.if_none_match {
+        req_builder = req_builder.header(reqwest::header::IF_NONE_MATCH, value);
+    }
+
+    if let Some(b) = request.body {
         req_builder = req_builder
             .header("Content-Type", "application/json")
             .body(b);
@@ -367,25 +389,27 @@ pub async fn webdav_request(
     })?;
 
     let status = res.status();
+    let etag = res
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
 
-    if method == "GET" && status.is_success() {
+    if request.method == "GET" && status.is_success() {
         let json: Value = res.json().await.map_err(|e| {
             log::error!("[WebDAV] JSON parse error: {}", e);
             e.to_string()
         })?;
-        return Ok(json);
+        return Ok(WebDavResponse {
+            status: status.as_u16(),
+            body: Some(json),
+            etag,
+        });
     }
 
-    // 对于 MKCOL，如果返回 405 (Method Not Allowed)，通常意味着目录已存在，视作成功
-    if method == "MKCOL" && status.as_u16() == 405 {
-        return Ok(Value::Null);
-    }
-
-    if status.is_success() || status.as_u16() == 201 || status.as_u16() == 204 {
-        Ok(Value::Null)
-    } else {
-        let err = format!("HTTP Error: {}", status);
-        log::error!("[WebDAV] {}", err);
-        Err(err)
-    }
+    Ok(WebDavResponse {
+        status: status.as_u16(),
+        body: None,
+        etag,
+    })
 }

@@ -278,7 +278,7 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 | R0 | 数据完整性 | `TASK-D-DATA-002` | V18/V19 兼容与领域约束加固 | IMPLEMENTED | V19 经校验备份后事务化转换回 V18，V20+ 零修改拒绝；records 使用明确 UPSERT，新增/更新/导入/同步替换统一经过 Rust 领域校验，同时保留旧数据读取和导入兼容规范化 |
 | R0 | 数据正确性 | `TASK-D-DATA-003` | 国家解析统一与平台字段保护 | IMPLEMENTED | 国家判断与 TMDB 平台推测已集中到共享纯函数；普通保存不再按国家清空平台，电影、剧集、具体季和批量补全精确区分 CN/HK/TW，只在平台缺失且非 CN 时写入规范化推测值 |
 | R0 | 数据恢复 | `TASK-D-DATA-004` | 高风险操作自动恢复点 | IMPLEMENTED | 导入、同步全量落盘、V19 migration、至少 2 条实际批量补全写入及恢复前会创建经完整性/版本/条数/SHA 校验的 SQLite 恢复点；支持 10 个自动点、500MB 软容量、永久保留、管理界面和失败回退 |
-| R0 | 同步一致性 | `TASK-D-SYNC-001` | 同步冲突、版本域与条件提交 | SPECIFIED | 已批准 schema v3 专项设计：独立 `records-v3.json`、强 ETag 条件写入与 412 重拉、三方字段合并、持久冲突选择、`expectedGeneration` 和原子本地 SyncCommit；数据库保持 V18，尚未实施 |
+| R0 | 同步一致性 | `TASK-D-SYNC-001` | 同步冲突、版本域与条件提交 | IMPLEMENTED | 已实现独立 `records-v3.json`、强 ETag 条件写入与 412 重拉、三方字段合并、持久冲突选择、`expectedGeneration` 和原子本地 SyncCommit；旧客户端变化会被阻断并可显式导入冲突中心，数据库保持 V18 |
 | R0 | 同步可靠性 | `TASK-D-SYNC-002` | 持久化 outbox 与主动拉取 | NEEDS-DESIGN | 当前自动同步是写入后触发的内存 debounce；异常退出会丢失待同步意图，也没有启动、窗口聚焦或周期主动拉取 |
 | R0 | 同步隔离 | `TASK-D-SYNC-003` | WebDAV 目标隔离与安全切换 | NEEDS-DESIGN | 当前 URL、凭据和同步设置是全局 setting；目标切换流程及未来 baseline/ETag/outbox 命名空间尚未设计 |
 | R0 | 凭据安全 | `TASK-D-SEC-001` | Windows 凭据保护与旧格式迁移 | NEEDS-DESIGN | 当前使用机器 ID 派生 AES-GCM 密钥，并兼容可逆的 `portable:v1`；尚未接入 Windows 凭据存储、显式迁移和不可恢复提示 |

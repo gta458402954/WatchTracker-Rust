@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import type { WatchRecord } from '../../src/shared/types';
 import type { TmdbMedia } from '../../src/shared/lib/classification';
 import type { RecoveryPoint } from '../../src/shared/lib/database';
+import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from '../../src/shared/lib/syncMerge';
 
 export interface MockIpcOptions {
   records?: WatchRecord[];
@@ -12,6 +13,11 @@ export interface MockIpcOptions {
   tmdbDelayMs?: number;
   updateFailureCounts?: Record<string, number>;
   webdavRemote?: unknown;
+  webdavV3Remote?: SyncPayloadV3 | null;
+  webdavV3Etag?: string | null;
+  webdavPreconditionFailures?: number;
+  mutateLocalDuringPut?: boolean;
+  omitPutEtag?: boolean;
   databaseCompatibilityIssue?: {
     code: 'unsupported_newer_database' | 'v19_downgrade_failed';
     detectedVersion: number;
@@ -26,6 +32,7 @@ export interface MockSnapshot {
   failRecordLoads: boolean;
   settings: Record<string, string | null>;
   recoveryPoints: RecoveryPoint[];
+  webdavV3Remote: SyncPayloadV3 | null;
 }
 
 declare global {
@@ -39,7 +46,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, databaseCompatibilityIssue, recoveryPoints }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, mutateLocalDuringPut, omitPutEtag, databaseCompatibilityIssue, recoveryPoints }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const snapshot: MockSnapshot = {
         calls: [],
@@ -47,11 +54,19 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
         failRecordLoads,
         settings: structuredClone(settings),
         recoveryPoints: structuredClone(recoveryPoints),
+        webdavV3Remote: structuredClone(webdavV3Remote),
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
       const remainingUpdateFailures = structuredClone(updateFailureCounts);
       const recoveryRecords: Record<string, WatchRecord[]> = {};
       let recoverySequence = snapshot.recoveryPoints.length;
+      let recordsGeneration = 0;
+      let v3Etag: string | null = webdavV3Etag;
+      let remainingPreconditionFailures = webdavPreconditionFailures;
+      let shouldMutateLocalDuringPut = mutateLocalDuringPut;
+      let tombstones: SyncTombstoneV3[] = (() => {
+        try { return JSON.parse(snapshot.settings.sync_tombstones || '[]'); } catch { return []; }
+      })();
 
       const makeRecoveryPoint = (reason: RecoveryPoint['reason']) => {
         recoverySequence += 1;
@@ -87,7 +102,12 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       window.__TAURI_INTERNALS__ = {
         invoke: async (command, rawArgs = {}) => {
           const args = structuredClone(rawArgs);
-          snapshot.calls.push({ command, args });
+          snapshot.calls.push({
+            command,
+            args: command === 'webdav_request'
+              ? structuredClone(args.request as Record<string, unknown>)
+              : args,
+          });
 
           switch (command) {
             case 'get_setting':
@@ -111,10 +131,11 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 ...record,
                 updatedAt: new Date().toISOString(),
                 rev: (previous?.rev ?? 0) + 1,
-                revActor: 'local',
+                revActor: 'mock-device',
               };
               if (existingIndex >= 0) snapshot.records[existingIndex] = persisted;
               else snapshot.records.unshift(persisted);
+              recordsGeneration += 1;
               return structuredClone(persisted);
             }
             case 'update_record': {
@@ -135,20 +156,85 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 ...(args.updates as Partial<WatchRecord>),
                 updatedAt: new Date().toISOString(),
                 rev: (previous.rev ?? 0) + 1,
-                revActor: 'local',
+                revActor: 'mock-device',
               };
               snapshot.records[index] = persisted;
+              recordsGeneration += 1;
               return structuredClone(persisted);
             }
             case 'delete_record':
               requireKeys(command, args, ['id']);
               snapshot.records = snapshot.records.filter((record) => record.id !== args.id);
+              tombstones = tombstones.filter(item => item.id !== args.id);
+              tombstones.push({ id: args.id as string, deletedAt: new Date().toISOString(), rev: 0, revActor: 'mock-device' });
+              recordsGeneration += 1;
               return null;
             case 'replace_all_records':
               requireKeys(command, args, ['reason', 'records']);
               makeRecoveryPoint(args.reason as 'import' | 'sync');
               snapshot.records = structuredClone(args.records as WatchRecord[]);
+              recordsGeneration += 1;
               return null;
+            case 'get_sync_snapshot': {
+              requireKeys(command, args, []);
+              const parse = (key: string) => {
+                const raw = snapshot.settings[key];
+                return raw ? JSON.parse(raw) : null;
+              };
+              return {
+                records: structuredClone(snapshot.records),
+                tombstones: structuredClone(tombstones),
+                recordsGeneration,
+                baseline: parse('sync_v3_baseline'),
+                deviceId: snapshot.settings.sync_device_id_v1 || 'mock-device',
+                conflicts: parse('sync_v3_conflicts') || [],
+                remoteEtag: snapshot.settings.sync_v3_remote_etag || null,
+                lastCommit: parse('sync_v3_last_commit'),
+                v2SourceFingerprint: snapshot.settings.sync_v2_source_fingerprint || null,
+              };
+            }
+            case 'commit_sync_result': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as {
+                expectedGeneration: number;
+                records: WatchRecord[];
+                tombstones: SyncTombstoneV3[];
+                baseline: SyncPayloadV3;
+                conflicts: SyncConflictV3[];
+                remoteEtag: string;
+                lastCommit: unknown;
+                v2SourceFingerprint: string | null;
+              };
+              if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
+              makeRecoveryPoint('sync');
+              snapshot.records = structuredClone(input.records);
+              tombstones = structuredClone(input.tombstones);
+              snapshot.settings.sync_tombstones = JSON.stringify(tombstones);
+              snapshot.settings.sync_v3_baseline = JSON.stringify(input.baseline);
+              snapshot.settings.sync_v3_conflicts = JSON.stringify(input.conflicts);
+              snapshot.settings.sync_v3_remote_etag = input.remoteEtag;
+              snapshot.settings.sync_v3_last_commit = JSON.stringify(input.lastCommit);
+              if (input.v2SourceFingerprint) snapshot.settings.sync_v2_source_fingerprint = input.v2SourceFingerprint;
+              recordsGeneration += 1;
+              return { recordsGeneration, recordCount: snapshot.records.length };
+            }
+            case 'resolve_sync_conflict': {
+              requireKeys(command, args, ['id', 'resolution']);
+              const conflicts = JSON.parse(snapshot.settings.sync_v3_conflicts || '[]') as SyncConflictV3[];
+              const conflict = conflicts.find(item => item.id === args.id);
+              if (!conflict) throw new Error('Sync conflict not found');
+              const resolution = args.resolution as 'local' | 'remote' | 'keep' | 'delete';
+              const selected = resolution === 'local' ? conflict.local
+                : resolution === 'remote' ? conflict.remote
+                  : resolution === 'keep' ? (conflict.local || conflict.remote) : null;
+              snapshot.records = snapshot.records.filter(item => item.id !== conflict.id);
+              tombstones = tombstones.filter(item => item.id !== conflict.id);
+              if (selected) snapshot.records.unshift(structuredClone(selected));
+              else tombstones.push({ id: conflict.id, deletedAt: new Date().toISOString(), rev: 0, revActor: 'mock-device' });
+              snapshot.settings.sync_v3_conflicts = JSON.stringify(conflicts.filter(item => item.id !== conflict.id));
+              recordsGeneration += 1;
+              return null;
+            }
             case 'create_recovery_point':
               requireKeys(command, args, ['reason']);
               return makeRecoveryPoint(args.reason as RecoveryPoint['reason']);
@@ -204,8 +290,36 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return structuredClone(tmdbDetail);
             case 'webdav_request':
-              requireKeys(command, args, ['body', 'method', 'password', 'proxy', 'url', 'username']);
-              return args.method === 'GET' ? structuredClone(webdavRemote) : null;
+              requireKeys(command, args, ['request']);
+              {
+              const request = args.request as Record<string, unknown>;
+              if (request.method === 'MKCOL') return { status: 405, body: null, etag: null };
+              if (request.method === 'GET') {
+                if (String(request.url).endsWith('records-v3.json')) {
+                  return snapshot.webdavV3Remote
+                    ? { status: 200, body: structuredClone(snapshot.webdavV3Remote), etag: v3Etag }
+                    : { status: 404, body: null, etag: null };
+                }
+                return { status: 200, body: structuredClone(webdavRemote), etag: '"legacy-1"' };
+              }
+              if (request.method === 'PUT' && String(request.url).endsWith('records-v3.json')) {
+                if (remainingPreconditionFailures > 0) {
+                  remainingPreconditionFailures -= 1;
+                  return { status: 412, body: null, etag: v3Etag };
+                }
+                if (snapshot.webdavV3Remote && request.ifMatch !== v3Etag) return { status: 412, body: null, etag: v3Etag };
+                if (!snapshot.webdavV3Remote && request.ifNoneMatch !== '*') return { status: 412, body: null, etag: null };
+                snapshot.webdavV3Remote = JSON.parse(String(request.body));
+                v3Etag = `"v3-${snapshot.webdavV3Remote?.revision ?? 1}"`;
+                if (shouldMutateLocalDuringPut) {
+                  shouldMutateLocalDuringPut = false;
+                  recordsGeneration += 1;
+                  if (snapshot.records[0]) snapshot.records[0].notes = 'edited during sync';
+                }
+                return { status: 204, body: null, etag: omitPutEtag ? null : v3Etag };
+              }
+              return { status: 405, body: null, etag: null };
+              }
             case 'vacuum_db':
               requireKeys(command, args, []);
               return null;
@@ -224,6 +338,11 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       tmdbDelayMs: options.tmdbDelayMs ?? 0,
       updateFailureCounts: options.updateFailureCounts ?? {},
       webdavRemote: options.webdavRemote ?? [],
+      webdavV3Remote: options.webdavV3Remote ?? null,
+      webdavV3Etag: options.webdavV3Etag === undefined ? '"v3-1"' : options.webdavV3Etag,
+      webdavPreconditionFailures: options.webdavPreconditionFailures ?? 0,
+      mutateLocalDuringPut: options.mutateLocalDuringPut ?? false,
+      omitPutEtag: options.omitPutEtag ?? false,
       databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,
       recoveryPoints: options.recoveryPoints ?? [],
     },

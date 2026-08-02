@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { WatchRecord } from '../src/shared/types';
+import type { SyncPayloadV3 } from '../src/shared/lib/syncMerge';
 import { mockSnapshot, setupMockIpc } from './fixtures/mockIpc';
 
 function record(id: string, overrides: Partial<WatchRecord> = {}): WatchRecord {
@@ -25,6 +26,21 @@ function record(id: string, overrides: Partial<WatchRecord> = {}): WatchRecord {
     mediaType: '电影',
     contentTags: null,
     originCountry: null,
+    ...overrides,
+  };
+}
+
+function v3Payload(records: WatchRecord[], overrides: Partial<SyncPayloadV3> = {}): SyncPayloadV3 {
+  return {
+    schemaVersion: 3,
+    documentId: 'document-1',
+    revision: 1,
+    commitId: 'commit-1',
+    parentCommitId: null,
+    writerId: 'remote-device',
+    committedAt: '2026-01-01T00:00:00.000Z',
+    records,
+    tombstones: [],
     ...overrides,
   };
 }
@@ -369,6 +385,7 @@ test('@conditional-webdav-payload schema v2 merge and PUT preserve region fields
     updatedAt: '2026-01-01T00:00:00.000Z',
   });
   await setupMockIpc(page, {
+    records: [local],
     settings: {
       webdav_creds: 'encrypted:fixture-user:fixture-password',
       webdav_url: 'https://mock.invalid/dav/',
@@ -377,14 +394,16 @@ test('@conditional-webdav-payload schema v2 merge and PUT preserve region fields
   });
   await page.goto('/');
 
-  const result = await page.evaluate(async (records) => {
+  const result = await page.evaluate(async () => {
     const { syncToWebDAV } = await import('/src/shared/lib/webdav.ts');
-    return syncToWebDAV(records);
-  }, [local]);
+    return syncToWebDAV();
+  });
   expect(result.ok).toBe(true);
 
   const snapshot = await mockSnapshot(page);
   const put = snapshot.calls.find(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(put?.args.url).toContain('records-v3.json');
+  expect(put?.args.ifNoneMatch).toBe('*');
   const payload = JSON.parse(String(put?.args.body));
   expect(payload.records).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'shared', originCountry: 'GB, XX', contentTags: '律政,自定义' }),
@@ -410,6 +429,201 @@ test('@conditional-webdav-payload legacy array GET preserves region fields', asy
     return loadFromWebDAV();
   });
   expect(result.data?.[0]).toMatchObject({ originCountry: 'US, GB', contentTags: '旧标签,自定义' });
+});
+
+test('@expected-sync-v3 retries a stale ETag and never falls back to unconditional PUT', async ({ page }) => {
+  const base = record('etag-record', { notes: 'base' });
+  const local = record('etag-record', { notes: 'local change' });
+  await setupMockIpc(page, {
+    records: [local],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavPreconditionFailures: 1,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result.ok).toBe(true);
+  const snapshot = await mockSnapshot(page);
+  const puts = snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(puts).toHaveLength(2);
+  expect(puts.every(call => call.args.ifMatch === '"v3-1"' && call.args.ifNoneMatch === null)).toBe(true);
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('local change');
+});
+
+test('@expected-sync-v3 blocks upload when the server has no strong ETag', async ({ page }) => {
+  const base = record('unsafe-server');
+  await setupMockIpc(page, {
+    records: [record('unsafe-server', { notes: 'local change' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavV3Etag: null,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result).toMatchObject({ ok: false, error: 'conditional_write_unsupported' });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(false);
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(false);
+  expect(snapshot.records[0].notes).toBe('local change');
+});
+
+test('@expected-sync-v3 keeps same-field divergence pending without overwriting either side', async ({ page }) => {
+  const base = record('conflicted', { notes: 'base' });
+  const local = record('conflicted', { notes: 'local' });
+  const remote = record('conflicted', { notes: 'remote' });
+  await setupMockIpc(page, {
+    records: [local],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([remote], { revision: 2, commitId: 'remote-change' }),
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result).toMatchObject({ ok: true, conflictCount: 1 });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records[0].notes).toBe('local');
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('remote');
+  expect(JSON.parse(snapshot.settings.sync_v3_conflicts || '[]')[0].fields).toEqual(['notes']);
+});
+
+test('@expected-sync-v3 rejects an unknown future payload without PUT or local commit', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [record('protected')],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+    },
+    webdavV3Remote: { schemaVersion: 4, records: [], tombstones: [] } as unknown as SyncPayloadV3,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result).toMatchObject({ ok: false, error: 'unsupported_remote_schema' });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(false);
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(false);
+  expect(snapshot.records[0].id).toBe('protected');
+});
+
+test('@expected-sync-v3 CAS preserves edits made while the network request is in flight', async ({ page }) => {
+  const base = record('local-cas', { notes: 'base' });
+  await setupMockIpc(page, {
+    records: [record('local-cas', { notes: 'first local edit' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    mutateLocalDuringPut: true,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result).toMatchObject({ ok: false, error: 'stale_local_snapshot', staleLocal: true });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records[0].notes).toBe('edited during sync');
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('first local edit');
+});
+
+test('@expected-sync-v3 stops after three consecutive precondition failures', async ({ page }) => {
+  const base = record('busy', { notes: 'base' });
+  await setupMockIpc(page, {
+    records: [record('busy', { notes: 'local' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavPreconditionFailures: 3,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result).toMatchObject({ ok: false, error: 'remote_busy' });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toHaveLength(3);
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(false);
+});
+
+test('@expected-sync-v3 verifies commitId when PUT omits the new ETag', async ({ page }) => {
+  const base = record('verify-put', { notes: 'base' });
+  await setupMockIpc(page, {
+    records: [record('verify-put', { notes: 'local' })],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    omitPutEtag: true,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result.ok).toBe(true);
+  const snapshot = await mockSnapshot(page);
+  const v3Gets = snapshot.calls.filter(call => call.command === 'webdav_request'
+    && call.args.method === 'GET' && String(call.args.url).endsWith('records-v3.json'));
+  expect(v3Gets.length).toBeGreaterThanOrEqual(2);
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(true);
+});
+
+test('@expected-sync-v3 detects continued legacy-client writes without mixing them into v3', async ({ page }) => {
+  const current = record('v3-current');
+  await setupMockIpc(page, {
+    records: [current],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([current])),
+      sync_v2_source_fingerprint: '"legacy-older"',
+    },
+    webdavRemote: [record('legacy-new-write')],
+    webdavV3Remote: v3Payload([current]),
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result).toMatchObject({ ok: false, error: 'legacy_remote_changed' });
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(false);
+  expect(snapshot.records.map(item => item.id)).toEqual(['v3-current']);
+});
+
+test('@expected-sync-v3 explicitly imports changed legacy data into the conflict center only', async ({ page }) => {
+  const current = record('legacy-choice', { chineseName: '当前 v3 版本', originCountry: 'CN' });
+  const legacy = record('legacy-choice', { chineseName: '旧版设备修改', originCountry: 'GB' });
+  await setupMockIpc(page, {
+    records: [current],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([current])),
+      sync_v2_source_fingerprint: '"legacy-older"',
+    },
+    webdavRemote: [legacy],
+    webdavV3Remote: v3Payload([current]),
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: /云端同步/ }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: /检查并导入旧版/ }).click();
+  await expect(page.getByText(/已加入 1 项旧版差异/)).toBeVisible();
+  await expect(page.getByText(/云端：旧版设备修改/)).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records[0].chineseName).toBe('当前 v3 版本');
+  expect(snapshot.webdavV3Remote?.records[0].chineseName).toBe('当前 v3 版本');
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(false);
+  expect(JSON.parse(snapshot.settings.sync_v3_conflicts || '[]')).toHaveLength(1);
 });
 
 test('@conditional-watchlist-boundary local export and import preserve region fields', async ({ page }) => {
@@ -442,7 +656,8 @@ test('@conditional-watchlist-boundary local export and import preserve region fi
 });
 
 test('@conditional-watchlist-boundary sync replacement preserves region fields', async ({ page }) => {
-  const local = record('shared', { chineseName: '本地旧版本' });
+  const base = record('shared', { chineseName: '共同旧版本' });
+  const local = structuredClone(base);
   const remote = record('shared', {
     chineseName: '云端新版本',
     originCountry: 'HK, TW, GB',
@@ -454,8 +669,9 @@ test('@conditional-watchlist-boundary sync replacement preserves region fields',
     settings: {
       webdav_creds: 'encrypted:fixture-user:fixture-password',
       webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
     },
-    webdavRemote: { schemaVersion: 2, updatedAt: '', records: [remote], tombstones: [] },
+    webdavV3Remote: v3Payload([remote], { revision: 2, commitId: 'commit-2' }),
   });
   await page.goto('/');
   await page.getByTitle('手动同步到坚果云').click();
@@ -466,7 +682,9 @@ test('@conditional-watchlist-boundary sync replacement preserves region fields',
     originCountry: 'HK, TW, GB',
     contentTags: '悬疑,自定义',
   });
-  expect(snapshot.calls.find(call => call.command === 'replace_all_records')?.args.reason).toBe('sync');
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(true);
+  const put = snapshot.calls.find(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(put).toBeUndefined();
 });
 
 test('@expected-settings-modal automatic recovery point can restore a pre-import database', async ({ page }) => {
@@ -512,7 +730,7 @@ test('@expected-settings-modal automatic recovery point can restore a pre-import
   expect(snapshot.calls.some(call => call.command === 'delete_recovery_point')).toBe(true);
 });
 
-test('@conditional-watchlist-boundary conflict restore preserves region fields and clears history', async ({ page }) => {
+test('@conditional-watchlist-boundary conflict choice preserves region fields and clears pending state', async ({ page }) => {
   const current = record('conflict-record', {
     chineseName: '当前保留版本',
     originCountry: 'CN',
@@ -527,35 +745,34 @@ test('@conditional-watchlist-boundary conflict restore preserves region fields a
   });
   const conflict = {
     id: current.id,
-    kept: 'local',
-    at: '2026-03-03T00:00:00.000Z',
-    discarded,
+    kind: 'edit-edit',
+    fields: ['chineseName', 'originCountry', 'contentTags'],
+    base: record('conflict-record', { chineseName: '共同版本' }),
+    local: current,
+    remote: discarded,
+    localDeleted: false,
+    remoteDeleted: false,
+    detectedAt: '2026-03-03T00:00:00.000Z',
   };
   await setupMockIpc(page, {
     records: [current],
     settings: {
-      sync_conflict_history_version: '2',
-      sync_conflicts: JSON.stringify([conflict]),
+      sync_v3_conflicts: JSON.stringify([conflict]),
     },
   });
   await page.goto('/');
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByRole('button', { name: /云端同步/ }).click();
 
-  await expect(page.getByText('被覆盖版本', { exact: true })).toBeVisible();
+  await expect(page.getByText(/云端：被覆盖版本/)).toBeVisible();
   page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: '恢复此版本' }).click();
-  await expect(page.getByRole('status').filter({ hasText: '冲突记录已恢复。' })).toBeVisible();
+  await page.getByRole('button', { name: '采用云端' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '同步冲突已解决' })).toBeVisible();
   await expect(page.getByText('暂无同步冲突记录')).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
-  const insert = snapshot.calls.find(call => call.command === 'insert_record');
-  expect(insert?.args.r).toMatchObject({
-    id: current.id,
-    chineseName: '被覆盖版本',
-    originCountry: 'HK, TW, GB',
-    contentTags: '悬疑,自定义',
-  });
+  expect(snapshot.calls.some(call => call.command === 'resolve_sync_conflict'
+    && call.args.resolution === 'remote')).toBe(true);
   expect(snapshot.records).toHaveLength(1);
   expect(snapshot.records[0]).toMatchObject({
     id: current.id,
@@ -563,5 +780,5 @@ test('@conditional-watchlist-boundary conflict restore preserves region fields a
     originCountry: 'HK, TW, GB',
     contentTags: '悬疑,自定义',
   });
-  expect(snapshot.settings.sync_conflicts).toBe('[]');
+  expect(snapshot.settings.sync_v3_conflicts).toBe('[]');
 });

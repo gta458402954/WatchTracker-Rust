@@ -80,7 +80,7 @@ mod tests {
         )
         .expect("seed tombstones");
 
-        insert_record_atomic(&mut conn, record("inserted")).expect("insert record");
+        insert_record_atomic(&mut conn, record("inserted"), "test-actor").expect("insert record");
 
         assert!(db::get_record(&conn, "inserted").unwrap().is_some());
         assert_eq!(get_records_generation(&conn).unwrap(), 1);
@@ -89,6 +89,8 @@ mod tests {
             vec![Tombstone {
                 id: "other".to_string(),
                 deleted_at: "2026-07-28T02:00:00Z".to_string(),
+                rev: 0,
+                rev_actor: String::new(),
             }]
         );
     }
@@ -98,7 +100,7 @@ mod tests {
         let mut conn = database();
         db::insert_record(&conn, record("deleted")).expect("seed record");
 
-        delete_record_atomic(&mut conn, "deleted").expect("delete record");
+        delete_record_atomic(&mut conn, "deleted", "test-actor").expect("delete record");
 
         assert!(db::get_record(&conn, "deleted").unwrap().is_none());
         assert_eq!(get_records_generation(&conn).unwrap(), 1);
@@ -125,7 +127,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(insert_record_atomic(&mut conn, record("insert-failure")).is_err());
+        assert!(insert_record_atomic(&mut conn, record("insert-failure"), "test-actor").is_err());
         assert!(db::get_record(&conn, "insert-failure").unwrap().is_none());
         assert_eq!(get_records_generation(&conn).unwrap(), 0);
         assert_eq!(get_tombstones_tx(&conn).unwrap(), tombstones);
@@ -142,7 +144,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(delete_record_atomic(&mut conn, "delete-failure").is_err());
+        assert!(delete_record_atomic(&mut conn, "delete-failure", "test-actor").is_err());
         assert!(db::get_record(&conn, "delete-failure").unwrap().is_some());
         assert_eq!(get_records_generation(&conn).unwrap(), 0);
         assert!(get_tombstones_tx(&conn).unwrap().is_empty());
@@ -274,6 +276,8 @@ mod tests {
             vec![Tombstone {
                 id: "other".to_string(),
                 deleted_at: "2026-07-28T02:00:00Z".to_string(),
+                rev: 0,
+                rev_actor: String::new(),
             }]
         );
     }
@@ -328,7 +332,8 @@ mod tests {
         replacement.updated_at = Some("1900-01-01T00:00:00Z".to_string());
         replacement.rev = 999;
         replacement.rev_actor = "untrusted".to_string();
-        let persisted = insert_record_atomic(&mut conn, replacement).expect("upsert record");
+        let persisted =
+            insert_record_atomic(&mut conn, replacement, "test-actor").expect("upsert record");
 
         let deletes: i64 = conn
             .query_row("SELECT COUNT(*) FROM delete_audit", [], |row| row.get(0))
@@ -339,7 +344,7 @@ mod tests {
         );
         assert_eq!(persisted.chinese_name, "明确 UPSERT");
         assert_eq!(persisted.rev, 3);
-        assert_eq!(persisted.rev_actor, "local");
+        assert_eq!(persisted.rev_actor, "test-actor");
         assert_ne!(
             persisted.updated_at.as_deref(),
             Some("1900-01-01T00:00:00Z")
@@ -352,16 +357,16 @@ mod tests {
         let mut blank = record("blank-name");
         blank.original_name = "  ".to_string();
         blank.chinese_name = "".to_string();
-        assert!(insert_record_atomic(&mut conn, blank).is_err());
+        assert!(insert_record_atomic(&mut conn, blank, "test-actor").is_err());
 
         let mut invalid_type = record("invalid-type");
         invalid_type.media_type = "legacy-type".to_string();
-        assert!(insert_record_atomic(&mut conn, invalid_type).is_err());
+        assert!(insert_record_atomic(&mut conn, invalid_type, "test-actor").is_err());
 
         let mut invalid_numbers = record("invalid-numbers");
         invalid_numbers.rating = Some(11);
         invalid_numbers.movie_duration = Some(-1);
-        assert!(insert_record_atomic(&mut conn, invalid_numbers).is_err());
+        assert!(insert_record_atomic(&mut conn, invalid_numbers, "test-actor").is_err());
 
         assert_eq!(db::get_all_records(&conn).unwrap().len(), 0);
         assert_eq!(get_records_generation(&conn).unwrap(), 0);

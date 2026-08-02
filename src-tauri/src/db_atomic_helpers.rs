@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 pub struct Tombstone {
     pub id: String,
     pub deleted_at: String,
+    #[serde(default)]
+    pub rev: i64,
+    #[serde(default)]
+    pub rev_actor: String,
 }
 
 pub fn get_setting_tx(conn: &Connection, key: &str) -> Result<Option<String>, rusqlite::Error> {

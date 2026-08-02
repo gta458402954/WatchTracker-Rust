@@ -34,3 +34,4 @@ aes-gcm = "0.10.3"
 machine-uid = "0.6.0"
 sha2 = "0.10.9"
 infer = "0.22.0"
+uuid = { version = "1.23.1", features = ["v4"] }

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { UpdateWatchRecord, WatchRecord } from '../types';
 import { errorMessage, TmdbMedia, TmdbSearchResponse } from './classification';
 import { assertValidUpdateNumbers } from './updateValidation';
+import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from './syncMerge';
 
 export async function getAllRecordsAsync(): Promise<WatchRecord[]> {
   return invoke('get_all_records');
@@ -48,6 +49,48 @@ export interface RecoveryResult {
 
 export async function replaceAllRecords(records: WatchRecord[], reason: 'import' | 'sync'): Promise<void> {
   return invoke('replace_all_records', { records, reason });
+}
+
+export interface SyncSnapshot {
+  records: WatchRecord[];
+  tombstones: SyncTombstoneV3[];
+  recordsGeneration: number;
+  baseline: SyncPayloadV3 | null;
+  deviceId: string;
+  conflicts: SyncConflictV3[];
+  remoteEtag: string | null;
+  lastCommit: unknown | null;
+  v2SourceFingerprint: string | null;
+}
+
+export interface SyncCommitInput {
+  expectedGeneration: number;
+  records: WatchRecord[];
+  tombstones: SyncTombstoneV3[];
+  baseline: SyncPayloadV3;
+  conflicts: SyncConflictV3[];
+  remoteEtag: string;
+  lastCommit: unknown;
+  v2SourceFingerprint: string | null;
+}
+
+export interface SyncCommitResult {
+  recordsGeneration: number;
+  recordCount: number;
+}
+
+export async function getSyncSnapshot(): Promise<SyncSnapshot> {
+  return invoke('get_sync_snapshot');
+}
+
+export async function commitSyncResult(input: SyncCommitInput): Promise<SyncCommitResult> {
+  return invoke('commit_sync_result', { input });
+}
+
+export type SyncConflictResolution = 'local' | 'remote' | 'keep' | 'delete';
+
+export async function resolveSyncConflict(id: string, resolution: SyncConflictResolution): Promise<void> {
+  return invoke('resolve_sync_conflict', { id, resolution });
 }
 
 export async function createRecoveryPoint(reason: RecoveryReason): Promise<RecoveryPoint> {

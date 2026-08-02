@@ -1,7 +1,7 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
-  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, clearSyncConflicts, type SyncConflict,
+  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, importLegacyChangesToConflictCenter, syncFailureMessage, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import {
   createRecoveryPoint,
@@ -11,6 +11,7 @@ import {
   listRecoveryPoints,
   openBackupDirectory,
   restoreRecoveryPoint,
+  resolveSyncConflict,
   safeDecrypt,
   safeEncrypt,
   searchTmdbAsync,
@@ -48,7 +49,6 @@ interface SettingsModalProps {
   records: WatchRecord[];
   onImport: (records: WatchRecord[]) => void | Promise<void>;
   onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
-  onRestoreConflict?: (record: WatchRecord) => Promise<void>;
   onUpdateRecord: (id: string, updates: UpdateWatchRecord) => Promise<void>;
   onDatabaseRestored: () => Promise<WatchRecord[]>;
   syncInterval: number;
@@ -90,13 +90,23 @@ const RECOVERY_REASON_LABELS: Record<RecoveryPoint['reason'], string> = {
   'pre-restore': '恢复操作前',
 };
 
+const SYNC_FIELD_LABELS: Record<string, string> = {
+  originalName: '原名', chineseName: '中文名', progress: '进度', totalEpisodes: '总集数',
+  status: '状态', platform: '平台', rating: '个人评分', startDate: '开始日期', endDate: '完成日期',
+  notes: '备注', movieProgress: '电影进度', movieDuration: '电影时长', releaseYear: '年份',
+  posterPath: '海报', imdbId: 'IMDb 编号', isLocked: '锁定状态', genres: '题材',
+  originCountry: '国家/地区', imdbRating: 'IMDb 评分', tmdbStatus: 'TMDB 状态',
+  interestLevel: '兴趣等级', episodeRuntime: '单集时长', mediaType: '内容类型',
+  contentTags: '内容标签', record: '整条记录', 'legacy-import': '旧版数据差异',
+};
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function SettingsModal({
-  onClose, records, onImport, onSync, onRestoreConflict, onUpdateRecord, onDatabaseRestored,
+  onClose, records, onImport, onSync, onUpdateRecord, onDatabaseRestored,
   syncInterval, onSyncIntervalChange, onNotify
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
@@ -292,10 +302,14 @@ export default function SettingsModal({
       const result = onSync ? await onSync() : await syncToWebDAV(records);
       if (result.ok) {
         setSyncConflicts(await clearResolvedSyncConflicts(records));
-        setSyncStatus(result.conflictCount ? `✅ 同步成功，已自动合并 ${result.conflictCount} 处冲突` : '✅ 同步成功');
+        setSyncStatus(result.conflictCount ? `⚠️ 同步完成，有 ${result.conflictCount} 项冲突需要选择` : '✅ 同步成功');
         showSuccess('WebDAV 同步完成。');
       } else {
-        showFailure('Settings.SyncWebDav', 'WebDAV 同步', result.error, setSyncStatus);
+        const safeMessage = syncFailureMessage(result.error);
+        if (safeMessage) {
+          setSyncStatus(`⚠️ ${safeMessage}`);
+          onNotify?.('warning', safeMessage);
+        } else showFailure('Settings.SyncWebDav', 'WebDAV 同步', result.error, setSyncStatus);
       }
     } catch (error) {
       showFailure('Settings.SyncWebDav', 'WebDAV 同步', error, setSyncStatus);
@@ -303,31 +317,37 @@ export default function SettingsModal({
     setTimeout(() => setSyncStatus(''), 3000);
   }
 
-  async function handleRestoreConflict(conflict: SyncConflict) {
-    if (!onRestoreConflict) return;
-    if (!confirm(`确定恢复「${conflict.discarded.chineseName}」的被覆盖版本吗？恢复后会在下次同步时上传。`)) return;
+  async function handleResolveConflict(conflict: SyncConflict, resolution: 'local' | 'remote' | 'keep' | 'delete') {
+    const title = conflict.local?.chineseName || conflict.remote?.chineseName || '未命名条目';
+    const action = resolution === 'local' ? '采用本机版本'
+      : resolution === 'remote' ? '采用云端版本'
+        : resolution === 'keep' ? '保留条目' : '确认删除';
+    if (!confirm(`确定对「${title}」${action}吗？选择结果将在下次同步时发布。`)) return;
     try {
-      await onRestoreConflict(conflict.discarded);
-      const remaining = syncConflicts.filter(item => item !== conflict);
-      await clearSyncConflicts();
-      if (remaining.length) {
-        await setSettingAsync('sync_conflicts', JSON.stringify(remaining));
-      }
-      setSyncConflicts(remaining);
-      showSuccess('冲突记录已恢复。');
+      await resolveSyncConflict(conflict.id, resolution);
+      await onDatabaseRestored();
+      setSyncConflicts(await clearResolvedSyncConflicts([]));
+      showSuccess('同步冲突已解决，选择结果会在下次同步时发布。');
     } catch (error) {
-      showFailure('Settings.RestoreConflict', '恢复冲突记录', error);
+      showFailure('Settings.ResolveConflict', '解决同步冲突', error);
     }
   }
 
-  async function handleClearConflicts() {
-    if (!confirm('确定清空全部冲突记录吗？此操作不会删除任何影视条目。')) return;
+  async function handleImportLegacyChanges() {
+    if (!confirm('此操作只会把旧版 records.json 的差异加入冲突中心，不会直接覆盖本机或 v3 云端数据。继续吗？')) return;
+    setSyncStatus('正在读取旧版云端数据...');
     try {
-      await clearSyncConflicts();
-      setSyncConflicts([]);
-      showSuccess('同步冲突记录已清空。');
+      const result = await importLegacyChangesToConflictCenter();
+      if (!result.ok) {
+        showFailure('Settings.ImportLegacySync', '读取旧版云端数据', result.error, setSyncStatus);
+        return;
+      }
+      setSyncConflicts(await clearResolvedSyncConflicts([]));
+      setSyncStatus(result.conflictCount
+        ? `⚠️ 已加入 ${result.conflictCount} 项旧版差异，请在冲突中心选择。`
+        : '✅ 旧版云端数据与 v3 无差异。');
     } catch (error) {
-      showFailure('Settings.ClearConflicts', '清空同步冲突', error);
+      showFailure('Settings.ImportLegacySync', '读取旧版云端数据', error, setSyncStatus);
     }
   }
 
@@ -1039,6 +1059,12 @@ export default function SettingsModal({
                 )}
                 {syncStatus && <p className="text-xs text-center text-indigo-600 font-medium mt-1">{syncStatus}</p>}
                 {importStatus && <p className="text-xs text-center text-green-600 font-medium mt-1">{importStatus}</p>}
+                <button
+                  onClick={() => void handleImportLegacyChanges()}
+                  className="w-full rounded-xl border border-amber-200 bg-amber-50 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100"
+                >
+                  检查并导入旧版 records.json 差异
+                </button>
               </div>
 
               {/* Conflict history */}
@@ -1047,24 +1073,42 @@ export default function SettingsModal({
                   <div className="flex items-center gap-2.5">
                     <span className="text-2xl">⚖️</span>
                     <div>
-                      <h4 className="font-bold text-gray-800">同步冲突记录</h4>
-                      <p className="text-[11px] text-gray-400">自动合并时被覆盖的旧版本会暂存于此，可按需恢复</p>
+                      <h4 className="font-bold text-gray-800">待处理同步冲突</h4>
+                      <p className="text-[11px] text-gray-400">不同字段会自动合并；同字段或删除冲突需要明确选择</p>
                     </div>
                   </div>
-                  {syncConflicts.length > 0 && <button onClick={handleClearConflicts} className="text-xs text-red-500 hover:underline font-bold">清空记录</button>}
                 </div>
                 {syncConflicts.length === 0 ? (
                   <p className="py-4 text-center text-sm text-gray-400">暂无同步冲突记录</p>
                 ) : (
                   <div className="space-y-3 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
                     {syncConflicts.map((conflict, index) => (
-                      <div key={`${conflict.id}-${conflict.at}-${index}`} className="rounded-2xl border border-amber-100 bg-amber-50/50 p-4 flex items-center gap-3">
+                      <div key={`${conflict.id}-${conflict.detectedAt}-${index}`} className="rounded-2xl border border-amber-100 bg-amber-50/50 p-4 space-y-3">
+                        <div className="flex items-center gap-3">
                         <span className="text-xl">⚠️</span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-bold text-gray-800">{conflict.discarded.chineseName || '未命名条目'}</p>
-                          <p className="text-[11px] text-gray-500">保留了{conflict.kept === 'local' ? '本机' : '云端'}版本 · {new Date(conflict.at).toLocaleString('zh-CN')}</p>
+                          <p className="truncate text-sm font-bold text-gray-800">{conflict.local?.chineseName || conflict.remote?.chineseName || '未命名条目'}</p>
+                          <p className="text-[11px] text-gray-500">
+                            {conflict.kind === 'delete-edit' ? '删除与编辑发生冲突'
+                              : conflict.kind === 'locked' ? '锁定条目与云端版本不同'
+                                : `双方修改了相同字段：${conflict.fields.map(field => SYNC_FIELD_LABELS[field] || field).join('、')}`}
+                            {' · '}{new Date(conflict.detectedAt).toLocaleString('zh-CN')}
+                          </p>
+                          <p className="mt-1 truncate text-[10px] text-gray-500">
+                            本机：{conflict.local?.chineseName || (conflict.localDeleted ? '已删除' : '无记录')}
+                            {' / '}云端：{conflict.remote?.chineseName || (conflict.remoteDeleted ? '已删除' : '无记录')}
+                          </p>
                         </div>
-                        <button onClick={() => handleRestoreConflict(conflict)} disabled={!onRestoreConflict} className="shrink-0 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:bg-gray-300">恢复此版本</button>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          {conflict.kind === 'delete-edit' ? <>
+                            <button onClick={() => void handleResolveConflict(conflict, 'keep')} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700">保留条目</button>
+                            <button onClick={() => void handleResolveConflict(conflict, 'delete')} className="rounded-xl bg-red-500 px-3 py-2 text-xs font-bold text-white hover:bg-red-600">确认删除</button>
+                          </> : <>
+                            <button onClick={() => void handleResolveConflict(conflict, 'local')} disabled={!conflict.local} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:bg-gray-300">采用本机</button>
+                            <button onClick={() => void handleResolveConflict(conflict, 'remote')} disabled={!conflict.remote} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:bg-gray-300">采用云端</button>
+                          </>}
+                        </div>
                       </div>
                     ))}
                   </div>

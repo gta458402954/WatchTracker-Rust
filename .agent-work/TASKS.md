@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 已实现，剩余为 2 个 `SPECIFIED`、12 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已实现，剩余为 1 个 `SPECIFIED`、12 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1488,7 +1488,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-DATA-002` | R0 | 数据完整性 | IMPLEMENTED | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
 | `TASK-D-DATA-003` | R0 | 数据正确性 | IMPLEMENTED | 国家解析与平台字段保护 |
 | `TASK-D-DATA-004` | R0 | 数据恢复 | IMPLEMENTED | R3 自动备份，提升为 R0 |
-| `TASK-D-SYNC-001` | R0 | 同步一致性 | SPECIFIED | R0 冲突与版本记录 |
+| `TASK-D-SYNC-001` | R0 | 同步一致性 | IMPLEMENTED | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
@@ -1569,15 +1569,17 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-SYNC-001：同步冲突、版本域与条件提交
 
-- Phase: READY
+- Phase: COMPLETED
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: R0
 - Scope: 在现有 schema v2 时间戳合并之上设计版本域、条件提交、过期重拉和可解释冲突；评估 ETag、Lamport、`expectedGeneration` 与原子 SyncCommit 的最小组合。
 - Current Basis: 已有 Tombstone、锁定保留、冲突历史和本地 generation；这些不等于远端 compare-and-swap。
 - Approved Design: `docs/SYNC_CONSISTENCY_DESIGN.md` 已由用户批准。使用独立 `records-v3.json`、强 ETag 的 `If-Match`/首次 `If-None-Match: *`、最多 3 次 412 重拉、完整本地三方基线、字段级合并、持久未解决冲突，以及 Rust `get_sync_snapshot`/`commit_sync_result(expectedGeneration)` 原子边界；数据库保持 V18。
 - Confirmed Decisions: 不同字段自动合并，同字段和删除/编辑冲突由用户选择；无强 ETag 时禁止上传；其他同步设备必须升级到 v3，旧 v2 文件只首次迁移或显式导入。
-- Implementation Gate: 进入代码实施前以本设计签发测试优先的实现清单；不得引入无条件 PUT 降级，也不得把 `TASK-D-SYNC-002/003` 的 outbox、主动拉取或目标切换混入本任务。
+- Implementation: `syncMerge.ts` 提供不依赖墙上时钟的三方字段合并、删除语义和冲突冻结；`webdav.ts` 使用独立 v3 资源、强 ETag 条件 PUT、最多三次 412 重拉、commitId 验证、v2 首次迁移及旧客户端变化阻断。Rust 提供稳定设备 UUID、结构化 WebDAV 响应、条件头白名单、同步快照、`expectedGeneration` CAS、恢复点和单事务 SyncCommit/冲突解决。设置页显示具体冲突字段并提供本机/云端或保留/删除选择。
+- Acceptance Evidence: Node 纯函数覆盖不同时钟、不同字段、同字段、删除/编辑、锁定、未知 schema、畸形 tombstone、冲突冻结和系统字段差异；Rust 临时库覆盖条件头、稳定设备 ID、原子提交、过期 generation 零副作用、注入失败整体回滚、恢复点保留及冲突选择；Playwright mock 覆盖 v2→v3、首次条件创建、强 ETag、412 重试/上限、PUT 无 ETag 的 commitId 验证、本地并发修改 CAS、无强 ETag 阻断、未来 schema 拒绝、旧客户端变化检测/显式导入和冲突 UI。真实 WebDAV 与正式数据库均未用于测试。
+- Boundary: 未实现持久化 outbox、启动/聚焦/周期主动拉取或 WebDAV 目标隔离；分别由 `TASK-D-SYNC-002/003` 跟踪。
 
 ### TASK-D-SYNC-002：持久化 outbox 与主动拉取
 

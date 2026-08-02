@@ -2,6 +2,7 @@ use crate::app_paths::AppPaths;
 use crate::db::{self, DatabaseCompatibilityIssue, DbState};
 use crate::models::{UpdateWatchRecord, WatchRecord};
 use crate::recovery_points;
+use crate::sync_state;
 use crate::{auth, net};
 use serde_json::Value;
 use tauri::State;
@@ -21,6 +22,41 @@ fn lock_database(
         .map_err(|error| crate::error::AppError::ConcurrencyError(error.to_string()))
 }
 
+fn validate_webdav_conditions(
+    method: &str,
+    if_match: Option<&str>,
+    if_none_match: Option<&str>,
+) -> Result<(), crate::error::AppError> {
+    if (if_match.is_some() || if_none_match.is_some()) && method != "PUT" {
+        return Err(crate::error::AppError::General(
+            "Conditional headers are only allowed for WebDAV PUT".to_string(),
+        ));
+    }
+    if if_match.is_some() && if_none_match.is_some() {
+        return Err(crate::error::AppError::General(
+            "If-Match and If-None-Match cannot be combined".to_string(),
+        ));
+    }
+    if let Some(value) = if_match {
+        let valid = value.starts_with('"')
+            && value.ends_with('"')
+            && value.len() >= 2
+            && !value.starts_with("W/")
+            && !value.contains(['\r', '\n']);
+        if !valid {
+            return Err(crate::error::AppError::General(
+                "Invalid strong If-Match value".to_string(),
+            ));
+        }
+    }
+    if if_none_match.is_some_and(|value| value != "*") {
+        return Err(crate::error::AppError::General(
+            "Invalid If-None-Match value".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_database_compatibility(state: State<DbState>) -> Option<DatabaseCompatibilityIssue> {
     state.compatibility_issue.clone()
@@ -38,7 +74,8 @@ pub fn insert_record(
     r: WatchRecord,
 ) -> Result<WatchRecord, crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
-    crate::db_atomic_crud::insert_record_atomic(&mut conn, r)
+    let actor_id = sync_state::device_id(&conn)?;
+    crate::db_atomic_crud::insert_record_atomic(&mut conn, r, &actor_id)
 }
 
 #[tauri::command]
@@ -50,12 +87,11 @@ pub fn update_record(
 ) -> Result<WatchRecord, crate::error::AppError> {
     log::info!("[Commands] update_record called for id: {}", id);
     let mut conn = lock_database(state.inner())?;
-    let result = crate::db_atomic_update::update_record_atomic(
-        &mut conn,
-        &id,
-        &updates,
-        actor_id.as_deref().unwrap_or("local"),
-    );
+    let actor_id = match actor_id {
+        Some(value) => value,
+        None => sync_state::device_id(&conn)?,
+    };
+    let result = crate::db_atomic_update::update_record_atomic(&mut conn, &id, &updates, &actor_id);
     if let Err(error) = &result {
         log::warn!("[Commands] update_record rejected for id {id}: {error}");
     }
@@ -65,7 +101,8 @@ pub fn update_record(
 #[tauri::command]
 pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
-    crate::db_atomic_crud::delete_record_atomic(&mut conn, &id)
+    let actor_id = sync_state::device_id(&conn)?;
+    crate::db_atomic_crud::delete_record_atomic(&mut conn, &id, &actor_id)
 }
 
 #[tauri::command]
@@ -78,6 +115,34 @@ pub fn replace_all_records(
     let mut conn = lock_database(state.inner())?;
     recovery_points::create(&conn, paths.inner(), &reason)?;
     crate::db_atomic_crud::replace_all_records_atomic(&mut conn, records)
+}
+
+#[tauri::command]
+pub fn get_sync_snapshot(
+    state: State<DbState>,
+) -> Result<sync_state::SyncSnapshot, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    sync_state::snapshot(&conn)
+}
+
+#[tauri::command]
+pub fn commit_sync_result(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    input: sync_state::SyncCommitInput,
+) -> Result<sync_state::SyncCommitResult, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    sync_state::commit(&mut conn, paths.inner(), input)
+}
+
+#[tauri::command]
+pub fn resolve_sync_conflict(
+    state: State<DbState>,
+    id: String,
+    resolution: sync_state::SyncConflictResolution,
+) -> Result<(), crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    sync_state::resolve_conflict(&mut conn, &id, resolution)
 }
 
 #[tauri::command]
@@ -227,24 +292,39 @@ pub async fn download_poster(
 
 #[tauri::command]
 pub async fn webdav_request(
-    method: String,
-    url: String,
-    username: String,
-    password: String,
-    body: Option<String>,
-    proxy: Option<String>,
-) -> Result<Value, crate::error::AppError> {
-    if !matches!(method.as_str(), "GET" | "PUT" | "MKCOL") {
+    request: net::WebDavRequest,
+) -> Result<net::WebDavResponse, crate::error::AppError> {
+    if !matches!(request.method.as_str(), "GET" | "PUT" | "MKCOL") {
         return Err(crate::error::AppError::General(
             "Unsupported WebDAV method".to_string(),
         ));
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
         return Err(crate::error::AppError::General(
             "Invalid WebDAV URL".to_string(),
         ));
     }
-    net::webdav_request(&method, &url, &username, &password, body, proxy)
+    validate_webdav_conditions(
+        &request.method,
+        request.if_match.as_deref(),
+        request.if_none_match.as_deref(),
+    )?;
+    net::webdav_request(request)
         .await
         .map_err(crate::error::AppError::General)
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::validate_webdav_conditions;
+
+    #[test]
+    fn webdav_condition_headers_accept_only_safe_put_preconditions() {
+        assert!(validate_webdav_conditions("PUT", Some("\"etag\""), None).is_ok());
+        assert!(validate_webdav_conditions("PUT", None, Some("*")).is_ok());
+        assert!(validate_webdav_conditions("PUT", Some("W/\"weak\""), None).is_err());
+        assert!(validate_webdav_conditions("PUT", Some("\"bad\r\nheader\""), None).is_err());
+        assert!(validate_webdav_conditions("GET", Some("\"etag\""), None).is_err());
+        assert!(validate_webdav_conditions("PUT", Some("\"etag\""), Some("*")).is_err());
+    }
 }

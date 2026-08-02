@@ -5,7 +5,7 @@ import { useWatchList } from '../features/watchlist/hooks/useWatchList';
 import StatsBar from '../features/watchlist/components/StatsBar';
 import RecordForm from '../features/watchlist/components/RecordForm';
 import SettingsModal from '../features/settings/components/SettingsModal';
-import { hasCreds } from '../shared/lib/webdav';
+import { hasCreds, syncFailureMessage } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
 import { mediaTypeOf } from '../shared/lib/classification';
 import type { RegionFilter } from '../shared/lib/countryNames';
@@ -42,7 +42,7 @@ export default function App() {
     notify('warning', message);
   }, [notify]);
   const {
-    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow, restoreRecord,
+    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow,
     isSyncPaused, toggleSyncPause
   } = useWatchList(syncInterval, handleBackgroundError);
 
@@ -123,13 +123,20 @@ export default function App() {
       }
       const result = await syncNow();
       if (result.ok) {
-        setSyncMsg('✅ 已同步');
-        notify('success', '同步完成。');
+        if (result.conflictCount) {
+          const message = `同步完成，有 ${result.conflictCount} 项冲突需要在设置中选择。`;
+          setSyncMsg(`⚠️ ${result.conflictCount} 项冲突`);
+          notify('warning', message);
+        } else {
+          setSyncMsg('✅ 已同步');
+          notify('success', '同步完成。');
+        }
         setLastSync(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
       } else {
-        const message = publicFailureMessage('同步');
-        setSyncMsg(`❌ ${message}`);
-        notify('error', message);
+        const safeDetail = syncFailureMessage(result.error);
+        const message = safeDetail ?? publicFailureMessage('同步');
+        setSyncMsg(`${safeDetail ? '⚠️' : '❌'} ${message}`);
+        notify(safeDetail ? 'warning' : 'error', message);
       }
     } catch (error) {
       reportOperationFailure('App.QuickSync', error);
@@ -434,7 +441,6 @@ export default function App() {
           }}
           onImport={handleImport}
           onSync={syncNow}
-          onRestoreConflict={restoreRecord}
           onUpdateRecord={updateRecord}
           onDatabaseRestored={loadRecords}
           syncInterval={syncInterval}

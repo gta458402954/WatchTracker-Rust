@@ -10,6 +10,7 @@ import {
 import {
   syncToWebDAV,
   hasCreds,
+  syncFailureMessage,
   type SyncResult,
 } from '../../../shared/lib/webdav';
 import { publicFailureMessage, reportOperationFailure } from '../../../shared/lib/feedback';
@@ -43,15 +44,14 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
       await syncInFlightRef.current;
     }
 
-    const startedRevision = revisionRef.current;
-    const task = syncToWebDAV(recordsRef.current);
+    const task = syncToWebDAV();
     syncInFlightRef.current = task;
 
     try {
       const result = await task;
-      if (result.ok && result.records && revisionRef.current === startedRevision) {
-        await replaceAllRecords(result.records, 'sync');
+      if (result.ok) {
         const reloaded = await getAllRecordsAsync();
+        revisionRef.current++;
         recordsRef.current = reloaded;
         setRecords(reloaded);
       }
@@ -70,7 +70,8 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
       try {
         if (await hasCreds()) {
           const result = await runSync();
-          if (!result.ok) onBackgroundError?.(publicFailureMessage('自动同步'));
+          if (!result.ok) onBackgroundError?.(syncFailureMessage(result.error) ?? publicFailureMessage('自动同步'));
+          else if (result.conflictCount) onBackgroundError?.(`自动同步完成，有 ${result.conflictCount} 项冲突需要在设置中选择。`);
         }
       } catch (error) {
         reportOperationFailure('Sync.Automatic', error);
@@ -136,18 +137,6 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
     setRecords(persisted);
   }, []);
 
-  const restoreRecord = useCallback(async (record: WatchRecord) => {
-    const restored = { ...record, updatedAt: new Date().toISOString() };
-    const persisted = await insertRecord(restored);
-    revisionRef.current++;
-    const updated = recordsRef.current.some(item => item.id === persisted.id)
-      ? recordsRef.current.map(item => item.id === persisted.id ? persisted : item)
-      : [persisted, ...recordsRef.current];
-    recordsRef.current = updated;
-    setRecords(updated);
-    autoSyncDebounced();
-  }, [autoSyncDebounced]);
-
   const syncNow = useCallback(async () => {
     if (syncTimerRef.current) {
       clearTimeout(syncTimerRef.current);
@@ -164,7 +153,6 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
     deleteRecord,
     replaceRecords,
     syncNow,
-    restoreRecord,
     isSyncPaused,
     toggleSyncPause,
   };
