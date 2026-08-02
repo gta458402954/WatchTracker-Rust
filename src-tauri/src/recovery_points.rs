@@ -53,7 +53,9 @@ fn general(message: impl Into<String>) -> AppError {
 
 fn validate_reason(reason: &str) -> Result<&str, AppError> {
     match reason {
-        "import" | "sync" | "batch-metadata" | "migration" | "pre-restore" => Ok(reason),
+        "import" | "sync" | "batch-metadata" | "migration" | "target-migration" | "pre-restore" => {
+            Ok(reason)
+        }
         _ => Err(general("Invalid recovery point reason")),
     }
 }

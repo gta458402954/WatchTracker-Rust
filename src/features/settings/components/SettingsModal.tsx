@@ -1,12 +1,14 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
-  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, clearResolvedSyncConflicts, importLegacyChangesToConflictCenter, syncFailureMessage, type SyncConflict,
+  saveCreds, clearCreds, syncToWebDAV, loadFromWebDAV, getCreds, probeSyncTarget, normalizeSyncTargetUrl, clearResolvedSyncConflicts, importLegacyChangesToConflictCenter, syncFailureMessage, type SyncConflict,
 } from '../../../shared/lib/webdav';
 import {
   createRecoveryPoint,
   deleteRecoveryPoint,
   getSettingAsync,
+  getSyncSnapshot,
+  getSyncTargets,
   getTmdbDetailAsync,
   listRecoveryPoints,
   openBackupDirectory,
@@ -21,6 +23,7 @@ import {
   type RecoveryPoint,
   type RecoveryPointList,
   type SyncRuntimeState,
+  type SyncTargetRegistry,
 } from '../../../shared/lib/database';
 import { MEDIA_TYPES, mediaTypeOf, regionsOf, type TmdbMedia } from '../../../shared/lib/classification';
 import {
@@ -91,6 +94,7 @@ const RECOVERY_REASON_LABELS: Record<RecoveryPoint['reason'], string> = {
   sync: '同步落盘前',
   'batch-metadata': '批量补全前',
   migration: '数据库迁移前',
+  'target-migration': '同步目标迁移前',
   'pre-restore': '恢复操作前',
 };
 
@@ -120,6 +124,8 @@ export default function SettingsModal({
   const [password, setPassword] = useState('');
   const [webdavUrl, setWebdavUrl] = useState('https://dav.jianguoyun.com/dav/影视追踪/');
   const [saved, setSaved] = useState(false);
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [targetRegistry, setTargetRegistry] = useState<SyncTargetRegistry | null>(null);
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [importStatus, setImportStatus] = useState<string>('');
   const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([]);
@@ -177,7 +183,17 @@ export default function SettingsModal({
       try {
         const creds = await getCreds();
         setSaved(!!creds);
-        if (creds?.url) setWebdavUrl(creds.url);
+        if (creds?.url) {
+          setWebdavUrl(creds.url);
+          setUsername(creds.username);
+        }
+        try {
+          setTargetRegistry(await getSyncTargets());
+        } catch (error) {
+          if (String(error).includes('target_migration_required')) {
+            setSyncStatus('⚠️ 旧版 WebDAV 凭据无法安全迁移，请重新输入账号后连接；本地数据仍可正常使用。');
+          } else throw error;
+        }
 
         const encryptedTmdb = await getSettingAsync('tmdb_api_key');
         if (encryptedTmdb) {
@@ -275,10 +291,38 @@ export default function SettingsModal({
   async function handleSave() {
     if (!username.trim() || !password.trim() || !webdavUrl.trim()) return;
     try {
-      await saveCreds({ username: username.trim(), password: password.trim(), url: webdavUrl.trim() });
+      const normalizedUrl = normalizeSyncTargetUrl(webdavUrl);
+      const current = await getCreds();
+      const activeDescriptor = targetRegistry?.targets.find(target => target.id === targetRegistry.activeTargetId);
+      const identityChanged = !current
+        || activeDescriptor?.username !== username.trim()
+        || activeDescriptor?.normalizedUrl !== normalizedUrl;
+      if (identityChanged) {
+        setSyncStatus('正在只读检查目标...');
+        const probe = await probeSyncTarget({ username: username.trim(), password, url: normalizedUrl });
+        const description = probe.kind === 'empty'
+          ? '目标中暂无同步文件，将在激活后以安全条件创建并上传本机数据。'
+          : `目标包含 ${probe.recordCount} 条记录${probe.revision == null ? '' : `，修订 ${probe.revision}`}。激活后将先拉取、合并，再按需上传。`;
+        if (!confirm(`${description}\n\n确认切换到此 WebDAV 目标吗？旧目标的待上传数据和冲突会保留。`)) {
+          setSyncStatus('已取消切换，当前目标未改变。');
+          return;
+        }
+      }
+      await saveCreds({ username: username.trim(), password: password.trim(), url: normalizedUrl });
       setSaved(true);
-      setSyncStatus('✅ 凭据已保存');
-      showSuccess('WebDAV 凭据已保存。');
+      setEditingTarget(false);
+      setPassword('');
+      setTargetRegistry(await getSyncTargets());
+      setSyncStatus('目标已激活，正在执行首次拉取与合并...');
+      const result = onSync ? await onSync() : await syncToWebDAV(records);
+      if (!result.ok) {
+        const safeMessage = syncFailureMessage(result.error);
+        setSyncStatus(`⚠️ 目标已保存；首次同步未完成。${safeMessage || '请稍后重试。'}`);
+        onNotify?.('warning', safeMessage || '目标已保存，但首次同步未完成。');
+      } else {
+        setSyncStatus(result.conflictCount ? `⚠️ 目标已激活，有 ${result.conflictCount} 项冲突等待选择` : '✅ 目标已激活并完成首次同步');
+        showSuccess('WebDAV 目标已激活并完成首次同步。');
+      }
     } catch (error) {
       showFailure('Settings.SaveWebDav', '保存 WebDAV 凭据', error, setSyncStatus);
     }
@@ -292,6 +336,8 @@ export default function SettingsModal({
       setUsername('');
       setPassword('');
       setSaved(false);
+      setEditingTarget(false);
+      setTargetRegistry(await getSyncTargets());
       setSyncStatus('🧹 凭据已清除');
       showSuccess('WebDAV 凭据已清除。');
     } catch (error) {
@@ -329,7 +375,8 @@ export default function SettingsModal({
         : resolution === 'keep' ? '保留条目' : '确认删除';
     if (!confirm(`确定对「${title}」${action}吗？选择结果将在下次同步时发布。`)) return;
     try {
-      await resolveSyncConflict(conflict.id, resolution);
+      const snapshot = await getSyncSnapshot();
+      await resolveSyncConflict(conflict.id, resolution, snapshot.targetId, snapshot.targetEpoch);
       await onDatabaseRestored();
       setSyncConflicts(await clearResolvedSyncConflicts([]));
       showSuccess('同步冲突已解决，选择结果会在下次同步时发布。');
@@ -1006,7 +1053,21 @@ export default function SettingsModal({
                   )}
                 </div>
 
-                {!saved ? (
+                {targetRegistry && targetRegistry.targets.length > 0 && (
+                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+                    <p className="text-[11px] font-bold text-gray-500">已保存目标（共用本地影视库，远端状态相互隔离）</p>
+                    {targetRegistry.targets.map(target => (
+                      <div key={target.id} className="flex items-center justify-between text-xs text-gray-600">
+                        <span className="truncate">{target.username} · {target.normalizedUrl}</span>
+                        <span className={`ml-2 shrink-0 rounded-full px-2 py-0.5 ${target.id === targetRegistry.activeTargetId ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                          {target.id === targetRegistry.activeTargetId ? '当前' : target.id.slice(0, 8)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!saved || editingTarget ? (
                   <div className="space-y-3">
                     <input
                       type="text"
@@ -1039,8 +1100,13 @@ export default function SettingsModal({
                       className="py-2.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
                       disabled={!username.trim() || !password.trim() || !webdavUrl.trim()}
                     >
-                      保存凭据
+                      {saved ? '只读检查并更新目标' : '只读检查并连接'}
                     </button>
+                    {saved && (
+                      <button onClick={() => { setEditingTarget(false); setPassword(''); }} className="ml-3 py-2.5 px-4 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600">
+                        取消
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -1051,12 +1117,14 @@ export default function SettingsModal({
                         </svg>
                         <span className="text-sm text-gray-700 font-medium">已配置 WebDAV ({webdavUrl})，数据变动后会自动同步</span>
                       </div>
-                      <button
-                        onClick={handleClear}
-                        className="text-xs text-red-500 hover:underline font-bold transition-all"
-                      >
-                        断开连接
-                      </button>
+                      <div className="shrink-0">
+                        <button onClick={() => setEditingTarget(true)} className="mr-4 text-xs text-indigo-600 hover:underline font-bold transition-all">
+                          切换 / 更新凭据
+                        </button>
+                        <button onClick={handleClear} className="text-xs text-red-500 hover:underline font-bold transition-all">
+                          断开并保留状态
+                        </button>
+                      </div>
                     </div>
                     <div className="flex gap-3">
                       <button

@@ -1,6 +1,6 @@
 # TASK-D-SYNC-003：WebDAV 目标隔离与安全切换专项设计
 
-> 状态：READY，用户已于 2026-08-02 确认，可进入实施
+> 状态：IMPLEMENTED，已于 2026-08-02 按确认方案实施
 > 日期：2026-08-02  
 > 数据库：继续使用 V18；通过 `settings` 命名空间隔离  
 > 依赖：`TASK-D-SYNC-001/002/001-R2` 已实现的条件提交、主动拉取、暂存与发布恢复
@@ -168,3 +168,9 @@ flowchart TD
 ## 10. 已确认方案
 
 用户已确认按本文方案实施，并锁定以下产品边界：多个 WebDAV target 是同一本地影视库的不同同步端点，不是多套独立本地资料库；第一版只允许断开并保留 target，不提供永久删除 target 状态。
+
+## 11. 实施结果
+
+实现保持数据库 V18，以 `sync_targets_v1` 注册表和 `sync_target::<id>::…` settings 行隔离全部目标级状态。Rust 负责 URL 规范化、SHA-256 target ID、旧全局键恢复点迁移、切回差异重建以及 target ID＋epoch CAS；前端设置页负责只读探测、明确确认、目标列表、断开保留和激活后的首次 Pull → Merge → Push。
+
+自动化门禁通过 Rust 62/62、Node 68/68、Playwright 52/52、TypeScript、ESLint、生产构建与 rustfmt。测试使用临时 SQLite 和 mock WebDAV；真实远端未参与自动化，真实便携数据库留待部署前后只读核验。

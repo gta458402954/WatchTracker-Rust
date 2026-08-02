@@ -81,7 +81,8 @@ pub fn mark_records_mutated(conn: &Connection) -> Result<i64, AppError> {
 }
 
 pub fn get_sync_outbox(conn: &Connection) -> Result<Option<SyncOutbox>, AppError> {
-    let Some(raw) = get_setting_tx(conn, SYNC_OUTBOX_KEY)? else {
+    let key = crate::sync_targets::active_key(conn, SYNC_OUTBOX_KEY, "outbox_v1")?;
+    let Some(raw) = get_setting_tx(conn, &key)? else {
         return Ok(None);
     };
     let outbox: SyncOutbox = serde_json::from_str(&raw)
@@ -97,7 +98,11 @@ pub fn get_sync_outbox(conn: &Connection) -> Result<Option<SyncOutbox>, AppError
 pub fn set_sync_outbox(conn: &Connection, outbox: &SyncOutbox) -> Result<(), AppError> {
     let raw = serde_json::to_string(outbox)
         .map_err(|error| AppError::General(format!("Could not serialize outbox: {error}")))?;
-    set_setting_tx(conn, SYNC_OUTBOX_KEY, &raw)?;
+    set_setting_tx(
+        conn,
+        &crate::sync_targets::active_key(conn, SYNC_OUTBOX_KEY, "outbox_v1")?,
+        &raw,
+    )?;
     Ok(())
 }
 
@@ -107,6 +112,9 @@ pub fn mark_local_records_mutated(conn: &Connection, reason: &str) -> Result<i64
         return Err(AppError::General("Missing sync outbox reason".to_string()));
     }
     let generation = mark_records_mutated(conn)?;
+    if crate::sync_targets::registry_exists_without_active_target(conn)? {
+        return Ok(generation);
+    }
     let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut outbox = get_sync_outbox(conn)?.unwrap_or_else(|| SyncOutbox::clean(generation));
     if !outbox.pending {

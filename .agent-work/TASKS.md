@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001/002` 与 `TASK-D-SYNC-001-R2` 已实现，剩余为 1 个 `READY`、1 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003` 与 `TASK-D-SYNC-001-R2` 已实现，剩余为 1 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1491,7 +1491,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | IMPLEMENTED | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | IMPLEMENTED | 持久 outbox、主动拉取与退避已实现 |
 | `TASK-D-SYNC-001-R2` | R0 | 同步恢复与增量落盘 | IMPLEMENTED | 版本暂存、发布意图与伪冲突修复 |
-| `TASK-D-SYNC-003` | R0 | 同步隔离 | READY | R0 WebDAV 目标隔离，专项设计已确认 |
+| `TASK-D-SYNC-003` | R0 | 同步隔离 | IMPLEMENTED | R0 WebDAV 目标隔离、安全切换与 V18 迁移已实现 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | NEEDS-DESIGN | R1 今晚看什么 |
@@ -1613,9 +1613,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
 
-- Phase: DESIGN
+- Phase: IMPLEMENTATION
 - Owner: Codex
-- Status: READY
+- Status: IMPLEMENTED
 - Priority: R0
 - Scope: 为 URL/账号组合建立稳定 target ID，隔离凭据、未来 baseline/ETag/outbox 状态，并设计切换确认、首次拉取和旧全局 setting 迁移。
 - Current Basis: 当前 URL、凭据、代理和同步频率保存在全局 setting，尚没有 per-target 同步状态。
@@ -1623,6 +1623,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Safety Boundary: snapshot、prepare intent、commit 和调度写入增加 target ID＋epoch CAS；切换前只读探测，确认后才激活。旧 target 的 pending/冲突/发布意图冻结保留，切回时按该 baseline 重建离线期间差异。新已有远端无共同 baseline 时，同 ID 差异必须进入冲突，禁止默认覆盖。
 - Migration: 首次升级先创建恢复点，再在单一 SQLite 事务中迁移全部旧全局同步键；验证成功后才删除旧键。解密或迁移失败保持旧状态并以 `target_migration_required` 阻断上传。数据库继续保持 V18。
 - Confirmed Decisions: 用户已确认多个 target 代表同一本地影视库的不同同步端点；第一版只允许断开并保留 target，不提供永久删除 target 状态。任务可按专项设计进入实施。
+- Implementation: URL＋用户名经 Rust 规范化后生成 SHA-256 target ID；凭据、baseline、ETag、冲突、last commit、v2 fingerprint、outbox、scheduler、staging 与 publish intent 已迁入 `sync_target::<id>::…`。快照、发布意图、提交、失败调度、暂停和冲突选择使用 target ID＋epoch CAS；切换前执行零写入只读探测，确认后激活并立即 Pull → Merge → Push。切回目标会按其 baseline 重建差异，断开只冻结并保留状态。
+- Migration/Evidence: 旧全局键在 `target-migration` 恢复点后以单一 V18 事务迁移；旧凭据无法解密时本地库仍可读取，上传保持阻断并允许用户重输凭据完成迁移。门禁通过 Rust 62/62、Node 68/68、Playwright 52/52、typecheck、lint、生产 build 与 rustfmt；测试只使用临时 SQLite 和 mock WebDAV，未连接真实远端。
 
 ### TASK-D-SEC-001：Windows 凭据保护与旧格式迁移
 

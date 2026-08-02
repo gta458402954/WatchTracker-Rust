@@ -25,6 +25,10 @@ const LAST_COMMIT_KEY: &str = "sync_v3_last_commit";
 const V2_FINGERPRINT_KEY: &str = "sync_v2_source_fingerprint";
 const SCHEDULER_KEY: &str = "sync_scheduler_v1";
 
+fn scoped_key(conn: &Connection, legacy: &str, suffix: &str) -> Result<String, AppError> {
+    crate::sync_targets::active_key(conn, legacy, suffix)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SyncSchedulerState {
@@ -56,6 +60,8 @@ impl Default for SyncSchedulerState {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncRuntimeState {
+    pub target_id: Option<String>,
+    pub target_epoch: Option<u64>,
     pub outbox: SyncOutbox,
     pub scheduler: SyncSchedulerState,
     pub conflict_count: usize,
@@ -67,6 +73,8 @@ pub struct SyncRuntimeState {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncSnapshot {
+    pub target_id: Option<String>,
+    pub target_epoch: Option<u64>,
     pub records: Vec<WatchRecord>,
     pub tombstones: Vec<Tombstone>,
     pub records_generation: i64,
@@ -85,6 +93,10 @@ pub struct SyncSnapshot {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCommitInput {
+    #[serde(default)]
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub target_epoch: Option<u64>,
     pub expected_generation: i64,
     pub records: Vec<WatchRecord>,
     pub tombstones: Vec<Tombstone>,
@@ -123,7 +135,8 @@ fn parse_optional_json(raw: Option<String>, key: &str) -> Result<Option<Value>, 
 }
 
 fn scheduler_state(conn: &Connection) -> Result<SyncSchedulerState, AppError> {
-    let Some(raw) = get_setting_tx(conn, SCHEDULER_KEY)? else {
+    let scheduler_key = scoped_key(conn, SCHEDULER_KEY, "scheduler_v1")?;
+    let Some(raw) = get_setting_tx(conn, &scheduler_key)? else {
         return Ok(SyncSchedulerState::default());
     };
     let state: SyncSchedulerState = serde_json::from_str(&raw)
@@ -140,7 +153,11 @@ fn set_scheduler_state(conn: &Connection, state: &SyncSchedulerState) -> Result<
     let raw = serde_json::to_string(state).map_err(|error| {
         AppError::General(format!("Could not serialize sync scheduler: {error}"))
     })?;
-    set_setting_tx(conn, SCHEDULER_KEY, &raw)?;
+    set_setting_tx(
+        conn,
+        &scoped_key(conn, SCHEDULER_KEY, "scheduler_v1")?,
+        &raw,
+    )?;
     Ok(())
 }
 
@@ -171,6 +188,9 @@ fn initialize_outbox(
     baseline: Option<&Value>,
     conflicts: &[Value],
 ) -> Result<SyncOutbox, AppError> {
+    if crate::sync_targets::registry_exists_without_active_target(conn)? {
+        return Ok(SyncOutbox::clean(generation));
+    }
     if let Some(outbox) = get_sync_outbox(conn)? {
         return Ok(outbox);
     }
@@ -222,20 +242,23 @@ pub(crate) fn device_id(conn: &Connection) -> Result<String, AppError> {
 }
 
 pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
-    let conflicts = match parse_optional_json(get_setting_tx(conn, CONFLICTS_KEY)?, CONFLICTS_KEY)?
-    {
-        Some(Value::Array(items)) => items,
-        Some(_) => {
-            return Err(AppError::General(
-                "Invalid sync_v3_conflicts: expected array".into(),
-            ))
-        }
-        None => Vec::new(),
-    };
+    let context = crate::sync_targets::active_target(conn)?;
+    let conflicts_key = scoped_key(conn, CONFLICTS_KEY, "conflicts_v3")?;
+    let baseline_key = scoped_key(conn, BASELINE_KEY, "baseline_v3")?;
+    let conflicts =
+        match parse_optional_json(get_setting_tx(conn, &conflicts_key)?, &conflicts_key)? {
+            Some(Value::Array(items)) => items,
+            Some(_) => {
+                return Err(AppError::General(
+                    "Invalid sync_v3_conflicts: expected array".into(),
+                ))
+            }
+            None => Vec::new(),
+        };
     let records = db::get_all_records(conn)?;
     let tombstones = get_tombstones_tx(conn)?;
     let records_generation = get_records_generation(conn)?;
-    let baseline = parse_optional_json(get_setting_tx(conn, BASELINE_KEY)?, BASELINE_KEY)?;
+    let baseline = parse_optional_json(get_setting_tx(conn, &baseline_key)?, &baseline_key)?;
     let outbox = initialize_outbox(
         conn,
         records_generation,
@@ -245,15 +268,23 @@ pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
         &conflicts,
     )?;
     Ok(SyncSnapshot {
+        target_id: context.as_ref().map(|(id, _)| id.clone()),
+        target_epoch: context.as_ref().map(|(_, epoch)| *epoch),
         records,
         tombstones,
         records_generation,
         baseline,
         device_id: device_id(conn)?,
         conflicts,
-        remote_etag: get_setting_tx(conn, ETAG_KEY)?,
-        last_commit: parse_optional_json(get_setting_tx(conn, LAST_COMMIT_KEY)?, LAST_COMMIT_KEY)?,
-        v2_source_fingerprint: get_setting_tx(conn, V2_FINGERPRINT_KEY)?,
+        remote_etag: get_setting_tx(conn, &scoped_key(conn, ETAG_KEY, "remote_etag")?)?,
+        last_commit: parse_optional_json(
+            get_setting_tx(conn, &scoped_key(conn, LAST_COMMIT_KEY, "last_commit_v3")?)?,
+            LAST_COMMIT_KEY,
+        )?,
+        v2_source_fingerprint: get_setting_tx(
+            conn,
+            &scoped_key(conn, V2_FINGERPRINT_KEY, "v2_source_fingerprint")?,
+        )?,
         outbox,
         scheduler: scheduler_state(conn)?,
         staging: crate::sync_staging::get_staging(conn)?,
@@ -262,9 +293,12 @@ pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
 }
 
 pub fn runtime_state(conn: &Connection) -> Result<SyncRuntimeState, AppError> {
+    let context = crate::sync_targets::active_target(conn)?;
     let Some(outbox) = get_sync_outbox(conn)? else {
         let state = snapshot(conn)?;
         return Ok(SyncRuntimeState {
+            target_id: context.as_ref().map(|(id, _)| id.clone()),
+            target_epoch: context.as_ref().map(|(_, epoch)| *epoch),
             outbox: state.outbox,
             scheduler: state.scheduler,
             conflict_count: state.conflicts.len(),
@@ -273,21 +307,27 @@ pub fn runtime_state(conn: &Connection) -> Result<SyncRuntimeState, AppError> {
             publish_pending: state.publish_intent.is_some(),
         });
     };
-    let conflicts = match parse_optional_json(get_setting_tx(conn, CONFLICTS_KEY)?, CONFLICTS_KEY)?
-    {
-        Some(Value::Array(items)) => items,
-        Some(_) => {
-            return Err(AppError::General(
-                "Invalid sync_v3_conflicts: expected array".into(),
-            ))
-        }
-        None => Vec::new(),
-    };
+    let conflicts_key = scoped_key(conn, CONFLICTS_KEY, "conflicts_v3")?;
+    let conflicts =
+        match parse_optional_json(get_setting_tx(conn, &conflicts_key)?, &conflicts_key)? {
+            Some(Value::Array(items)) => items,
+            Some(_) => {
+                return Err(AppError::General(
+                    "Invalid sync_v3_conflicts: expected array".into(),
+                ))
+            }
+            None => Vec::new(),
+        };
     Ok(SyncRuntimeState {
+        target_id: context.as_ref().map(|(id, _)| id.clone()),
+        target_epoch: context.as_ref().map(|(_, epoch)| *epoch),
         outbox,
         scheduler: scheduler_state(conn)?,
         conflict_count: conflicts.len(),
-        last_commit: parse_optional_json(get_setting_tx(conn, LAST_COMMIT_KEY)?, LAST_COMMIT_KEY)?,
+        last_commit: parse_optional_json(
+            get_setting_tx(conn, &scoped_key(conn, LAST_COMMIT_KEY, "last_commit_v3")?)?,
+            LAST_COMMIT_KEY,
+        )?,
         staged_count: crate::sync_staging::get_staging(conn)?.entries.len(),
         publish_pending: crate::sync_staging::get_publish_intent(conn)?.is_some(),
     })
@@ -297,11 +337,18 @@ pub fn prepare_publish_intent(
     conn: &Connection,
     input: crate::sync_staging::PreparePublishIntentInput,
 ) -> Result<SyncPublishIntent, AppError> {
+    crate::sync_targets::verify_context(conn, input.target_id.as_deref(), input.target_epoch)?;
     let generation = get_records_generation(conn)?;
     crate::sync_staging::prepare_publish_intent(conn, generation, input)
 }
 
-pub fn set_paused(conn: &Connection, paused: bool) -> Result<SyncRuntimeState, AppError> {
+pub fn set_paused(
+    conn: &Connection,
+    paused: bool,
+    target_id: Option<&str>,
+    target_epoch: Option<u64>,
+) -> Result<SyncRuntimeState, AppError> {
+    crate::sync_targets::verify_context(conn, target_id, target_epoch)?;
     let mut scheduler = scheduler_state(conn)?;
     scheduler.paused = paused;
     if !paused {
@@ -315,7 +362,10 @@ pub fn record_failure(
     conn: &Connection,
     code: &str,
     next_attempt_at: Option<String>,
+    target_id: Option<&str>,
+    target_epoch: Option<u64>,
 ) -> Result<SyncRuntimeState, AppError> {
+    crate::sync_targets::verify_context(conn, target_id, target_epoch)?;
     let code = code.trim();
     if code.is_empty() || code.len() > 80 {
         return Err(AppError::General("Invalid sync error code".to_string()));
@@ -335,6 +385,7 @@ pub fn commit(
     paths: &AppPaths,
     input: SyncCommitInput,
 ) -> Result<SyncCommitResult, AppError> {
+    crate::sync_targets::verify_context(conn, input.target_id.as_deref(), input.target_epoch)?;
     if input.expected_generation < 0 || get_records_generation(conn)? != input.expected_generation {
         return Err(AppError::General("stale_local_snapshot".to_string()));
     }
@@ -409,6 +460,11 @@ pub fn commit(
         recovery_points::create(conn, paths, "sync")?;
     }
     let transaction = conn.transaction()?;
+    crate::sync_targets::verify_context(
+        &transaction,
+        input.target_id.as_deref(),
+        input.target_epoch,
+    )?;
     if get_records_generation(&transaction)? != input.expected_generation {
         return Err(AppError::General("stale_local_snapshot".to_string()));
     }
@@ -432,12 +488,32 @@ pub fn commit(
             unchanged_count,
         );
     }
-    set_setting_tx(&transaction, BASELINE_KEY, &baseline)?;
-    set_setting_tx(&transaction, CONFLICTS_KEY, &conflicts)?;
-    set_setting_tx(&transaction, ETAG_KEY, &input.remote_etag)?;
-    set_setting_tx(&transaction, LAST_COMMIT_KEY, &last_commit)?;
+    set_setting_tx(
+        &transaction,
+        &scoped_key(&transaction, BASELINE_KEY, "baseline_v3")?,
+        &baseline,
+    )?;
+    set_setting_tx(
+        &transaction,
+        &scoped_key(&transaction, CONFLICTS_KEY, "conflicts_v3")?,
+        &conflicts,
+    )?;
+    set_setting_tx(
+        &transaction,
+        &scoped_key(&transaction, ETAG_KEY, "remote_etag")?,
+        &input.remote_etag,
+    )?;
+    set_setting_tx(
+        &transaction,
+        &scoped_key(&transaction, LAST_COMMIT_KEY, "last_commit_v3")?,
+        &last_commit,
+    )?;
     if let Some(fingerprint) = input.v2_source_fingerprint {
-        set_setting_tx(&transaction, V2_FINGERPRINT_KEY, &fingerprint)?;
+        set_setting_tx(
+            &transaction,
+            &scoped_key(&transaction, V2_FINGERPRINT_KEY, "v2_source_fingerprint")?,
+            &fingerprint,
+        )?;
     }
     let generation = if business_state_changed {
         mark_records_mutated(&transaction)?
@@ -477,8 +553,12 @@ pub fn resolve_conflict(
     conn: &mut Connection,
     id: &str,
     resolution: SyncConflictResolution,
+    target_id: Option<&str>,
+    target_epoch: Option<u64>,
 ) -> Result<(), AppError> {
-    let raw = get_setting_tx(conn, CONFLICTS_KEY)?.unwrap_or_else(|| "[]".to_string());
+    crate::sync_targets::verify_context(conn, target_id, target_epoch)?;
+    let conflicts_key = scoped_key(conn, CONFLICTS_KEY, "conflicts_v3")?;
+    let raw = get_setting_tx(conn, &conflicts_key)?.unwrap_or_else(|| "[]".to_string());
     let mut conflicts = serde_json::from_str::<Vec<Value>>(&raw)
         .map_err(|error| AppError::General(format!("Invalid {CONFLICTS_KEY}: {error}")))?;
     let position = conflicts
@@ -527,7 +607,7 @@ pub fn resolve_conflict(
     conflicts.remove(position);
     set_setting_tx(
         &transaction,
-        CONFLICTS_KEY,
+        &scoped_key(&transaction, CONFLICTS_KEY, "conflicts_v3")?,
         &serde_json::to_string(&conflicts).map_err(|error| {
             AppError::General(format!("Could not serialize conflicts: {error}"))
         })?,
@@ -596,6 +676,8 @@ mod tests {
 
         fn input(&self, expected_generation: i64) -> SyncCommitInput {
             SyncCommitInput {
+                target_id: None,
+                target_epoch: None,
                 expected_generation,
                 records: vec![Self::record("synced")],
                 tombstones: vec![Tombstone {
@@ -682,6 +764,8 @@ mod tests {
         let intent = prepare_publish_intent(
             &test.conn,
             PreparePublishIntentInput {
+                target_id: None,
+                target_epoch: None,
                 commit_id: "recoverable-commit".into(),
                 previous_commit_id: Some("previous".into()),
                 expected_generation: 1,
@@ -719,6 +803,8 @@ mod tests {
         prepare_publish_intent(
             &test.conn,
             PreparePublishIntentInput {
+                target_id: None,
+                target_epoch: None,
                 commit_id: "uncertain-commit".into(),
                 previous_commit_id: Some("previous".into()),
                 expected_generation: 1,
@@ -822,7 +908,14 @@ mod tests {
         )
         .unwrap();
 
-        resolve_conflict(&mut test.conn, "choice", SyncConflictResolution::Remote).unwrap();
+        resolve_conflict(
+            &mut test.conn,
+            "choice",
+            SyncConflictResolution::Remote,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             db::get_record(&test.conn, "choice").unwrap().unwrap().notes,
             "remote selected"
@@ -863,6 +956,8 @@ mod tests {
             &mut test.conn,
             "delete-choice",
             SyncConflictResolution::Delete,
+            None,
+            None,
         )
         .unwrap();
         assert!(db::get_record(&test.conn, "delete-choice")
@@ -904,12 +999,14 @@ mod tests {
     #[test]
     fn pause_and_failure_backoff_survive_runtime_state_reads() {
         let test = TestDatabase::new("scheduler");
-        let paused = set_paused(&test.conn, true).unwrap();
+        let paused = set_paused(&test.conn, true, None, None).unwrap();
         assert!(paused.scheduler.paused);
         let failed = record_failure(
             &test.conn,
             "http_503",
             Some("2026-08-02T12:15:00.000Z".to_string()),
+            None,
+            None,
         )
         .unwrap();
         assert!(failed.scheduler.paused);

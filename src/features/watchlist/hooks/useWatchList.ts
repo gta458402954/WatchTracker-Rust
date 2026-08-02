@@ -113,7 +113,7 @@ export function useWatchList(
           const nextAttemptAt = disposition === 'retry'
             ? nextRetryAt(current.scheduler.consecutiveFailures + 1, Date.now(), Math.random() * 0.4 - 0.2)
             : null;
-          const runtime = await recordSyncFailure(safeFailureCode(result.error), nextAttemptAt);
+          const runtime = await recordSyncFailure(safeFailureCode(result.error), nextAttemptAt, current.targetId, current.targetEpoch);
           updateRuntime(runtime);
           if (!manual) notifyBackgroundFailure(result.error);
           if (nextAttemptAt) {
@@ -127,7 +127,7 @@ export function useWatchList(
       const message = String(error);
       const current = runtimeRef.current ?? await getSyncRuntimeState();
       const nextAttemptAt = nextRetryAt(current.scheduler.consecutiveFailures + 1, Date.now());
-      updateRuntime(await recordSyncFailure(safeFailureCode(message), nextAttemptAt));
+      updateRuntime(await recordSyncFailure(safeFailureCode(message), nextAttemptAt, current.targetId, current.targetEpoch));
       if (!manual) notifyBackgroundFailure(message);
       queueAutomaticRef.current('retry', Math.max(0, Date.parse(nextAttemptAt) - Date.now()));
       return { ok: false, error: message };
@@ -286,7 +286,7 @@ export function useWatchList(
 
   const toggleSyncPause = useCallback(async () => {
     const current = runtimeRef.current ?? await getSyncRuntimeState();
-    const runtime = updateRuntime(await setAutoSyncPaused(!current.scheduler.paused));
+    const runtime = updateRuntime(await setAutoSyncPaused(!current.scheduler.paused, current.targetId, current.targetEpoch));
     if (runtime.scheduler.paused) {
       if (wakeTimerRef.current) { clearTimeout(wakeTimerRef.current); wakeTimerRef.current = null; }
       if (debounceTimerRef.current) { clearTimeout(debounceTimerRef.current); debounceTimerRef.current = null; }

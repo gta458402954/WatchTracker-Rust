@@ -21,7 +21,7 @@ export async function deleteRecord(id: string): Promise<void> {
   await invoke('delete_record', { id });
 }
 
-export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'pre-restore';
+export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'pre-restore';
 
 export interface RecoveryPoint {
   id: string;
@@ -52,6 +52,8 @@ export async function replaceAllRecords(records: WatchRecord[], reason: 'import'
 }
 
 export interface SyncSnapshot {
+  targetId: string | null;
+  targetEpoch: number | null;
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
   recordsGeneration: number;
@@ -112,6 +114,8 @@ export interface SyncSchedulerState {
 }
 
 export interface SyncRuntimeState {
+  targetId: string | null;
+  targetEpoch: number | null;
   outbox: SyncOutboxState;
   scheduler: SyncSchedulerState;
   conflictCount: number;
@@ -121,6 +125,8 @@ export interface SyncRuntimeState {
 }
 
 export interface SyncCommitInput {
+  targetId: string | null;
+  targetEpoch: number | null;
   expectedGeneration: number;
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
@@ -145,12 +151,12 @@ export async function getSyncRuntimeState(): Promise<SyncRuntimeState> {
   return invoke('get_sync_runtime_state');
 }
 
-export async function setAutoSyncPaused(paused: boolean): Promise<SyncRuntimeState> {
-  return invoke('set_auto_sync_paused', { paused });
+export async function setAutoSyncPaused(paused: boolean, targetId: string | null, targetEpoch: number | null): Promise<SyncRuntimeState> {
+  return invoke('set_auto_sync_paused', { paused, targetId, targetEpoch });
 }
 
-export async function recordSyncFailure(code: string, nextAttemptAt: string | null): Promise<SyncRuntimeState> {
-  return invoke('record_sync_failure', { code, nextAttemptAt });
+export async function recordSyncFailure(code: string, nextAttemptAt: string | null, targetId: string | null, targetEpoch: number | null): Promise<SyncRuntimeState> {
+  return invoke('record_sync_failure', { code, nextAttemptAt, targetId, targetEpoch });
 }
 
 export async function commitSyncResult(input: SyncCommitInput): Promise<SyncCommitResult> {
@@ -158,6 +164,8 @@ export async function commitSyncResult(input: SyncCommitInput): Promise<SyncComm
 }
 
 export async function prepareSyncPublishIntent(input: {
+  targetId: string | null;
+  targetEpoch: number | null;
   commitId: string;
   previousCommitId: string | null;
   expectedGeneration: number;
@@ -168,9 +176,18 @@ export async function prepareSyncPublishIntent(input: {
 
 export type SyncConflictResolution = 'local' | 'remote' | 'keep' | 'delete';
 
-export async function resolveSyncConflict(id: string, resolution: SyncConflictResolution): Promise<void> {
-  return invoke('resolve_sync_conflict', { id, resolution });
+export async function resolveSyncConflict(id: string, resolution: SyncConflictResolution, targetId: string | null, targetEpoch: number | null): Promise<void> {
+  return invoke('resolve_sync_conflict', { id, resolution, targetId, targetEpoch });
 }
+
+export interface SyncTargetDescriptor { id: string; normalizedUrl: string; username: string; createdAt: string; lastActivatedAt: string; }
+export interface SyncTargetRegistry { version: 1; activeTargetId: string | null; targetEpoch: number; targets: SyncTargetDescriptor[]; }
+export interface ActiveSyncCredentials { targetId: string; targetEpoch: number; url: string; username: string; password: string; }
+
+export const getSyncTargets = (): Promise<SyncTargetRegistry> => invoke('get_sync_targets');
+export const getActiveSyncCredentials = (): Promise<ActiveSyncCredentials | null> => invoke('get_active_sync_credentials');
+export const activateSyncTarget = (input: { url: string; username: string; password: string }): Promise<SyncTargetRegistry> => invoke('activate_sync_target', { input });
+export const disconnectSyncTarget = (): Promise<SyncTargetRegistry> => invoke('disconnect_sync_target');
 
 export async function createRecoveryPoint(reason: RecoveryReason): Promise<RecoveryPoint> {
   return invoke('create_recovery_point', { reason });

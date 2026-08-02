@@ -69,6 +69,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       const recoveryRecords: Record<string, WatchRecord[]> = {};
       let recoverySequence = snapshot.recoveryPoints.length;
       let recordsGeneration = restoredRuntime?.recordsGeneration ?? 0;
+      let activeTargetId: string | null = snapshot.settings.webdav_creds ? 'a'.repeat(64) : null;
+      let targetEpoch = activeTargetId ? 1 : 0;
       const outbox: SyncOutboxState = (() => {
         if (restoredRuntime) return structuredClone(restoredRuntime.outbox);
         try { return JSON.parse(snapshot.settings.sync_outbox_v1 || 'null') || {
@@ -228,6 +230,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 return raw ? JSON.parse(raw) : null;
               };
               return {
+                targetId: activeTargetId,
+                targetEpoch: activeTargetId ? targetEpoch : null,
                 records: structuredClone(snapshot.records),
                 tombstones: structuredClone(tombstones),
                 recordsGeneration,
@@ -246,6 +250,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'get_sync_runtime_state':
               requireKeys(command, args, []);
               return {
+                targetId: activeTargetId, targetEpoch: activeTargetId ? targetEpoch : null,
                 outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
                 conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
                 lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
@@ -253,11 +258,12 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 publishPending: Boolean(snapshot.settings.sync_publish_intent_v1),
               };
             case 'set_auto_sync_paused':
-              requireKeys(command, args, ['paused']);
+              requireKeys(command, args, ['paused', 'targetEpoch', 'targetId']);
               scheduler.paused = args.paused as boolean;
               if (!scheduler.paused) scheduler.nextAttemptAt = null;
               persistRuntime();
               return {
+                targetId: activeTargetId, targetEpoch: activeTargetId ? targetEpoch : null,
                 outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
                 conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
                 lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
@@ -265,13 +271,14 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 publishPending: Boolean(snapshot.settings.sync_publish_intent_v1),
               };
             case 'record_sync_failure':
-              requireKeys(command, args, ['code', 'nextAttemptAt']);
+              requireKeys(command, args, ['code', 'nextAttemptAt', 'targetEpoch', 'targetId']);
               scheduler.consecutiveFailures += 1;
               scheduler.lastAttemptAt = new Date().toISOString();
               scheduler.lastErrorCode = args.code as string;
               scheduler.nextAttemptAt = args.nextAttemptAt as string | null;
               persistRuntime();
               return {
+                targetId: activeTargetId, targetEpoch: activeTargetId ? targetEpoch : null,
                 outbox: structuredClone(outbox), scheduler: structuredClone(scheduler),
                 conflictCount: JSON.parse(snapshot.settings.sync_v3_conflicts || '[]').length,
                 lastCommit: snapshot.settings.sync_v3_last_commit ? JSON.parse(snapshot.settings.sync_v3_last_commit) : null,
@@ -281,9 +288,11 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'prepare_sync_publish_intent': {
               requireKeys(command, args, ['input']);
               const input = args.input as {
+                targetId: string | null; targetEpoch: number | null;
                 commitId: string; previousCommitId: string | null;
                 expectedGeneration: number; payloadFingerprint: string;
               };
+              if (input.targetId !== activeTargetId || input.targetEpoch !== (activeTargetId ? targetEpoch : null)) throw new Error('stale_sync_target');
               if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
               const staging = JSON.parse(snapshot.settings.sync_staging_v1 || '{"entries":[]}') as {
                 entries: Array<{ id: string; lastGeneration: number }>;
@@ -301,6 +310,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'commit_sync_result': {
               requireKeys(command, args, ['input']);
               const input = args.input as {
+                targetId: string | null;
+                targetEpoch: number | null;
                 expectedGeneration: number;
                 records: WatchRecord[];
                 tombstones: SyncTombstoneV3[];
@@ -311,6 +322,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 v2SourceFingerprint: string | null;
                 acknowledgeOutbox: boolean;
               };
+              if (input.targetId !== activeTargetId || input.targetEpoch !== (activeTargetId ? targetEpoch : null)) throw new Error('stale_sync_target');
               if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
               const businessStateChanged = JSON.stringify(snapshot.records) !== JSON.stringify(input.records)
                 || JSON.stringify(tombstones) !== JSON.stringify(input.tombstones);
@@ -346,7 +358,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return { recordsGeneration, recordCount: snapshot.records.length };
             }
             case 'resolve_sync_conflict': {
-              requireKeys(command, args, ['id', 'resolution']);
+              requireKeys(command, args, ['id', 'resolution', 'targetEpoch', 'targetId']);
               const conflicts = JSON.parse(snapshot.settings.sync_v3_conflicts || '[]') as SyncConflictV3[];
               const conflict = conflicts.find(item => item.id === args.id);
               if (!conflict) throw new Error('Sync conflict not found');
@@ -401,6 +413,37 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'open_backup_directory':
               requireKeys(command, args, []);
               return null;
+            case 'get_active_sync_credentials': {
+              requireKeys(command, args, []);
+              if (!activeTargetId || !snapshot.settings.webdav_creds) return null;
+              const decrypted = String(snapshot.settings.webdav_creds).replace(/^encrypted:/, '');
+              const separator = decrypted.indexOf(':');
+              return {
+                targetId: activeTargetId, targetEpoch, url: snapshot.settings.webdav_url,
+                username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1),
+              };
+            }
+            case 'get_sync_targets':
+              requireKeys(command, args, []);
+              return {
+                version: 1, activeTargetId, targetEpoch,
+                targets: activeTargetId ? [{ id: activeTargetId, normalizedUrl: snapshot.settings.webdav_url, username: 'user', createdAt: new Date().toISOString(), lastActivatedAt: new Date().toISOString() }] : [],
+              };
+            case 'activate_sync_target': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as { url: string; username: string; password: string };
+              if (!activeTargetId) targetEpoch += 1;
+              activeTargetId = 'a'.repeat(64);
+              snapshot.settings.webdav_url = input.url;
+              snapshot.settings.webdav_creds = `encrypted:${input.username}:${input.password}`;
+              return { version: 1, activeTargetId, targetEpoch, targets: [{ id: activeTargetId, normalizedUrl: input.url, username: input.username, createdAt: new Date().toISOString(), lastActivatedAt: new Date().toISOString() }] };
+            }
+            case 'disconnect_sync_target':
+              requireKeys(command, args, []);
+              activeTargetId = null;
+              targetEpoch += 1;
+              snapshot.settings.webdav_creds = '';
+              return { version: 1, activeTargetId, targetEpoch, targets: [] };
             case 'set_setting':
               requireKeys(command, args, ['key', 'value']);
               snapshot.settings[args.key as string] = args.value as string;

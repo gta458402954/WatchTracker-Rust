@@ -3,12 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import type { WatchRecord } from '../types';
 import {
   commitSyncResult,
+  activateSyncTarget,
+  disconnectSyncTarget,
+  getActiveSyncCredentials,
   getSettingAsync,
   getSyncSnapshot,
   prepareSyncPublishIntent,
   safeDecrypt,
-  safeEncrypt,
-  setSettingAsync,
 } from './database';
 import {
   emptySyncPayload,
@@ -26,7 +27,7 @@ const V3_RESOURCE = 'records-v3.json';
 const LEGACY_RESOURCE = 'records.json';
 const MAX_PRECONDITION_RETRIES = 3;
 
-export interface WebDAVCreds { username: string; password: string; url?: string; }
+export interface WebDAVCreds { username: string; password: string; url?: string; targetId?: string; targetEpoch?: number; }
 interface LegacyTombstone { id: string; deletedAt: string; }
 interface LegacyPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: LegacyTombstone[]; }
 interface WebDavResponse { status: number; body: unknown | null; etag: string | null; text: string | null; }
@@ -42,6 +43,13 @@ export interface SyncResult {
 }
 export type SyncConflict = SyncConflictV3;
 
+export function normalizeSyncTargetUrl(raw: string): string {
+  const url = new URL(raw.trim());
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('invalid_sync_target_url');
+  url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+  return `${url.toString().replace(/\/+$/, '')}/`;
+}
+
 export function syncFailureMessage(error?: string): string | null {
   switch (error) {
     case 'conditional_write_unsupported':
@@ -52,6 +60,10 @@ export function syncFailureMessage(error?: string): string | null {
       return '云端数据持续变化，请稍后重试。';
     case 'stale_local_snapshot':
       return '同步期间出现新的本地修改，本次未覆盖本地数据，请再次同步。';
+    case 'stale_sync_target':
+      return '同步期间云端目标已切换，旧请求已被拒绝；两个目标的数据均未被覆盖。';
+    case 'target_migration_required':
+      return '旧版 WebDAV 凭据无法安全迁移，请重新输入账号后再同步。';
     case 'unsupported_remote_schema':
       return '云端数据版本高于当前程序，已停止同步且未写入。';
     case 'legacy_remote_changed':
@@ -62,12 +74,18 @@ export function syncFailureMessage(error?: string): string | null {
 }
 
 export async function saveCreds(creds: WebDAVCreds) {
-  const encrypted = await safeEncrypt(`${creds.username}:${creds.password}`, 'webdav_creds');
-  await setSettingAsync('webdav_creds', encrypted);
-  if (creds.url) await setSettingAsync('webdav_url', creds.url);
+  await activateSyncTarget({ url: creds.url || DEFAULT_WEBDAV_BASE_URL, username: creds.username, password: creds.password });
 }
 
 export async function getCreds(): Promise<WebDAVCreds | null> {
+  try {
+    const active = await getActiveSyncCredentials();
+    return active ? { ...active } : null;
+  } catch (error) {
+    if (String(error).includes('target_migration_required')) return null;
+    // Older test/runtime adapters can still read the pre-isolation format.
+    if (!String(error).includes('Unknown command')) throw error;
+  }
   const stored = await getSettingAsync('webdav_creds');
   if (!stored) return null;
   const url = await getSettingAsync('webdav_url') || DEFAULT_WEBDAV_BASE_URL;
@@ -79,7 +97,7 @@ export async function getCreds(): Promise<WebDAVCreds | null> {
   } catch { return null; }
 }
 
-export async function clearCreds() { await setSettingAsync('webdav_creds', ''); }
+export async function clearCreds() { await disconnectSyncTarget(); }
 export async function hasCreds(): Promise<boolean> { return !!(await getCreds()); }
 
 function legacyPayload(data: unknown): LegacyPayload {
@@ -173,6 +191,26 @@ async function webdavRequest(
   });
 }
 
+export interface SyncTargetProbe { kind: 'empty' | 'v3' | 'legacy'; recordCount: number; revision: number | null; }
+
+/** Read-only target check. It intentionally never creates a folder or uploads data. */
+export async function probeSyncTarget(creds: WebDAVCreds): Promise<SyncTargetProbe> {
+  const proxy = await getSettingAsync('network_proxy');
+  const v3 = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
+  if (v3.status === 200) {
+    const payload = parseSyncPayloadV3(v3.body);
+    return { kind: 'v3', recordCount: payload.records.length, revision: payload.revision };
+  }
+  if (v3.status !== 404) throw new Error(`HTTP Error: ${v3.status}`);
+  const legacy = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
+  if (legacy.status === 200) {
+    const payload = legacyPayload(legacy.body);
+    return { kind: 'legacy', recordCount: payload.records.length, revision: null };
+  }
+  if (legacy.status === 404) return { kind: 'empty', recordCount: 0, revision: null };
+  throw new Error(`HTTP Error: ${legacy.status}`);
+}
+
 function davEtagFromPropfind(text: string | null): string | null {
   if (!text) return null;
   const document = new DOMParser().parseFromString(text, 'application/xml');
@@ -245,6 +283,9 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
     const folder = await webdavRequest('MKCOL', creds, proxy, V3_RESOURCE);
     if (!successful(folder.status) && folder.status !== 405) throw new Error(`HTTP Error: ${folder.status}`);
     const snapshot = await getSyncSnapshot();
+    if (snapshot.targetId && (creds.targetId !== snapshot.targetId || creds.targetEpoch !== snapshot.targetEpoch)) {
+      throw new Error('stale_sync_target');
+    }
     const localSide: SyncMergeSide = { records: snapshot.records, tombstones: snapshot.tombstones };
     const rejectedValidatorFingerprints: string[] = [];
 
@@ -319,6 +360,8 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       if (creating || remoteChanged) {
         const nextPayload = payloadForCommit(remotePayload, merged.remote, snapshot.deviceId, now);
         await prepareSyncPublishIntent({
+          targetId: snapshot.targetId,
+          targetEpoch: snapshot.targetEpoch,
           commitId: nextPayload.commitId,
           previousCommitId: remotePayload.commitId || null,
           expectedGeneration: snapshot.recordsGeneration,
@@ -352,6 +395,8 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
 
       if (!entityTag(confirmedEtag)) throw new Error('conditional_write_unsupported');
       await commitSyncResult({
+        targetId: snapshot.targetId,
+        targetEpoch: snapshot.targetEpoch,
         expectedGeneration: snapshot.recordsGeneration,
         records: merged.local.records,
         tombstones: merged.local.tombstones,
@@ -459,6 +504,8 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
     for (const conflict of imported) byId.set(conflict.id, conflict);
     const conflicts = [...byId.values()];
     await commitSyncResult({
+      targetId: snapshot.targetId,
+      targetEpoch: snapshot.targetEpoch,
       expectedGeneration: snapshot.recordsGeneration,
       records: snapshot.records,
       tombstones: snapshot.tombstones,

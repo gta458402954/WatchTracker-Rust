@@ -146,26 +146,74 @@ pub fn replace_all_records(
 #[tauri::command]
 pub fn get_sync_snapshot(
     state: State<DbState>,
+    paths: State<AppPaths>,
 ) -> Result<sync_state::SyncSnapshot, crate::error::AppError> {
-    let conn = lock_database(state.inner())?;
+    let mut conn = lock_database(state.inner())?;
+    crate::sync_targets::ensure_migrated(&mut conn, paths.inner())?;
     sync_state::snapshot(&conn)
 }
 
 #[tauri::command]
 pub fn get_sync_runtime_state(
     state: State<DbState>,
+    paths: State<AppPaths>,
 ) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
-    let conn = lock_database(state.inner())?;
+    let mut conn = lock_database(state.inner())?;
+    if let Err(error) = crate::sync_targets::ensure_migrated(&mut conn, paths.inner()) {
+        if error.to_string().contains("target_migration_required") {
+            return sync_state::runtime_state(&conn);
+        }
+        return Err(error);
+    }
     sync_state::runtime_state(&conn)
+}
+
+#[tauri::command]
+pub fn get_sync_targets(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+) -> Result<crate::sync_targets::SyncTargetRegistry, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    crate::sync_targets::ensure_migrated(&mut conn, paths.inner())
+}
+
+#[tauri::command]
+pub fn get_active_sync_credentials(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+) -> Result<Option<crate::sync_targets::ActiveTargetCredentials>, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    crate::sync_targets::credentials(&mut conn, paths.inner())
+}
+
+#[tauri::command]
+pub fn activate_sync_target(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    input: crate::sync_targets::ActivateTargetInput,
+) -> Result<crate::sync_targets::SyncTargetRegistry, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    crate::sync_targets::activate(&mut conn, paths.inner(), input)
+}
+
+#[tauri::command]
+pub fn disconnect_sync_target(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+) -> Result<crate::sync_targets::SyncTargetRegistry, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    crate::sync_targets::disconnect(&mut conn, paths.inner())
 }
 
 #[tauri::command]
 pub fn set_auto_sync_paused(
     state: State<DbState>,
     paused: bool,
+    target_id: Option<String>,
+    target_epoch: Option<u64>,
 ) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
     let conn = lock_database(state.inner())?;
-    sync_state::set_paused(&conn, paused)
+    sync_state::set_paused(&conn, paused, target_id.as_deref(), target_epoch)
 }
 
 #[tauri::command]
@@ -173,9 +221,17 @@ pub fn record_sync_failure(
     state: State<DbState>,
     code: String,
     next_attempt_at: Option<String>,
+    target_id: Option<String>,
+    target_epoch: Option<u64>,
 ) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
     let conn = lock_database(state.inner())?;
-    sync_state::record_failure(&conn, &code, next_attempt_at)
+    sync_state::record_failure(
+        &conn,
+        &code,
+        next_attempt_at,
+        target_id.as_deref(),
+        target_epoch,
+    )
 }
 
 #[tauri::command]
@@ -202,9 +258,17 @@ pub fn resolve_sync_conflict(
     state: State<DbState>,
     id: String,
     resolution: sync_state::SyncConflictResolution,
+    target_id: Option<String>,
+    target_epoch: Option<u64>,
 ) -> Result<(), crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
-    sync_state::resolve_conflict(&mut conn, &id, resolution)
+    sync_state::resolve_conflict(
+        &mut conn,
+        &id,
+        resolution,
+        target_id.as_deref(),
+        target_epoch,
+    )
 }
 
 #[tauri::command]

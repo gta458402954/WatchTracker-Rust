@@ -12,6 +12,7 @@ mod record_validation;
 mod recovery_points;
 mod sync_staging;
 mod sync_state;
+mod sync_targets;
 
 #[cfg(test)]
 mod db_atomic_tests;
@@ -125,6 +126,10 @@ pub fn run() {
             commands::replace_all_records,
             commands::get_sync_snapshot,
             commands::get_sync_runtime_state,
+            commands::get_sync_targets,
+            commands::get_active_sync_credentials,
+            commands::activate_sync_target,
+            commands::disconnect_sync_target,
             commands::set_auto_sync_paused,
             commands::record_sync_failure,
             commands::commit_sync_result,
