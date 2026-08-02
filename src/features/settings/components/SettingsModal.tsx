@@ -6,13 +6,23 @@ import {
 import { getSettingAsync, setSettingAsync, safeEncrypt, safeDecrypt, vacuumDbAsync, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
 import { MEDIA_TYPES, mediaTypeOf, regionsOf, type TmdbMedia } from '../../../shared/lib/classification';
 import {
+  BATCH_METADATA_STATE_KEY,
   BATCH_METADATA_FIELD_LABELS,
   buildBatchMetadataPatch,
   isBatchMetadataCandidate,
+  missingBatchMetadataFields,
+  noDataFieldsForRecord,
+  parseBatchMetadataNoDataState,
+  pruneBatchMetadataNoDataState,
+  recordNoDataFields,
   remoteIdentityKey,
   retainMissingMetadataPatch,
+  selectBatchMetadataPatch,
   selectTmdbMatch,
+  tmdbTypeHintOf,
   type BatchMetadataField,
+  type BatchMetadataNoDataState,
+  type TmdbMatch,
 } from '../../../shared/lib/batchMetadata';
 import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
@@ -30,7 +40,12 @@ interface SettingsModalProps {
 }
 
 type BatchPhase = 'idle' | 'planning' | 'preview' | 'applying' | 'done';
-type BatchPlanStatus = 'ready' | 'skipped' | 'failed';
+type BatchPlanStatus = 'ready' | 'choice' | 'skipped' | 'failed';
+
+interface BatchCandidate {
+  match: TmdbMatch;
+  label: string;
+}
 
 interface BatchPlanRow {
   recordId: string;
@@ -38,6 +53,8 @@ interface BatchPlanRow {
   status: BatchPlanStatus;
   updates: UpdateWatchRecord;
   fields: BatchMetadataField[];
+  noDataFields?: BatchMetadataField[];
+  candidates?: BatchCandidate[];
   remoteIdentity?: string;
   reason?: string;
 }
@@ -82,6 +99,8 @@ export default function SettingsModal({
   const [batchTotal, setBatchTotal] = useState(0);
   const [batchPlan, setBatchPlan] = useState<BatchPlanRow[]>([]);
   const [batchResults, setBatchResults] = useState<BatchApplyResult[]>([]);
+  const [batchNoDataState, setBatchNoDataState] = useState<BatchMetadataNoDataState>({ version: 1, records: {} });
+  const [batchChoosingId, setBatchChoosingId] = useState<string | null>(null);
   const batchCancelRef = useRef(false);
   const recordsRef = useRef(records);
   const batchSyncing = batchPhase === 'planning' || batchPhase === 'applying';
@@ -126,6 +145,12 @@ export default function SettingsModal({
 
         const savedProxy = await getSettingAsync('network_proxy');
         if (savedProxy) setProxy(savedProxy);
+
+        const noDataState = pruneBatchMetadataNoDataState(
+          parseBatchMetadataNoDataState(await getSettingAsync(BATCH_METADATA_STATE_KEY)),
+          recordsRef.current,
+        );
+        setBatchNoDataState(noDataState);
       } catch (error) {
         showFailure('Settings.Initialize', '读取设置', error, setSyncStatus);
       }
@@ -383,16 +408,67 @@ export default function SettingsModal({
     throw lastError;
   }
 
+  function batchCandidateLabel(result: TmdbMedia, match: TmdbMatch): string {
+    const name = result.title || result.name || result.original_title || result.original_name || `TMDB #${match.id}`;
+    const year = (result.release_date || result.first_air_date || '').split('-')[0];
+    return `${name}${year ? ` (${year})` : ''} · ${match.type === 'movie' ? '电影' : '剧集'} · #${match.id}`;
+  }
+
+  async function handleSelectBatchCandidate(row: BatchPlanRow, match: TmdbMatch) {
+    const record = recordsRef.current.find(item => item.id === row.recordId);
+    if (!record) return;
+    setBatchChoosingId(row.recordId);
+    setBatchStatus(`正在读取所选条目：${row.recordName}`);
+    try {
+      const detail = await getTmdbDetailWithRetry(match.id, match.type);
+      let noDataState = pruneBatchMetadataNoDataState(
+        parseBatchMetadataNoDataState(await getSettingAsync(BATCH_METADATA_STATE_KEY)),
+        recordsRef.current,
+      );
+      const priorNoData = noDataFieldsForRecord(noDataState, record);
+      const allowedFields = new Set(
+        missingBatchMetadataFields(record, match.type).filter(field => !priorNoData.has(field)),
+      );
+      const patch = selectBatchMetadataPatch(buildBatchMetadataPatch(record, detail, match.type), allowedFields);
+      const noDataFields = [...allowedFields].filter(field => !patch.fields.includes(field));
+      noDataState = recordNoDataFields(noDataState, record, noDataFields);
+      await setSettingAsync(BATCH_METADATA_STATE_KEY, JSON.stringify(noDataState));
+      setBatchNoDataState(noDataState);
+      setBatchPlan(current => current.map(item => item.recordId === row.recordId ? {
+        ...item,
+        status: patch.fields.length ? 'ready' : 'skipped',
+        updates: patch.updates,
+        fields: patch.fields,
+        noDataFields,
+        candidates: undefined,
+        remoteIdentity: remoteIdentityKey(match, patch.seasonNumber),
+        reason: patch.fields.length ? undefined : '所选 TMDB 条目没有可用于缺失字段的有效值，已记为无需再查',
+      } : item));
+      setBatchStatus(patch.fields.length ? '已生成所选条目的写入预览。' : '所选条目没有可补字段。');
+    } catch (error) {
+      reportOperationFailure('Settings.BatchMetadataChoose', error);
+      setBatchStatus('❌ 读取所选 TMDB 条目失败，请重试选择。');
+    } finally {
+      setBatchChoosingId(null);
+    }
+  }
+
   // 第一步只读取远端并生成预览，不写数据库。
   async function handlePrepareBatch() {
-    const targets = records.filter(isBatchMetadataCandidate);
     if (!tmdbKey.trim()) {
       setBatchStatus('❌ 请先配置 TMDB API Key');
       onNotify?.('warning', '请先配置 TMDB API Key。');
       return;
     }
+    let noDataState = pruneBatchMetadataNoDataState(
+      parseBatchMetadataNoDataState(await getSettingAsync(BATCH_METADATA_STATE_KEY)),
+      records,
+    );
+    const targets = records.filter(record => isBatchMetadataCandidate(record, noDataFieldsForRecord(noDataState, record)));
     if (targets.length === 0) {
-      setBatchStatus('🎉 所有未锁定且带 IMDb 编号的记录均无可补字段。');
+      setBatchNoDataState(noDataState);
+      await setSettingAsync(BATCH_METADATA_STATE_KEY, JSON.stringify(noDataState));
+      setBatchStatus('🎉 所有未锁定且带 IMDb 编号的记录均无可补字段，或缺失字段已确认 TMDB 无数据。');
       setTimeout(() => setBatchStatus(''), 3000);
       return;
     }
@@ -423,9 +499,21 @@ export default function SettingsModal({
 
         const matchResult = selectTmdbMatch(record, searchResults);
         if (!matchResult.ok) {
+          const candidates = matchResult.candidates?.map(match => {
+            const result = searchResults.find(item => item.id === match.id && item.media_type === match.type);
+            return { match, label: result ? batchCandidateLabel(result, match) : `TMDB #${match.id}` };
+          });
+          const hint = tmdbTypeHintOf(record);
+          const priorNoData = noDataFieldsForRecord(noDataState, record);
+          const remainingFields = missingBatchMetadataFields(record, hint).filter(field => !priorNoData.has(field));
+          const definitiveNoMatch = hint != null && !searchResults.some(result => result.media_type === hint && result.id);
+          const noDataFields = definitiveNoMatch ? remainingFields : [];
+          noDataState = recordNoDataFields(noDataState, record, noDataFields);
           rows.push({
-            recordId: record.id, recordName: record.chineseName, status: 'skipped',
-            updates: {}, fields: [], reason: matchResult.reason,
+            recordId: record.id, recordName: record.chineseName || record.originalName || '未命名条目',
+            status: candidates?.length ? 'choice' : 'skipped',
+            updates: {}, fields: [], noDataFields, candidates,
+            reason: noDataFields.length ? `${matchResult.reason}；缺失字段已记为无需再查` : matchResult.reason,
           });
           setBatchPlan([...rows]);
           continue;
@@ -437,26 +525,43 @@ export default function SettingsModal({
           detail = await getTmdbDetailWithRetry(matchResult.match.id, matchResult.match.type);
           detailCache.set(detailKey, detail);
         }
-        const patch = buildBatchMetadataPatch(record, detail, matchResult.match.type);
+        const priorNoData = noDataFieldsForRecord(noDataState, record);
+        const missingFields = missingBatchMetadataFields(record, matchResult.match.type);
+        const allowedFields = new Set(missingFields.filter(field => !priorNoData.has(field)));
+        const patch = selectBatchMetadataPatch(
+          buildBatchMetadataPatch(record, detail, matchResult.match.type),
+          allowedFields,
+        );
+        const noDataFields = [...allowedFields].filter(field => !patch.fields.includes(field));
+        noDataState = recordNoDataFields(noDataState, record, noDataFields);
         rows.push({
           recordId: record.id,
-          recordName: record.chineseName,
+          recordName: record.chineseName || record.originalName || '未命名条目',
           status: patch.fields.length ? 'ready' : 'skipped',
           updates: patch.updates,
           fields: patch.fields,
+          noDataFields,
           remoteIdentity: remoteIdentityKey(matchResult.match, patch.seasonNumber),
-          reason: patch.fields.length ? undefined : 'TMDB 没有返回可用于缺失字段的有效值',
+          reason: patch.fields.length ? undefined : 'TMDB 没有返回可用于缺失字段的有效值，已记为无需再查',
         });
       } catch (error) {
         if (batchCancelRef.current) break;
         reportOperationFailure('Settings.BatchMetadataRecord', error);
         rows.push({
-          recordId: record.id, recordName: record.chineseName, status: 'failed',
+          recordId: record.id, recordName: record.chineseName || record.originalName || '未命名条目', status: 'failed',
           updates: {}, fields: [], reason: 'TMDB 查询失败，可重新分析',
         });
       }
       setBatchPlan([...rows]);
       if (index + 1 < targets.length) await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    try {
+      await setSettingAsync(BATCH_METADATA_STATE_KEY, JSON.stringify(noDataState));
+      setBatchNoDataState(noDataState);
+    } catch (error) {
+      reportOperationFailure('Settings.BatchMetadataNoDataState', error);
+      onNotify?.('warning', '补全预览已生成，但“TMDB 无数据”状态保存失败，下次可能再次查询。');
     }
 
     setBatchPlan(rows);
@@ -535,6 +640,18 @@ export default function SettingsModal({
   function handleCancelBatch() {
     batchCancelRef.current = true;
     setBatchStatus(batchPhase === 'planning' ? '正在停止分析...' : '将在当前记录写入完成后停止...');
+  }
+
+  async function handleClearBatchNoDataState() {
+    if (!confirm('确定清除全部“TMDB 无数据”记忆吗？清除后，下次分析会重新查询这些缺失字段。')) return;
+    try {
+      const emptyState: BatchMetadataNoDataState = { version: 1, records: {} };
+      await setSettingAsync(BATCH_METADATA_STATE_KEY, JSON.stringify(emptyState));
+      setBatchNoDataState(emptyState);
+      setBatchStatus('✅ 已清除 TMDB 无数据记忆。');
+    } catch (error) {
+      showFailure('Settings.ClearBatchMetadataNoDataState', '清除 TMDB 无数据记忆', error, setBatchStatus);
+    }
   }
 
   function resetBatch() {
@@ -982,8 +1099,17 @@ export default function SettingsModal({
                   </div>
                 </div>
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-xs leading-5 text-emerald-800">
-                  电影只补电影时长；剧集和具体季只补单集时长与总集数。媒体类型、已有题材、国家、评分、状态和自定义标签不会被静默修改。
+                  检查 TMDB 可提供的名称、年份、海报、平台、分类、国家、评分、状态及片长/集数等字段，只填空值且绝不覆盖已有内容。TMDB 已确认没有的数据会按“条目 + IMDb 编号 + 字段”记住，下次不再重复查询；IMDb 编号变化后会重新检查。
+                  {Object.keys(batchNoDataState.records).length > 0 && ` 当前已记住 ${Object.keys(batchNoDataState.records).length} 个条目的无数据状态。`}
                 </div>
+                {Object.keys(batchNoDataState.records).length > 0 && (batchPhase === 'idle' || batchPhase === 'done') && (
+                  <button
+                    onClick={() => void handleClearBatchNoDataState()}
+                    className="w-full rounded-xl border border-gray-200 py-2 text-xs font-bold text-gray-500 hover:bg-gray-50"
+                  >
+                    清除 TMDB 无数据记忆并允许重新检查
+                  </button>
+                )}
                 {(batchPhase === 'idle' || batchPhase === 'done') && (
                   <button
                     onClick={handlePrepareBatch}
@@ -1021,8 +1147,8 @@ export default function SettingsModal({
                         <div key={row.recordId} className="rounded-xl border border-gray-100 bg-white px-3 py-2">
                           <div className="flex items-start justify-between gap-3">
                             <p className="min-w-0 truncate text-xs font-bold text-gray-800">{row.recordName}</p>
-                            <span className={`shrink-0 text-[10px] font-bold ${row.status === 'ready' ? 'text-emerald-600' : row.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
-                              {row.status === 'ready' ? '可更新' : row.status === 'failed' ? '失败' : '跳过'}
+                            <span className={`shrink-0 text-[10px] font-bold ${row.status === 'ready' ? 'text-emerald-600' : row.status === 'choice' ? 'text-amber-600' : row.status === 'failed' ? 'text-red-500' : 'text-gray-400'}`}>
+                              {row.status === 'ready' ? '可更新' : row.status === 'choice' ? '待选择' : row.status === 'failed' ? '失败' : '跳过'}
                             </span>
                           </div>
                           <p className="mt-1 text-[10px] text-gray-500">
@@ -1030,6 +1156,23 @@ export default function SettingsModal({
                               ? row.fields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')
                               : row.reason}
                           </p>
+                          {row.noDataFields && row.noDataFields.length > 0 && (
+                            <p className="mt-1 text-[10px] text-amber-600">TMDB 无数据：{row.noDataFields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')}（下次不再查询）</p>
+                          )}
+                          {row.status === 'choice' && row.candidates && (
+                            <div className="mt-2 space-y-1.5">
+                              {row.candidates.map(candidate => (
+                                <button
+                                  key={`${candidate.match.type}:${candidate.match.id}`}
+                                  onClick={() => void handleSelectBatchCandidate(row, candidate.match)}
+                                  disabled={batchChoosingId === row.recordId}
+                                  className="block w-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-left text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                                >
+                                  {batchChoosingId === row.recordId ? '正在读取所选条目…' : candidate.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                           {row.remoteIdentity && <p className="mt-1 font-mono text-[9px] text-gray-300">{row.remoteIdentity}</p>}
                         </div>
                       ))}

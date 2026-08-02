@@ -3,6 +3,11 @@ import { classifyTmdb, mediaTypeOf, type TmdbMedia } from './classification.ts';
 
 export type TmdbEntityType = 'movie' | 'tv';
 export type BatchMetadataField = keyof Pick<UpdateWatchRecord,
+  | 'chineseName'
+  | 'originalName'
+  | 'releaseYear'
+  | 'posterPath'
+  | 'platform'
   | 'genres'
   | 'originCountry'
   | 'contentTags'
@@ -13,6 +18,19 @@ export type BatchMetadataField = keyof Pick<UpdateWatchRecord,
   | 'totalEpisodes'
 >;
 
+export const BATCH_METADATA_STATE_KEY = 'batch_metadata_no_data_v1';
+
+export interface BatchMetadataNoDataEntry {
+  imdbId: string;
+  fields: BatchMetadataField[];
+  checkedAt: string;
+}
+
+export interface BatchMetadataNoDataState {
+  version: 1;
+  records: Record<string, BatchMetadataNoDataEntry>;
+}
+
 export interface TmdbMatch {
   id: number;
   type: TmdbEntityType;
@@ -20,7 +38,7 @@ export interface TmdbMatch {
 
 export type TmdbMatchResult =
   | { ok: true; match: TmdbMatch }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; candidates?: TmdbMatch[] };
 
 export interface BatchMetadataPatch {
   updates: UpdateWatchRecord;
@@ -29,6 +47,11 @@ export interface BatchMetadataPatch {
 }
 
 export const BATCH_METADATA_FIELD_LABELS: Record<BatchMetadataField, string> = {
+  chineseName: '中文名称',
+  originalName: '原始名称',
+  releaseYear: '上映年份',
+  posterPath: '海报',
+  platform: '平台',
   genres: '题材',
   originCountry: '国家',
   contentTags: '地区标签',
@@ -38,6 +61,8 @@ export const BATCH_METADATA_FIELD_LABELS: Record<BatchMetadataField, string> = {
   episodeRuntime: '单集时长',
   totalEpisodes: '总集数',
 };
+
+const EMPTY_NO_DATA_STATE: BatchMetadataNoDataState = { version: 1, records: {} };
 
 function isMissingText(value: string | null | undefined): boolean {
   return !value?.trim();
@@ -79,44 +104,56 @@ export function tmdbTypeHintOf(record: WatchRecord): TmdbEntityType | null {
   return null;
 }
 
-export function isBatchMetadataCandidate(record: WatchRecord): boolean {
-  if (!record.imdbId?.trim() || record.isLocked) return false;
-
-  const commonMissing = isMissingText(record.genres)
-    || isMissingText(record.originCountry)
-    || isMissingText(record.contentTags)
-    || !isPositiveNumber(record.imdbRating)
-    || isMissingText(record.tmdbStatus);
-  const hint = tmdbTypeHintOf(record);
-  if (hint === 'movie') return commonMissing || !isPositiveNumber(record.movieDuration);
-  if (hint === 'tv') {
-    return commonMissing
-      || !isPositiveNumber(record.episodeRuntime)
-      || !isPositiveNumber(record.totalEpisodes);
+export function missingBatchMetadataFields(
+  record: WatchRecord,
+  tmdbType: TmdbEntityType | null = tmdbTypeHintOf(record),
+): BatchMetadataField[] {
+  const fields: BatchMetadataField[] = [];
+  const textFields = [
+    'chineseName', 'originalName', 'releaseYear', 'posterPath', 'platform',
+    'genres', 'originCountry', 'contentTags', 'tmdbStatus',
+  ] as const;
+  for (const field of textFields) {
+    if (isMissingText(record[field])) fields.push(field);
   }
-  return commonMissing
-    || !isPositiveNumber(record.movieDuration)
-    || !isPositiveNumber(record.episodeRuntime)
-    || !isPositiveNumber(record.totalEpisodes);
+  if (!isPositiveNumber(record.imdbRating)) fields.push('imdbRating');
+  if (tmdbType === 'movie') {
+    if (!isPositiveNumber(record.movieDuration)) fields.push('movieDuration');
+  } else if (tmdbType === 'tv') {
+    if (!isPositiveNumber(record.episodeRuntime)) fields.push('episodeRuntime');
+    if (!isPositiveNumber(record.totalEpisodes)) fields.push('totalEpisodes');
+  } else {
+    if (!isPositiveNumber(record.movieDuration)) fields.push('movieDuration');
+    if (!isPositiveNumber(record.episodeRuntime)) fields.push('episodeRuntime');
+    if (!isPositiveNumber(record.totalEpisodes)) fields.push('totalEpisodes');
+  }
+  return fields;
+}
+
+export function isBatchMetadataCandidate(
+  record: WatchRecord,
+  noDataFields: ReadonlySet<BatchMetadataField> = new Set(),
+): boolean {
+  if (!record.imdbId?.trim() || record.isLocked) return false;
+  return missingBatchMetadataFields(record).some(field => !noDataFields.has(field));
 }
 
 export function selectTmdbMatch(record: WatchRecord, results: TmdbMedia[]): TmdbMatchResult {
   const eligible = results.flatMap(result => {
     if (!isPositiveNumber(result.id) || (result.media_type !== 'movie' && result.media_type !== 'tv')) return [];
     return [{ id: result.id, type: result.media_type } satisfies TmdbMatch];
-  });
+  }).filter((candidate, index, all) => all.findIndex(item => item.id === candidate.id && item.type === candidate.type) === index);
   const hint = tmdbTypeHintOf(record);
 
   if (hint) {
-    const match = eligible.find(candidate => candidate.type === hint);
-    return match
-      ? { ok: true, match }
-      : { ok: false, reason: `TMDB 没有返回匹配的${hint === 'movie' ? '电影' : '剧集'}结果` };
+    const matches = eligible.filter(candidate => candidate.type === hint);
+    if (matches.length === 1) return { ok: true, match: matches[0] };
+    if (matches.length > 1) return { ok: false, reason: 'TMDB 返回多个匹配结果，请选择正确条目', candidates: matches };
+    return { ok: false, reason: `TMDB 没有返回匹配的${hint === 'movie' ? '电影' : '剧集'}结果` };
   }
 
-  if (eligible.length !== 1) {
-    return { ok: false, reason: eligible.length === 0 ? 'TMDB 没有返回可用结果' : '媒体类型不明确且 TMDB 返回多个候选' };
-  }
+  if (eligible.length > 1) return { ok: false, reason: '媒体类型不明确，请选择正确的 TMDB 条目', candidates: eligible };
+  if (eligible.length === 0) return { ok: false, reason: 'TMDB 没有返回可用结果' };
   return { ok: true, match: eligible[0] };
 }
 
@@ -128,6 +165,35 @@ export function buildBatchMetadataPatch(
   const updates: UpdateWatchRecord = {};
   const classification = classifyTmdb(detail, tmdbType === 'tv', mediaTypeOf(record));
   const seasonNumber = tmdbType === 'tv' ? seasonNumberOf(record) : null;
+  const targetSeason = seasonNumber == null
+    ? undefined
+    : detail.seasons?.find(season => season.season_number === seasonNumber);
+  const localizedBaseName = detail.name || detail.title;
+  const localizedName = seasonNumber == null
+    ? localizedBaseName
+    : localizedBaseName
+      ? `${localizedBaseName} ${targetSeason?.name || `第 ${seasonNumber} 季`}`
+      : undefined;
+  const originalBaseName = detail.original_name || detail.original_title;
+  const originalName = seasonNumber == null
+    ? originalBaseName
+    : originalBaseName ? `${originalBaseName} Season ${seasonNumber}` : undefined;
+  const releaseDate = targetSeason?.air_date || detail.release_date || detail.first_air_date;
+  const releaseYear = releaseDate?.split('-')[0];
+  const posterPath = targetSeason?.poster_path || detail.poster_path;
+  let platform = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
+  if (classification.originCountry?.split(/[,，]/).map(code => code.trim()).includes('CN')) {
+    platform = undefined;
+  } else {
+    if (platform === 'CBS All Access') platform = 'CBS';
+    if (platform && /^Apple\s*Tv/i.test(platform)) platform = 'Apple TV+';
+  }
+
+  if (isMissingText(record.chineseName) && localizedName?.trim()) updates.chineseName = localizedName.trim();
+  if (isMissingText(record.originalName) && originalName?.trim()) updates.originalName = originalName.trim();
+  if (isMissingText(record.releaseYear) && /^\d{4}$/.test(releaseYear ?? '')) updates.releaseYear = releaseYear;
+  if (isMissingText(record.posterPath) && posterPath?.trim()) updates.posterPath = posterPath.trim();
+  if (isMissingText(record.platform) && platform?.trim()) updates.platform = platform.trim();
 
   if (isMissingText(record.genres) && !isMissingText(classification.genres)) {
     updates.genres = classification.genres;
@@ -175,12 +241,15 @@ export function retainMissingMetadataPatch(
   planned: UpdateWatchRecord,
 ): BatchMetadataPatch {
   const updates: UpdateWatchRecord = {};
-  const textFields = ['genres', 'originCountry', 'contentTags', 'tmdbStatus'] as const;
+  const textFields = [
+    'chineseName', 'originalName', 'releaseYear', 'posterPath', 'platform',
+    'genres', 'originCountry', 'contentTags', 'tmdbStatus',
+  ] as const;
   const numberFields = ['imdbRating', 'movieDuration', 'episodeRuntime', 'totalEpisodes'] as const;
 
   for (const field of textFields) {
     const value = planned[field];
-    if (isMissingText(current[field]) && !isMissingText(value)) updates[field] = value;
+    if (isMissingText(current[field]) && typeof value === 'string' && value.trim()) updates[field] = value;
   }
   for (const field of numberFields) {
     const value = planned[field];
@@ -191,6 +260,86 @@ export function retainMissingMetadataPatch(
     updates,
     fields: Object.keys(updates) as BatchMetadataField[],
     seasonNumber: seasonNumberOf(current),
+  };
+}
+
+export function selectBatchMetadataPatch(
+  patch: BatchMetadataPatch,
+  allowedFields: ReadonlySet<BatchMetadataField>,
+): BatchMetadataPatch {
+  const updates: UpdateWatchRecord = {};
+  for (const field of patch.fields) {
+    if (allowedFields.has(field)) Object.assign(updates, { [field]: patch.updates[field] });
+  }
+  return { updates, fields: Object.keys(updates) as BatchMetadataField[], seasonNumber: patch.seasonNumber };
+}
+
+export function parseBatchMetadataNoDataState(raw: string | null | undefined): BatchMetadataNoDataState {
+  if (!raw) return structuredClone(EMPTY_NO_DATA_STATE);
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || (value as { version?: unknown }).version !== 1) {
+      return structuredClone(EMPTY_NO_DATA_STATE);
+    }
+    const rawRecords = (value as { records?: unknown }).records;
+    if (!rawRecords || typeof rawRecords !== 'object' || Array.isArray(rawRecords)) {
+      return structuredClone(EMPTY_NO_DATA_STATE);
+    }
+    const records: Record<string, BatchMetadataNoDataEntry> = {};
+    for (const [id, entry] of Object.entries(rawRecords)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const candidate = entry as Partial<BatchMetadataNoDataEntry>;
+      if (typeof candidate.imdbId !== 'string' || !Array.isArray(candidate.fields)) continue;
+      const fields = candidate.fields.filter((field): field is BatchMetadataField => (
+        typeof field === 'string' && Object.hasOwn(BATCH_METADATA_FIELD_LABELS, field)
+      ));
+      records[id] = {
+        imdbId: candidate.imdbId,
+        fields: [...new Set(fields)],
+        checkedAt: typeof candidate.checkedAt === 'string' ? candidate.checkedAt : '',
+      };
+    }
+    return { version: 1, records };
+  } catch {
+    return structuredClone(EMPTY_NO_DATA_STATE);
+  }
+}
+
+export function noDataFieldsForRecord(
+  state: BatchMetadataNoDataState,
+  record: WatchRecord,
+): Set<BatchMetadataField> {
+  const entry = state.records[record.id];
+  if (!entry || entry.imdbId !== record.imdbId?.trim()) return new Set();
+  return new Set(entry.fields);
+}
+
+export function recordNoDataFields(
+  state: BatchMetadataNoDataState,
+  record: WatchRecord,
+  fields: readonly BatchMetadataField[],
+  checkedAt = new Date().toISOString(),
+): BatchMetadataNoDataState {
+  if (!record.imdbId?.trim() || fields.length === 0) return state;
+  const existing = noDataFieldsForRecord(state, record);
+  for (const field of fields) existing.add(field);
+  return {
+    version: 1,
+    records: {
+      ...state.records,
+      [record.id]: { imdbId: record.imdbId.trim(), fields: [...existing], checkedAt },
+    },
+  };
+}
+
+export function pruneBatchMetadataNoDataState(
+  state: BatchMetadataNoDataState,
+  records: readonly WatchRecord[],
+): BatchMetadataNoDataState {
+  const active = new Map(records.map(record => [record.id, record.imdbId?.trim()]));
+  return {
+    version: 1,
+    records: Object.fromEntries(Object.entries(state.records).filter(([id, entry]) => active.get(id) === entry.imdbId)),
   };
 }
 

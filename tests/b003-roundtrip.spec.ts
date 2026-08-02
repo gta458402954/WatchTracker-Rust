@@ -83,6 +83,63 @@ test('@expected-settings-modal batch metadata previews and only fills missing mo
   expect(snapshot.records[0].contentTags).toBe('美国,律政,自定义');
 });
 
+test('@expected-settings-modal multiple TMDB matches require an explicit user choice', async ({ page }) => {
+  const original = record('多候选记录', { imdbId: 'tt-multiple' });
+  await setupMockIpc(page, {
+    records: [original],
+    settings: { tmdb_api_key: 'encrypted:test-key' },
+    tmdbSearchResults: [
+      { id: 701, title: '候选一', release_date: '2023-01-01', media_type: 'movie' },
+      { id: 702, title: '候选二', release_date: '2024-01-01', media_type: 'movie' },
+    ],
+    tmdbDetail: { id: 702, title: '候选二', runtime: 95 },
+  });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  const preview = page.getByLabel('元数据补全预览');
+  await expect(preview).toContainText('待选择');
+  await expect(preview.getByRole('button', { name: '确认写入 0 条' })).toBeDisabled();
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'get_tmdb_detail')).toHaveLength(0);
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'update_record')).toHaveLength(0);
+
+  await preview.getByRole('button', { name: /候选二.*2024.*电影.*#702/ }).click();
+  await expect(preview).toContainText('可更新');
+  await expect(preview).toContainText('movie:702:series');
+  await preview.getByRole('button', { name: '确认写入 1 条' }).click();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'get_tmdb_detail')).toHaveLength(1);
+  expect(snapshot.calls.filter(call => call.command === 'update_record')).toHaveLength(1);
+});
+
+test('@expected-settings-modal remembered TMDB no-data fields are not queried again', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [record('无数据记忆', { imdbId: 'tt-no-data-memory' })],
+    settings: { tmdb_api_key: 'encrypted:test-key' },
+    tmdbSearchResults: [{ id: 801, title: '无数据记忆', media_type: 'movie' }],
+    tmdbDetail: { id: 801, title: '无数据记忆', runtime: 100 },
+  });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  const preview = page.getByLabel('元数据补全预览');
+  await expect(preview).toContainText('TMDB 无数据');
+  await preview.getByRole('button', { name: '确认写入 1 条' }).click();
+  await expect(page.getByText(/补全结束：已更新 1 条/)).toBeVisible();
+  const firstSearchCount = (await mockSnapshot(page)).calls.filter(call => call.command === 'search_tmdb').length;
+
+  await page.getByRole('button', { name: /分析并预览缺失字段/ }).click();
+  await expect(page.getByText(/缺失字段已确认 TMDB 无数据/)).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'search_tmdb')).toHaveLength(firstSearchCount);
+  expect(JSON.parse(snapshot.settings.batch_metadata_no_data_v1!)).toMatchObject({
+    version: 1,
+    records: { '无数据记忆': { imdbId: 'tt-no-data-memory' } },
+  });
+});
+
 test('@expected-settings-modal shared IMDb seasons keep distinct episode totals', async ({ page }) => {
   const first = record('第一季', {
     originalName: 'Example Season 1', imdbId: 'tt-shared-series', mediaType: '剧集', contentTags: '自定义',

@@ -4,9 +4,15 @@ import { describe, test } from 'node:test';
 import {
   buildBatchMetadataPatch,
   isBatchMetadataCandidate,
+  missingBatchMetadataFields,
+  noDataFieldsForRecord,
+  parseBatchMetadataNoDataState,
+  pruneBatchMetadataNoDataState,
+  recordNoDataFields,
   retainMissingMetadataPatch,
   remoteIdentityKey,
   seasonNumberOf,
+  selectBatchMetadataPatch,
   selectTmdbMatch,
   tmdbTypeHintOf,
 } from '../batchMetadata.ts';
@@ -44,9 +50,19 @@ describe('batch metadata identity', () => {
       ok: false, reason: 'TMDB 没有返回匹配的电影结果',
     });
     const animation = record({ mediaType: '动画' });
-    assert.equal(selectTmdbMatch(animation, [
+    const ambiguous = selectTmdbMatch(animation, [
       { id: 10, media_type: 'movie' }, { id: 11, media_type: 'tv' },
-    ]).ok, false);
+    ]);
+    assert.equal(ambiguous.ok, false);
+    assert.deepEqual(ambiguous.candidates, [{ id: 10, type: 'movie' }, { id: 11, type: 'tv' }]);
+  });
+
+  test('requires a user choice instead of silently taking the first same-type match', () => {
+    const result = selectTmdbMatch(record(), [
+      { id: 20, media_type: 'movie' }, { id: 21, media_type: 'movie' },
+    ]);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.candidates, [{ id: 20, type: 'movie' }, { id: 21, type: 'movie' }]);
   });
 });
 
@@ -93,6 +109,19 @@ describe('field-level safe patch', () => {
     assert.deepEqual(patch.updates, {});
   });
 
+  test('fills every supported missing field supplied by TMDB', () => {
+    const patch = buildBatchMetadataPatch(record({ chineseName: '', originalName: '' }), {
+      title: '中文名', original_title: 'Original', release_date: '2024-06-01', poster_path: '/poster.jpg',
+      production_companies: [{ name: 'Apple Tv' }], runtime: 101, vote_average: 7.4,
+      status: 'Released', genres: [{ name: 'Drama' }], production_countries: [{ iso_3166_1: 'US' }],
+    }, 'movie');
+    assert.deepEqual(patch.updates, {
+      chineseName: '中文名', originalName: 'Original', releaseYear: '2024', posterPath: '/poster.jpg',
+      platform: 'Apple TV+', genres: 'Drama', originCountry: 'US', contentTags: '美国',
+      imdbRating: 7.4, tmdbStatus: 'Released', movieDuration: 6060,
+    });
+  });
+
   test('revalidates missing fields at write time so preview cannot overwrite a later edit', () => {
     const current = record({ genres: '用户刚刚填写', movieDuration: null });
     const retained = retainMissingMetadataPatch(current, { genres: 'Remote', movieDuration: 7200 });
@@ -103,8 +132,35 @@ describe('field-level safe patch', () => {
     assert.equal(isBatchMetadataCandidate(record({ isLocked: true })), false);
     assert.equal(isBatchMetadataCandidate(record({ imdbId: null })), false);
     assert.equal(isBatchMetadataCandidate(record({
+      releaseYear: '2024', posterPath: '/poster.jpg', platform: 'Netflix',
       genres: 'Drama', originCountry: 'US', contentTags: '美国', imdbRating: 8,
       tmdbStatus: 'Released', movieDuration: 6000,
     })), false);
+  });
+});
+
+describe('persistent TMDB no-data state', () => {
+  test('skips remembered fields for the same IMDb id and invalidates them when IMDb changes', () => {
+    const item = record();
+    const state = recordNoDataFields(parseBatchMetadataNoDataState(null), item, missingBatchMetadataFields(item));
+    const remembered = noDataFieldsForRecord(state, item);
+    assert.equal(isBatchMetadataCandidate(item, remembered), false);
+    assert.deepEqual([...noDataFieldsForRecord(state, record({ imdbId: 'tt999' }))], []);
+    assert.equal(isBatchMetadataCandidate(record({ imdbId: 'tt999' }), noDataFieldsForRecord(state, record({ imdbId: 'tt999' }))), true);
+  });
+
+  test('parses corrupt state safely and prunes deleted or changed records', () => {
+    assert.deepEqual(parseBatchMetadataNoDataState('{broken'), { version: 1, records: {} });
+    const first = record();
+    const state = recordNoDataFields(parseBatchMetadataNoDataState(null), first, ['posterPath'], '2026-01-01T00:00:00Z');
+    assert.deepEqual(pruneBatchMetadataNoDataState(state, [record({ imdbId: 'tt999' })]), { version: 1, records: {} });
+  });
+
+  test('filters remembered no-data fields out of an otherwise valid patch', () => {
+    const patch = buildBatchMetadataPatch(record(), {
+      release_date: '2024-01-01', poster_path: '/poster.jpg', runtime: 90,
+    }, 'movie');
+    const selected = selectBatchMetadataPatch(patch, new Set(['releaseYear', 'movieDuration']));
+    assert.deepEqual(selected.updates, { releaseYear: '2024', movieDuration: 5400 });
   });
 });

@@ -1510,9 +1510,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Status: IMPLEMENTED
 - Priority: R0
 - Business Source: `.agent-work/REQUEST.md` 9.3
-- Scope: 批量补全预览、电影/剧集/具体季识别、字段级安全补丁、逐条结果、取消/重试和同步一致性。
-- Implementation: `batchMetadata.ts` 负责类型/季身份、TMDB 匹配、字段级补丁和写入前二次缺失检查；Settings 提供预览确认、安全停止、逐条结果和失败重试；写入统一调用 `useWatchList.updateRecord`。
-- Acceptance: Node 纯函数覆盖无覆盖、电影/剧集/季、远端空值、类型错配和共享 IMDb；Playwright mock 覆盖预览零写入、多季不同集数、部分失败重试、取消零写入、多国家/自定义标签及自动同步调度。
+- Scope: TMDB 全支持字段补缺、批量预览、电影/剧集/具体季识别、多候选人工选择、无数据字段持久记忆、逐条结果、取消/重试和同步一致性。
+- Implementation: `batchMetadata.ts` 负责类型/季身份、TMDB 匹配、字段级补丁、写入前二次缺失检查，以及按记录 ID、IMDb ID 和字段保存的无数据状态；Settings 对多个候选要求用户选择，提供预览确认、安全停止、逐条结果和失败重试；写入统一调用 `useWatchList.updateRecord`。无数据状态使用 V18 `settings.batch_metadata_no_data_v1`，IMDb 变化时失效。
+- Acceptance: Node 纯函数覆盖全支持字段、无覆盖、电影/剧集/季、远端空值、类型错配、多候选和无数据状态失效；Playwright mock 覆盖预览零写入、候选选择前零详情/零写入、无数据字段不重复请求、多季不同集数、部分失败重试、取消零写入、多国家/自定义标签及自动同步调度。
 - Safety: 自动化仅使用 Tauri IPC mock；实现和验证未读取或写入真实便携版数据库。
 
 ### TASK-D-DATA-002：V18/V19 兼容与领域约束加固
