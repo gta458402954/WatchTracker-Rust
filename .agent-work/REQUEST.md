@@ -282,7 +282,7 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 | R0 | 同步可靠性 | `TASK-D-SYNC-002` | 持久化 outbox 与主动拉取 | IMPLEMENTED | 已实现单槽 generation 高水位 outbox、原子确认、跨重启暂停/补跑、启动/聚焦/网络恢复/周期主动拉取、持久退避和状态展示；保持 V18 |
 | R0 | 同步隔离 | `TASK-D-SYNC-003` | WebDAV 目标隔离与安全切换 | NEEDS-DESIGN | 当前 URL、凭据和同步设置是全局 setting；目标切换流程及未来 baseline/ETag/outbox 命名空间尚未设计 |
 | R0 | 凭据安全 | `TASK-D-SEC-001` | Windows 凭据保护与旧格式迁移 | IMPLEMENTED | 已接入当前 Windows 用户 Credential Manager，V18 仅保留引用；旧格式逐项迁移，已保存秘密不再往返 React，换机后明确要求重输 |
-| R1 | 观看历史 | `TASK-D-HISTORY-001` | 逐集完成时间与完结状态 | SPECIFIED | 已有自由文本 `progress` 和 `totalEpisodes`；现行 schema 没有逐集事件表，需要新模型、migration、同步和三态语义 |
+| R1 | 观看历史 | `TASK-D-HISTORY-001` | 逐集完成时间与完结状态 | DRAFT | 专项设计已形成：V18 功能迁移、独立启用状态、逐集事件表、原子推进、导入导出及同步 V4，等待确认后实施 |
 | R1 | 内容发现 | `TASK-D-DISCOVERY-001` | “今晚看什么”队列 | NEEDS-DESIGN | 已有未看状态、兴趣等级、评分、题材、平台和待看价值；尚无可解释排序、排除规则或持久队列 |
 | R1 | 数据交换 | `TASK-D-IMPORT-001` | Trakt 专项导入导出 | NEEDS-DESIGN | 已有通用 JSON 导入导出和清洗；尚无 Trakt schema、身份匹配、重复处理和往返测试 |
 | R1 | 网络安全 | `TASK-D-NET-001` | 网络响应与海报缓存安全 | NEEDS-DESIGN | 已有限定海报目录、共享请求入口和基本状态检查；下载仍直接写目标文件，缺少响应大小/MIME 限制、临时文件原子落盘、容量和孤立文件清理 |

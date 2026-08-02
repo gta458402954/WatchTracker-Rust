@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2` 与 `TASK-D-SEC-001` 已实现，剩余为 1 个 `SPECIFIED`、10 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2` 与 `TASK-D-SEC-001` 已实现，剩余为 1 个 `DRAFT`、10 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1493,7 +1493,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-SYNC-001-R2` | R0 | 同步恢复与增量落盘 | IMPLEMENTED | 版本暂存、发布意图与伪冲突修复 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | IMPLEMENTED | R0 WebDAV 目标隔离、安全切换与 V18 迁移已实现 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | IMPLEMENTED | Windows Credential Manager、逐项迁移和 IPC 收紧已完成 |
-| `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
+| `TASK-D-HISTORY-001` | R1 | 观看历史 | DRAFT | 逐集完成时间专项设计待确认 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | NEEDS-DESIGN | R1 今晚看什么 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | R1 Trakt |
 | `TASK-D-NET-001` | R1 | 网络安全 | NEEDS-DESIGN | R1 网络/海报安全 |
@@ -1643,14 +1643,17 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-HISTORY-001：逐集完成时间与完结状态
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: SPECIFIED
+- Phase: DESIGN
+- Owner: Codex
+- Status: DRAFT
 - Priority: R1
 - Business Source: `.agent-work/REQUEST.md` 9.5
 - Scope: 下一集语义、单集完成三态、跳集空时间、最后一集完结、幂等历史、旧进度兼容、migration、导入导出与同步边界。
 - Required Design: `records.nextEpisode` 与独立 `episode_completions`；下一集更新和完成事件同事务；旧 `progress` 不自动推断；回退不删除历史。
 - First-Version Boundary: 下一集选择、三态、跳集、完结和旧数据显式启用；不含观看时长、批量补历史、跨季聚合和历史编辑。
+- Draft Design: `docs/EPISODE_HISTORY_DESIGN.md`。推荐增加 `episodeTrackingEnabled + nextEpisode` 消除未启用/已完结的 NULL 歧义，并新增 `episode_completions`。数据库主版本保持 V18，使用独立功能 marker 幂等迁移；旧 `progress` 原样保留。
+- Atomic/Sync Boundary: 启用、推进、跳集、完结和后退均使用目的限定 Rust transaction，同步更新完成事件、record revision、generation、staging 和 outbox。WebDAV payload 升级到 V4；V3 可读，首次 V4 PUT 需确认，旧客户端遇到 V4 安全停止。
+- Pending Confirmation: 确认独立启用字段、V18 功能迁移而非主版本升级，以及同步 V4/旧客户端停止同步三项推荐边界后转 READY。
 
 ### TASK-D-DISCOVERY-001：“今晚看什么”队列
 
