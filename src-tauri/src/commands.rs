@@ -1,25 +1,39 @@
 use crate::app_paths::AppPaths;
-use crate::db::{self, DbState};
+use crate::db::{self, DatabaseCompatibilityIssue, DbState};
 use crate::models::{UpdateWatchRecord, WatchRecord};
 use crate::{auth, net};
 use serde_json::Value;
 use tauri::State;
 
-#[tauri::command]
-pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate::error::AppError> {
-    let conn = state
+fn lock_database(
+    state: &DbState,
+) -> Result<std::sync::MutexGuard<'_, rusqlite::Connection>, crate::error::AppError> {
+    if let Some(issue) = &state.compatibility_issue {
+        return Err(crate::error::AppError::General(format!(
+            "database_compatibility:{}:V{}:V{}",
+            issue.code, issue.detected_version, issue.supported_version,
+        )));
+    }
+    state
         .conn
         .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+        .map_err(|error| crate::error::AppError::ConcurrencyError(error.to_string()))
+}
+
+#[tauri::command]
+pub fn get_database_compatibility(state: State<DbState>) -> Option<DatabaseCompatibilityIssue> {
+    state.compatibility_issue.clone()
+}
+
+#[tauri::command]
+pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
     Ok(db::get_all_records(&conn)?)
 }
 
 #[tauri::command]
 pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), crate::error::AppError> {
-    let mut conn = state
-        .conn
-        .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let mut conn = lock_database(state.inner())?;
     crate::db_atomic_crud::insert_record_atomic(&mut conn, r)
 }
 
@@ -31,10 +45,7 @@ pub fn update_record(
     actor_id: Option<String>,
 ) -> Result<WatchRecord, crate::error::AppError> {
     log::info!("[Commands] update_record called for id: {}", id);
-    let mut conn = state
-        .conn
-        .lock()
-        .map_err(|error| crate::error::AppError::ConcurrencyError(error.to_string()))?;
+    let mut conn = lock_database(state.inner())?;
     crate::db_atomic_update::update_record_atomic(
         &mut conn,
         &id,
@@ -45,10 +56,7 @@ pub fn update_record(
 
 #[tauri::command]
 pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
-    let mut conn = state
-        .conn
-        .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let mut conn = lock_database(state.inner())?;
     crate::db_atomic_crud::delete_record_atomic(&mut conn, &id)
 }
 
@@ -57,19 +65,13 @@ pub fn replace_all_records(
     state: State<DbState>,
     records: Vec<WatchRecord>,
 ) -> Result<(), crate::error::AppError> {
-    let mut conn = state
-        .conn
-        .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let mut conn = lock_database(state.inner())?;
     crate::db_atomic_crud::replace_all_records_atomic(&mut conn, records)
 }
 
 #[tauri::command]
 pub fn vacuum_db(state: State<DbState>) -> Result<(), crate::error::AppError> {
-    let conn = state
-        .conn
-        .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let conn = lock_database(state.inner())?;
     Ok(db::vacuum_db(&conn)?)
 }
 
@@ -78,10 +80,7 @@ pub fn get_setting(
     state: State<DbState>,
     key: String,
 ) -> Result<Option<String>, crate::error::AppError> {
-    let conn = state
-        .conn
-        .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let conn = lock_database(state.inner())?;
     Ok(db::get_setting(&conn, key)?)
 }
 
@@ -91,10 +90,7 @@ pub fn set_setting(
     key: String,
     value: String,
 ) -> Result<(), crate::error::AppError> {
-    let conn = state
-        .conn
-        .lock()
-        .map_err(|e| crate::error::AppError::ConcurrencyError(e.to_string()))?;
+    let conn = lock_database(state.inner())?;
     Ok(db::set_setting(&conn, key, value)?)
 }
 

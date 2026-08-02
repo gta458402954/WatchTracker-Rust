@@ -111,6 +111,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_all_records,
+            commands::get_database_compatibility,
             commands::insert_record,
             commands::update_record,
             commands::delete_record,

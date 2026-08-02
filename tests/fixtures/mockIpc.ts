@@ -11,6 +11,11 @@ export interface MockIpcOptions {
   tmdbDelayMs?: number;
   updateFailureCounts?: Record<string, number>;
   webdavRemote?: unknown;
+  databaseCompatibilityIssue?: {
+    code: 'unsupported_newer_database' | 'v19_downgrade_failed';
+    detectedVersion: number;
+    supportedVersion: number;
+  } | null;
 }
 
 export interface MockSnapshot {
@@ -31,7 +36,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, databaseCompatibilityIssue }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const snapshot: MockSnapshot = {
         calls: [],
@@ -63,6 +68,9 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'get_setting':
               requireKeys(command, args, ['key']);
               return snapshot.settings[args.key as string] ?? null;
+            case 'get_database_compatibility':
+              requireKeys(command, args, []);
+              return structuredClone(databaseCompatibilityIssue);
             case 'get_all_records':
               requireKeys(command, args, []);
               if (snapshot.failRecordLoads) {
@@ -144,6 +152,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       tmdbDelayMs: options.tmdbDelayMs ?? 0,
       updateFailureCounts: options.updateFailureCounts ?? {},
       webdavRemote: options.webdavRemote ?? [],
+      databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,
     },
   );
 }

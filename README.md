@@ -16,6 +16,7 @@ WatchTracker 是一款基于 React、TypeScript、Rust 和 Tauri 2 的 Windows �
 - 当前权威源码为本仓库 `main`；正式便携版的精确构建提交号显示在应用顶部栏。
 - 前端记录状态使用 `src/features/watchlist/hooks/useWatchList.ts`；当前没有引入 Zustand。
 - SQLite schema 为 V18，records 表使用 camelCase 列名。
+- 已知 V19 数据库会先在 `backups/` 创建并校验快照，再事务化转换回 V18；V20 及更高未知版本会明确拒绝且不修改数据库。
 - WebDAV 使用 schema v2、时间戳合并和简单 Tombstone；ETag、`expectedGeneration`、原子 `SyncCommit`、持久化 outbox 和主动拉取仍属于路线图。
 - 本地 CRUD/全量替换已通过 Rust/SQLite 事务维护记录、Tombstone 和 `records_generation`。
 

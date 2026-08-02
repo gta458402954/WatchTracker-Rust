@@ -270,12 +270,12 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 
 > 本节记录后续迭代方向。优先级表示后续排期顺序，不改变本次地区重构的范围与完成定义。每项功能开始开发前，应单独完成数据模型、交互、兼容策略、测试范围和完成定义。
 
-> 2026-08-02 已按当前 `main` 实现重新审计。每个方向对应一个独立 `TASK-D-*`；“当前状态”使用 `IMPLEMENTED`（已实现并通过本地验收）、`SPECIFIED`（已有专项业务规则）或 `NEEDS-DESIGN`（方向已确认但仍需专项设计）。
+> 2026-08-02 已按当前 `main` 实现重新审计。每个方向对应一个独立 `TASK-D-*`；“当前状态”使用 `IMPLEMENTED`（已实现并通过本地验收）、`PARTIALLY_IMPLEMENTED`（已交付一部分边界、其余仍需设计）、`SPECIFIED`（已有专项业务规则）或 `NEEDS-DESIGN`（方向已确认但仍需专项设计）。
 
 | 优先级 | 分类 | 任务 | 功能 | 当前状态 | 当前实现基础与主要缺口 |
 | --- | --- | --- | --- | --- | --- |
 | R0 | 数据安全 | `TASK-D-DATA-001` | “一键补全缺失元数据”安全重构 | IMPLEMENTED | 已实现 TMDB 全支持字段补缺、具体季身份、多候选人工选择、无数据字段持久记忆、写入预览、二次缺失检查、取消/重试、逐条结果和正常 action/自动同步接线；不覆盖已有字段 |
-| R0 | 数据完整性 | `TASK-D-DATA-002` | V18/V19 兼容与领域约束加固 | NEEDS-DESIGN | 当前 V18 camelCase schema 和原子 CRUD 已稳定；不能读取 V19，且 legacy 全量写入、导入与 Rust 边界仍需统一领域校验和明确 UPSERT 语义 |
+| R0 | 数据完整性 | `TASK-D-DATA-002` | V18/V19 兼容与领域约束加固 | PARTIALLY_IMPLEMENTED | 已实现 V19 经校验备份后事务化转换回 V18、转换失败回滚/阻止读写、V20+ 零修改拒绝及一次性成功提示；legacy records 写入、导入与 Rust 边界仍需统一领域校验和明确 UPSERT 语义 |
 | R0 | 数据恢复 | `TASK-D-DATA-003` | 高风险操作自动恢复点 | NEEDS-DESIGN | 已有统一 `backups/` 路径和手动 JSON 导入导出；导入、同步、migration 与批量写入前尚不会自动创建、验证和轮转恢复点 |
 | R0 | 同步一致性 | `TASK-D-SYNC-001` | 同步冲突、版本域与条件提交 | NEEDS-DESIGN | 当前 schema v2 支持时间戳合并、Tombstone 和冲突历史；没有 Lamport/版本域、ETag 条件写入、`expectedGeneration` 或原子 SyncCommit |
 | R0 | 同步可靠性 | `TASK-D-SYNC-002` | 持久化 outbox 与主动拉取 | NEEDS-DESIGN | 当前自动同步是写入后触发的内存 debounce；异常退出会丢失待同步意图，也没有启动、窗口聚焦或周期主动拉取 |

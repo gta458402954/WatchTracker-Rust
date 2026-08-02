@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState, useMemo, useEffect } from 'react';
+import { lazy, Suspense, useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { WatchRecord, MediaType, Status } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
@@ -21,6 +21,12 @@ import PosterWall from '../features/watchlist/components/PosterWall';
 
 type FilterStatus = Status | 'all';
 type InitializationState = 'loading' | 'ready' | 'error';
+
+interface DatabaseCompatibilityIssue {
+  code: 'unsupported_newer_database' | 'v19_downgrade_failed';
+  detectedVersion: number;
+  supportedVersion: number;
+}
 
 const Dashboard = lazy(() => import('../features/dashboard/components/Dashboard'));
 
@@ -53,12 +59,21 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string>('');
   const [initializationState, setInitializationState] = useState<InitializationState>('loading');
+  const [databaseCompatibilityIssue, setDatabaseCompatibilityIssue] = useState<DatabaseCompatibilityIssue | null>(null);
+  const migrationNoticeShownRef = useRef(false);
   const [viewMode, setViewMode] = useState<'list' | 'poster'>('list');
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [hasWebDAVCreds, setHasWebDAVCreds] = useState(false);
 
   const loadInitialState = useCallback(async () => {
     try {
+      const compatibilityIssue = await invoke<DatabaseCompatibilityIssue | null>('get_database_compatibility');
+      if (compatibilityIssue) {
+        setDatabaseCompatibilityIssue(compatibilityIssue);
+        setInitializationState('error');
+        return;
+      }
+      setDatabaseCompatibilityIssue(null);
       const result = await initializeApp({
         readCredentials: hasCreds,
         readSyncInterval: () => invoke<string | null>('get_setting', { key: 'sync_interval' }),
@@ -67,11 +82,21 @@ export default function App() {
       setHasWebDAVCreds(result.hasWebDAVCredentials);
       setSyncInterval(result.syncInterval);
       setInitializationState('ready');
+      try {
+        const migrationNotice = await invoke<string | null>('get_setting', { key: 'database_migration_notice' });
+        if (migrationNotice === 'v19_to_v18' && !migrationNoticeShownRef.current) {
+          migrationNoticeShownRef.current = true;
+          notify('success', '数据库已安全从 V19 转换为 V18，转换前备份已保存在 backups 目录。');
+          await invoke('set_setting', { key: 'database_migration_notice', value: '' });
+        }
+      } catch (noticeError) {
+        reportOperationFailure('App.DatabaseMigrationNotice', noticeError);
+      }
     } catch (error) {
       reportOperationFailure('App.Initialize', error);
       setInitializationState('error');
     }
-  }, [loadRecords]);
+  }, [loadRecords, notify]);
 
   const retryInitialization = useCallback(() => {
     setInitializationState('loading');
@@ -340,8 +365,16 @@ export default function App() {
         ) : initializationState === 'error' ? (
           <div className="mx-auto mt-16 max-w-lg rounded-3xl border border-red-100 bg-white p-8 text-center shadow-sm" role="alert">
             <span className="mb-4 block text-5xl" aria-hidden="true">⚠️</span>
-            <h1 className="text-xl font-black text-gray-900">无法读取本地数据</h1>
-            <p className="mt-2 text-sm leading-6 text-gray-500">当前列表没有被当作空数据处理。请确认数据目录可用后重试。</p>
+            <h1 className="text-xl font-black text-gray-900">
+              {databaseCompatibilityIssue ? '数据库版本不兼容' : '无法读取本地数据'}
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-gray-500">
+              {databaseCompatibilityIssue?.code === 'unsupported_newer_database'
+                ? `检测到 V${databaseCompatibilityIssue.detectedVersion} 数据库；当前程序使用 V${databaseCompatibilityIssue.supportedVersion}，只支持自动转换已知的 V19。该数据库未被修改。`
+                : databaseCompatibilityIssue?.code === 'v19_downgrade_failed'
+                  ? 'V19 数据库自动转换失败，原迁移事务已回滚。请保留 data 和 backups 目录并检查日志。'
+                  : '当前列表没有被当作空数据处理。请确认数据目录可用后重试。'}
+            </p>
             <button
               type="button"
               onClick={retryInitialization}

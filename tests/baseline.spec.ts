@@ -30,6 +30,49 @@ test('initialization failure shows an error, not empty data, and retry recovers'
   expect(snapshot.calls.filter(({ command }) => command === 'get_all_records').length).toBeGreaterThanOrEqual(2);
 });
 
+test('V20 database is explicitly rejected without attempting record or setting reads', async ({ page }) => {
+  await setupMockIpc(page, {
+    databaseCompatibilityIssue: {
+      code: 'unsupported_newer_database', detectedVersion: 20, supportedVersion: 18,
+    },
+  });
+  await page.goto('/');
+
+  await expect(page.getByRole('alert')).toContainText('数据库版本不兼容');
+  await expect(page.getByRole('alert')).toContainText('检测到 V20 数据库');
+  await expect(page.getByRole('alert')).toContainText('该数据库未被修改');
+  const calls = (await mockSnapshot(page)).calls.map(call => call.command);
+  expect(calls).toContain('get_database_compatibility');
+  expect(calls).not.toContain('get_all_records');
+  expect(calls).not.toContain('get_setting');
+});
+
+test('failed V19 downgrade reports rollback guidance and blocks reads', async ({ page }) => {
+  await setupMockIpc(page, {
+    databaseCompatibilityIssue: {
+      code: 'v19_downgrade_failed', detectedVersion: 19, supportedVersion: 18,
+    },
+  });
+  await page.goto('/');
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText('V19 数据库自动转换失败');
+  await expect(alert).toContainText('原迁移事务已回滚');
+  const calls = (await mockSnapshot(page)).calls.map(call => call.command);
+  expect(calls).not.toContain('get_all_records');
+  expect(calls).not.toContain('get_setting');
+});
+
+test('successful V19 downgrade notice is shown once and then cleared', async ({ page }) => {
+  await setupMockIpc(page, {
+    settings: { database_migration_notice: 'v19_to_v18' },
+  });
+  await page.goto('/');
+
+  await expect(page.getByRole('status')).toContainText('数据库已安全从 V19 转换为 V18');
+  await expect.poll(async () => (await mockSnapshot(page)).settings.database_migration_notice).toBe('');
+});
+
 test('current IPC DTO supports create, update, and delete without permissive fallbacks', async ({ page }) => {
   await setupMockIpc(page);
   await page.goto('/');

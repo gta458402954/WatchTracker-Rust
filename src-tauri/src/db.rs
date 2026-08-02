@@ -1,10 +1,48 @@
 use crate::app_paths::AppPaths;
 use crate::models::WatchRecord;
-use rusqlite::{params, Connection, OptionalExtension, Result, Row};
+use rusqlite::{params, Connection, DatabaseName, OpenFlags, OptionalExtension, Result, Row};
+use serde::Serialize;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+pub const CURRENT_DB_VERSION: i32 = 18;
+const KNOWN_DOWNGRADE_VERSION: i32 = 19;
+
+const V19_COLUMN_RENAMES: [(&str, &str); 21] = [
+    ("originalName", "original_name"),
+    ("chineseName", "chinese_name"),
+    ("totalEpisodes", "total_episodes"),
+    ("movieProgress", "movie_progress"),
+    ("movieDuration", "movie_duration"),
+    ("releaseYear", "release_year"),
+    ("posterPath", "poster_path"),
+    ("startDate", "start_date"),
+    ("endDate", "end_date"),
+    ("createdAt", "created_at"),
+    ("updatedAt", "updated_at"),
+    ("imdbId", "imdb_id"),
+    ("isLocked", "is_locked"),
+    ("originCountry", "origin_country"),
+    ("imdbRating", "imdb_rating"),
+    ("tmdbStatus", "tmdb_status"),
+    ("interestLevel", "interest_level"),
+    ("episodeRuntime", "episode_runtime"),
+    ("mediaType", "media_type"),
+    ("contentTags", "content_tags"),
+    ("revActor", "rev_actor"),
+];
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseCompatibilityIssue {
+    pub code: String,
+    pub detected_version: i32,
+    pub supported_version: i32,
+}
 
 pub struct DbState {
     pub conn: std::sync::Mutex<Connection>,
+    pub compatibility_issue: Option<DatabaseCompatibilityIssue>,
 }
 
 pub fn init(paths: &AppPaths) -> Result<DbState, String> {
@@ -15,12 +53,159 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
         )
     })?;
 
+    let current_version = existing_db_version(&conn).map_err(|error| error.to_string())?;
+    if current_version > KNOWN_DOWNGRADE_VERSION {
+        log::error!(
+            "Refusing unsupported database version V{}; this build supports V{} and can only downgrade known V19 databases",
+            current_version,
+            CURRENT_DB_VERSION,
+        );
+        return Ok(blocked_state(
+            conn,
+            "unsupported_newer_database",
+            current_version,
+        ));
+    }
+
+    if current_version == KNOWN_DOWNGRADE_VERSION {
+        let backup = match create_verified_v19_backup(&conn, paths.backups()) {
+            Ok(backup) => backup,
+            Err(error) => {
+                log::error!("V19 backup failed before downgrade: {error}");
+                return Ok(blocked_state(conn, "v19_downgrade_failed", current_version));
+            }
+        };
+        if let Err(error) = downgrade_v19_to_v18(&conn) {
+            log::error!(
+                "V19 to V18 downgrade failed and was rolled back; verified backup remains at {}: {error}",
+                backup.display(),
+            );
+            return Ok(blocked_state(conn, "v19_downgrade_failed", current_version));
+        }
+        log::info!(
+            "Database safely downgraded from V19 to V18; verified pre-migration backup: {}",
+            backup.display(),
+        );
+    }
+
     // 初始化表逻辑
     setup_db(&conn).map_err(|e| e.to_string())?;
 
     Ok(DbState {
         conn: std::sync::Mutex::new(conn),
+        compatibility_issue: None,
     })
+}
+
+fn blocked_state(conn: Connection, code: &str, detected_version: i32) -> DbState {
+    DbState {
+        conn: std::sync::Mutex::new(conn),
+        compatibility_issue: Some(DatabaseCompatibilityIssue {
+            code: code.to_string(),
+            detected_version,
+            supported_version: CURRENT_DB_VERSION,
+        }),
+    }
+}
+
+fn existing_db_version(conn: &Connection) -> Result<i32> {
+    let has_settings: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_settings {
+        return Ok(0);
+    }
+    let value = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'db_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(value.and_then(|raw| raw.parse().ok()).unwrap_or(0))
+}
+
+fn record_columns(conn: &Connection) -> Result<HashSet<String>> {
+    let mut statement = conn.prepare("SELECT name FROM pragma_table_info('records')")?;
+    let columns = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<HashSet<_>>>()?;
+    Ok(columns)
+}
+
+fn create_verified_v19_backup(
+    conn: &Connection,
+    backups: &Path,
+) -> std::result::Result<PathBuf, String> {
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
+    let path = backups.join(format!(
+        "watchtracker-pre-v19-to-v18-{timestamp}-{}.db",
+        std::process::id(),
+    ));
+    conn.backup(DatabaseName::Main, &path, None)
+        .map_err(|error| {
+            format!(
+                "Could not create SQLite backup at {}: {error}",
+                path.display()
+            )
+        })?;
+
+    let verification = (|| -> Result<()> {
+        let backup = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let integrity: String = backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" || existing_db_version(&backup)? != KNOWN_DOWNGRADE_VERSION {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        Ok(())
+    })();
+    if let Err(error) = verification {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!("Backup verification failed: {error}"));
+    }
+    Ok(path)
+}
+
+fn downgrade_v19_to_v18(conn: &Connection) -> Result<()> {
+    let columns = record_columns(conn)?;
+    if V19_COLUMN_RENAMES
+        .iter()
+        .any(|(camel, snake)| columns.contains(*camel) || !columns.contains(*snake))
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    let transaction = conn.unchecked_transaction()?;
+    for (camel, snake) in V19_COLUMN_RENAMES {
+        transaction.execute(
+            &format!("ALTER TABLE records RENAME COLUMN {snake} TO {camel}"),
+            [],
+        )?;
+    }
+    let converted_columns = record_columns(&transaction)?;
+    if V19_COLUMN_RENAMES.iter().any(|(camel, snake)| {
+        !converted_columns.contains(*camel) || converted_columns.contains(*snake)
+    }) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    transaction.execute(
+        "INSERT INTO settings (key, value) VALUES ('db_version', ?1) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [CURRENT_DB_VERSION.to_string()],
+    )?;
+    transaction.execute(
+        "INSERT INTO settings (key, value) VALUES ('database_migration_notice', 'v19_to_v18') \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [],
+    )?;
+    let integrity: String =
+        transaction.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 struct Migration {
@@ -29,6 +214,10 @@ struct Migration {
 }
 
 pub(crate) fn setup_db(conn: &Connection) -> Result<()> {
+    let detected_version = existing_db_version(conn)?;
+    if detected_version > CURRENT_DB_VERSION {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);",
         [],
@@ -334,7 +523,8 @@ pub(crate) fn setup_db(conn: &Connection) -> Result<()> {
             let transaction = conn.unchecked_transaction()?;
             (m.up)(&transaction)?;
             transaction.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES ('db_version', ?)",
+                "INSERT INTO settings (key, value) VALUES ('db_version', ?1) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![m.version.to_string()],
             )?;
             transaction.commit()?;
@@ -482,6 +672,63 @@ pub fn get_setting(conn: &Connection, key: String) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_VERSION_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct VersionTestRoot(PathBuf);
+
+    impl VersionTestRoot {
+        fn new(name: &str) -> (Self, AppPaths) {
+            let id = NEXT_VERSION_TEST_ID.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "watchtracker-version-{}-{name}-{id}",
+                std::process::id(),
+            ));
+            let executable_dir = root.join("bin");
+            std::fs::create_dir_all(executable_dir.join("data"))
+                .expect("create portable test data directory");
+            let paths = AppPaths::resolve_from(
+                Some(&executable_dir.join("app.exe")),
+                &root.join("app-data"),
+            )
+            .expect("resolve test paths");
+            (Self(root), paths)
+        }
+    }
+
+    impl Drop for VersionTestRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn seed_v19_database(paths: &AppPaths, fail_downgrade: bool) {
+        let conn = Connection::open(paths.database()).expect("open V19 fixture");
+        setup_db(&conn).expect("create V18 fixture");
+        insert_record(&conn, record("v19-record", "V19 保留记录", false))
+            .expect("insert V19 fixture record");
+        for (camel, snake) in V19_COLUMN_RENAMES {
+            conn.execute(
+                &format!("ALTER TABLE records RENAME COLUMN {camel} TO {snake}"),
+                [],
+            )
+            .expect("rename fixture column to V19");
+        }
+        conn.execute(
+            "UPDATE settings SET value = '19' WHERE key = 'db_version'",
+            [],
+        )
+        .expect("mark fixture as V19");
+        if fail_downgrade {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_v19_downgrade BEFORE UPDATE OF value ON settings
+                 WHEN OLD.key = 'db_version' AND NEW.value = '18'
+                 BEGIN SELECT RAISE(ABORT, 'injected V19 downgrade failure'); END;",
+            )
+            .expect("install downgrade failure trigger");
+        }
+    }
 
     fn record(id: &str, name: &str, locked: bool) -> WatchRecord {
         WatchRecord {
@@ -661,5 +908,95 @@ mod tests {
             )
             .expect("check removed columns");
         assert_eq!(legacy_columns, 0);
+    }
+
+    #[test]
+    fn v19_database_is_backed_up_and_atomically_downgraded_to_v18() {
+        let (_root, paths) = VersionTestRoot::new("v19-success");
+        seed_v19_database(&paths, false);
+
+        let state = init(&paths).expect("initialize known V19 database");
+        assert!(state.compatibility_issue.is_none());
+        let conn = state.conn.lock().expect("lock downgraded database");
+        assert_eq!(existing_db_version(&conn).unwrap(), CURRENT_DB_VERSION);
+        let columns = record_columns(&conn).unwrap();
+        assert!(columns.contains("chineseName"));
+        assert!(!columns.contains("chinese_name"));
+        assert_eq!(
+            get_all_records(&conn).unwrap()[0].chinese_name,
+            "V19 保留记录"
+        );
+        assert_eq!(
+            get_setting(&conn, "database_migration_notice".to_string())
+                .unwrap()
+                .as_deref(),
+            Some("v19_to_v18"),
+        );
+        drop(conn);
+
+        let backups = std::fs::read_dir(paths.backups())
+            .expect("read backup directory")
+            .map(|entry| entry.expect("read backup entry").path())
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        let backup = Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("open verified backup");
+        assert_eq!(
+            existing_db_version(&backup).unwrap(),
+            KNOWN_DOWNGRADE_VERSION
+        );
+        let backup_columns = record_columns(&backup).unwrap();
+        assert!(backup_columns.contains("chinese_name"));
+        assert!(!backup_columns.contains("chineseName"));
+    }
+
+    #[test]
+    fn v19_downgrade_failure_rolls_back_source_and_keeps_verified_backup() {
+        let (_root, paths) = VersionTestRoot::new("v19-rollback");
+        seed_v19_database(&paths, true);
+
+        let state = init(&paths).expect("return blocked state after downgrade failure");
+        let issue = state
+            .compatibility_issue
+            .expect("report compatibility issue");
+        assert_eq!(issue.code, "v19_downgrade_failed");
+        let conn = state.conn.lock().expect("lock rolled back database");
+        assert_eq!(existing_db_version(&conn).unwrap(), KNOWN_DOWNGRADE_VERSION);
+        let columns = record_columns(&conn).unwrap();
+        assert!(columns.contains("chinese_name"));
+        assert!(!columns.contains("chineseName"));
+        assert_eq!(
+            std::fs::read_dir(paths.backups()).unwrap().count(),
+            1,
+            "verified pre-migration backup must remain available",
+        );
+    }
+
+    #[test]
+    fn v20_and_newer_database_is_rejected_without_changes_or_backup() {
+        let (_root, paths) = VersionTestRoot::new("v20-reject");
+        {
+            let conn = Connection::open(paths.database()).expect("open V20 fixture");
+            setup_db(&conn).expect("create fixture schema");
+            insert_record(&conn, record("future", "未来版本记录", false))
+                .expect("insert future fixture record");
+            conn.execute(
+                "UPDATE settings SET value = '20' WHERE key = 'db_version'",
+                [],
+            )
+            .expect("mark fixture as V20");
+        }
+        let before = std::fs::read(paths.database()).expect("read fixture before rejection");
+
+        let state = init(&paths).expect("return blocked state for V20");
+        let issue = state.compatibility_issue.expect("report newer database");
+        assert_eq!(issue.code, "unsupported_newer_database");
+        assert_eq!(issue.detected_version, 20);
+        assert_eq!(issue.supported_version, CURRENT_DB_VERSION);
+        assert_eq!(
+            std::fs::read(paths.database()).expect("read fixture after rejection"),
+            before,
+        );
+        assert_eq!(std::fs::read_dir(paths.backups()).unwrap().count(), 0);
     }
 }
