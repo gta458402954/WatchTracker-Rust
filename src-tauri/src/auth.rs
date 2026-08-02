@@ -1,4 +1,6 @@
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+use aes_gcm::aead::{Aead, KeyInit};
+#[cfg(test)]
+use aes_gcm::aead::{AeadCore, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::{engine::general_purpose, Engine as _};
 use sha2::{Digest, Sha256};
@@ -17,6 +19,7 @@ fn get_derived_key() -> Result<Key<Aes256Gcm>, String> {
     Ok(*Key::<Aes256Gcm>::from_slice(&result))
 }
 
+#[cfg(test)]
 pub fn encrypt(text: &str, _tag: &str) -> Result<String, String> {
     if text.is_empty() {
         return Ok(String::new());

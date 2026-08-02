@@ -66,12 +66,12 @@ pub struct ActivateTargetInput {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ActiveTargetCredentials {
+pub struct ActiveSyncConnection {
     pub target_id: String,
     pub target_epoch: u64,
     pub url: String,
     pub username: String,
-    pub password: String,
+    pub credential_available: bool,
 }
 
 fn invalid(message: impl Into<String>) -> AppError {
@@ -275,11 +275,15 @@ pub fn activate(
     };
     let id = target_id(&url, &username);
     let switching = registry.active_target_id.as_deref() != Some(&id);
-    let encrypted = auth::encrypt(&format!("{}:{}", username, input.password), "webdav_creds")
-        .map_err(invalid)?;
     let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let transaction = conn.transaction()?;
-    set_setting_tx(&transaction, &scoped_key(&id, "credentials"), &encrypted)?;
+    crate::secret_store::save_setting_secret(
+        &transaction,
+        &scoped_key(&id, "credentials"),
+        &crate::secret_store::LogicalSecret::WebDav(id.clone()),
+        &username,
+        &input.password,
+    )?;
     if let Some(target) = registry.targets.iter_mut().find(|target| target.id == id) {
         target.normalized_url = url;
         target.username = username;
@@ -388,7 +392,7 @@ pub fn disconnect(conn: &mut Connection, paths: &AppPaths) -> Result<SyncTargetR
 pub fn credentials(
     conn: &mut Connection,
     paths: &AppPaths,
-) -> Result<Option<ActiveTargetCredentials>, AppError> {
+) -> Result<Option<ActiveSyncConnection>, AppError> {
     let registry = ensure_migrated(conn, paths)?;
     let Some(id) = registry.active_target_id.as_ref() else {
         return Ok(None);
@@ -398,22 +402,59 @@ pub fn credentials(
         .iter()
         .find(|target| &target.id == id)
         .ok_or_else(|| invalid("invalid_sync_target_registry"))?;
-    let encrypted = get_setting_tx(conn, &scoped_key(id, "credentials"))?
-        .ok_or_else(|| invalid("target_migration_required"))?;
-    let decrypted = auth::decrypt(&encrypted).map_err(|_| invalid("target_migration_required"))?;
-    let separator = decrypted
-        .find(':')
-        .ok_or_else(|| invalid("target_migration_required"))?;
-    if decrypted[..separator] != target.username {
-        return Err(invalid("target_migration_required"));
-    }
-    Ok(Some(ActiveTargetCredentials {
+    let available = resolve_target_secret(conn, target)?.is_some();
+    Ok(Some(ActiveSyncConnection {
         target_id: id.clone(),
         target_epoch: registry.target_epoch,
         url: target.normalized_url.clone(),
-        username: decrypted[..separator].to_string(),
-        password: decrypted[separator + 1..].to_string(),
+        username: target.username.clone(),
+        credential_available: available,
     }))
+}
+
+fn resolve_target_secret(
+    conn: &Connection,
+    target: &SyncTarget,
+) -> Result<Option<zeroize::Zeroizing<String>>, AppError> {
+    let username = target.username.clone();
+    crate::secret_store::resolve_or_migrate(
+        conn,
+        &scoped_key(&target.id, "credentials"),
+        &crate::secret_store::LogicalSecret::WebDav(target.id.clone()),
+        &target.username,
+        move |legacy| {
+            let separator = legacy
+                .find(':')
+                .ok_or_else(|| invalid("credential_legacy_corrupt"))?;
+            if legacy[..separator] != username {
+                return Err(invalid("credential_legacy_corrupt"));
+            }
+            Ok(legacy[separator + 1..].to_string())
+        },
+    )
+}
+
+pub fn active_request_credentials(
+    conn: &mut Connection,
+    paths: &AppPaths,
+    target_id: &str,
+    target_epoch: u64,
+) -> Result<(String, String, zeroize::Zeroizing<String>), AppError> {
+    ensure_migrated(conn, paths)?;
+    verify_context(conn, Some(target_id), Some(target_epoch))?;
+    let registry = registry(conn)?.ok_or_else(|| invalid("invalid_sync_target_registry"))?;
+    let target = registry
+        .targets
+        .iter()
+        .find(|target| target.id == target_id)
+        .ok_or_else(|| invalid("invalid_sync_target_registry"))?;
+    let password =
+        resolve_target_secret(conn, target)?.ok_or_else(|| invalid("credential_missing"))?;
+    Ok((
+        target.normalized_url.clone(),
+        target.username.clone(),
+        password,
+    ))
 }
 
 #[cfg(test)]

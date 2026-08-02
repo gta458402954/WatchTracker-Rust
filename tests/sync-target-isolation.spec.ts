@@ -25,9 +25,9 @@ test('@sync-target-isolation cancelling a read-only probe never activates or wri
   await expect(page.getByText(/已取消切换/)).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
-  const webdavCalls = snapshot.calls.filter(call => call.command === 'webdav_request');
-  expect(webdavCalls.length).toBeGreaterThan(0);
-  expect(webdavCalls.every(call => call.args.method === 'GET')).toBe(true);
+  const probeCalls = snapshot.calls.filter(call => call.command === 'probe_webdav_request');
+  expect(probeCalls.length).toBeGreaterThan(0);
+  expect(probeCalls.every(call => call.args.request.method === 'GET')).toBe(true);
   expect(snapshot.calls.some(call => call.command === 'activate_sync_target')).toBe(false);
   expect(snapshot.settings.webdav_url).toBe('https://old.example.test/dav/');
 });
@@ -46,4 +46,22 @@ test('@sync-target-isolation password rotation keeps the same target and proceed
   expect(activation).toBeGreaterThan(-1);
   expect(snapshot.calls.slice(0, activation).some(call => call.command === 'webdav_request')).toBe(false);
   expect(dialogCount).toBe(0);
+});
+
+test('@credential-boundary saved requests never expose credentials to the frontend', async ({ page }) => {
+  await setupMockIpc(page, { settings });
+  await page.goto('/');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: /云端同步/ }).click();
+  await page.getByRole('button', { name: '立即同步到云端' }).click();
+
+  const snapshot = await mockSnapshot(page);
+  const storedCalls = snapshot.calls.filter(call => call.command === 'webdav_request');
+  expect(storedCalls.length).toBeGreaterThan(0);
+  for (const call of storedCalls) {
+    expect(JSON.stringify(call.args)).not.toContain('password');
+    expect(JSON.stringify(call.args)).not.toContain('username');
+  }
+  const connection = snapshot.calls.find(call => call.command === 'get_active_sync_connection');
+  expect(JSON.stringify(connection)).not.toContain('password');
 });

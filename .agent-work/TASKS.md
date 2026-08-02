@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003` 与 `TASK-D-SYNC-001-R2` 已实现，剩余为 1 个 `DRAFT`、1 个 `SPECIFIED`、10 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2` 与 `TASK-D-SEC-001` 已实现，剩余为 1 个 `SPECIFIED`、10 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1492,7 +1492,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | IMPLEMENTED | 持久 outbox、主动拉取与退避已实现 |
 | `TASK-D-SYNC-001-R2` | R0 | 同步恢复与增量落盘 | IMPLEMENTED | 版本暂存、发布意图与伪冲突修复 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | IMPLEMENTED | R0 WebDAV 目标隔离、安全切换与 V18 迁移已实现 |
-| `TASK-D-SEC-001` | R0 | 凭据安全 | DRAFT | R0 Windows Credential Manager 迁移设计待确认 |
+| `TASK-D-SEC-001` | R0 | 凭据安全 | IMPLEMENTED | Windows Credential Manager、逐项迁移和 IPC 收紧已完成 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | NEEDS-DESIGN | R1 今晚看什么 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | R1 Trakt |
@@ -1628,16 +1628,18 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-SEC-001：Windows 凭据保护与旧格式迁移
 
-- Phase: DESIGN
+- Phase: IMPLEMENTATION
 - Owner: Codex
-- Status: DRAFT
+- Status: IMPLEMENTED
 - Priority: R0
 - Scope: 使用 Windows 原生受保护存储保存 WebDAV/TMDB 凭据，迁移 `portable:v1` 和 `machine_bound:v1`，并提供机器变化后的可诊断恢复流程。
 - Current Basis: 当前 AES-GCM 密钥由 machine UID 与固定 salt 派生；`portable:v1` 仍可直接 Base64 还原。
 - Security Gate: 不在日志、导出、同步载荷或错误通知中暴露凭据；迁移成功后才删除旧值。
-- Draft Design: `docs/SECURE_CREDENTIAL_STORAGE_DESIGN.md`。推荐使用当前 Windows 用户的 Credential Manager `CRED_TYPE_GENERIC`＋`CRED_PERSIST_LOCAL_MACHINE`；数据库仅保存 `wincred:v1`，TargetName 由固定逻辑 ID 派生。WebDAV/TMDB 已保存秘密不再返回 React，Rust 网络命令内部读取。
+- Approved Design: `docs/SECURE_CREDENTIAL_STORAGE_DESIGN.md`。使用当前 Windows 用户的 Credential Manager `CRED_TYPE_GENERIC`＋`CRED_PERSIST_LOCAL_MACHINE`；数据库仅保存 `wincred:v1`，TargetName 由固定逻辑 ID 派生。WebDAV/TMDB 已保存秘密不再返回 React，Rust 网络命令内部读取。
 - Migration Boundary: 以不含秘密的逐项写前日志协调 Credential Manager 与 SQLite；先 CredWrite＋CredRead 回读验证，再以 V18 事务替换旧值。失败只阻断对应 secret 功能，本地记录与其他 target 可用。迁移不创建会复制弱格式秘密的普通全库恢复点。
-- Pending Confirmation: 便携数据库移到新机器时不携带已保存密码，需要重新输入；第一版只提示迁移前历史备份风险，不自动删除任何恢复点。确认后转 READY。
+- Implementation: 新增带版本信封与逻辑 ID 校验的 Win32 SecretStore，缓冲使用 zeroize；旧 `portable:v1` / `machine_bound:v1` 在首次使用时以不含秘密的写前日志逐项迁移，只有 CredWrite＋CredRead 回读成功后才把 V18 setting 切为 `wincred:v1`。迁移失败只阻断对应服务，本地记录仍可使用。
+- IPC/UI: 删除通用 `encrypt` / `decrypt` 命令；已保存 WebDAV 密码与 TMDB Key 不再进入 React 或日常请求 DTO。设置页显示 Windows 保护、换机重输和历史备份风险，第一版不自动删除恢复点或外部副本。
+- Acceptance Evidence: fake store 与临时 SQLite 验证逻辑项隔离、信封不可交换、失败保留旧值、迁移日志不含秘密及引用缺失不回退；日常同步 E2E 验证 IPC 不含用户名/密码。完整门禁为 Rust 66/66、Node 68/68、Playwright 53/53、typecheck、lint、build、rustfmt 和 clippy 全部通过；未写真实用户 Credential Manager，未修改真实便携数据库。
 
 ### TASK-D-HISTORY-001：逐集完成时间与完结状态
 

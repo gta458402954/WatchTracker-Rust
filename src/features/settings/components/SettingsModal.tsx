@@ -5,17 +5,18 @@ import {
 } from '../../../shared/lib/webdav';
 import {
   createRecoveryPoint,
+  clearTmdbCredential,
   deleteRecoveryPoint,
   getSettingAsync,
   getSyncSnapshot,
   getSyncTargets,
   getTmdbDetailAsync,
+  getTmdbCredentialStatus,
   listRecoveryPoints,
   openBackupDirectory,
   restoreRecoveryPoint,
   resolveSyncConflict,
-  safeDecrypt,
-  safeEncrypt,
+  saveTmdbCredential,
   searchTmdbAsync,
   setRecoveryPointRetained,
   setSettingAsync,
@@ -195,17 +196,9 @@ export default function SettingsModal({
           } else throw error;
         }
 
-        const encryptedTmdb = await getSettingAsync('tmdb_api_key');
-        if (encryptedTmdb) {
-          const decrypted = await safeDecrypt(encryptedTmdb);
-          if (decrypted === '__ERR_DECRYPT_VERSION_MISMATCH__' || decrypted === '__ERR_DECRYPT_FAILED__') {
-            setTmdbSaved(false);
-            onNotify?.('warning', 'TMDB 密钥格式已过期，请重新保存。');
-          } else if (decrypted) {
-            setTmdbKey(decrypted);
-            setTmdbSaved(true);
-          }
-        }
+        const tmdbStatus = await getTmdbCredentialStatus();
+        setTmdbSaved(tmdbStatus.available);
+        if (tmdbStatus.state === 'reentry-required') onNotify?.('warning', 'TMDB 密钥需要在当前 Windows 用户下重新输入。');
 
         const savedProxy = await getSettingAsync('network_proxy');
         if (savedProxy) setProxy(savedProxy);
@@ -248,9 +241,8 @@ export default function SettingsModal({
     if (!tmdbKey.trim()) return;
     try {
       // 存储前先清空旧值，确保触发更新
-      await setSettingAsync('tmdb_api_key', '');
-      const encrypted = await safeEncrypt(tmdbKey.trim(), 'tmdb_api_key');
-      await setSettingAsync('tmdb_api_key', encrypted);
+      await saveTmdbCredential(tmdbKey.trim());
+      setTmdbKey('');
       setTmdbSaved(true);
       setSyncStatus('✅ TMDB 密钥已保存');
       showSuccess('TMDB 密钥已保存。');
@@ -264,7 +256,7 @@ export default function SettingsModal({
   async function handleClearTmdbKey() {
     if (!confirm('确定清除已保存的 TMDB 密钥吗？')) return;
     try {
-      await setSettingAsync('tmdb_api_key', '');
+      await clearTmdbCredential();
       setTmdbKey('');
       setTmdbSaved(false);
       setSyncStatus('🧹 TMDB 密钥已清除');
@@ -506,7 +498,7 @@ export default function SettingsModal({
     let lastError: unknown = new Error('TMDB search failed');
     for (let attempt = 0; attempt < 3; attempt++) {
       if (batchCancelRef.current) throw new Error('Batch cancelled');
-      const response = await searchTmdbAsync({ apiKey: tmdbKey.trim(), query: imdbId, language: 'zh-CN' });
+      const response = await searchTmdbAsync({ query: imdbId, language: 'zh-CN' });
       if (response.success) return response.results ?? [];
       lastError = new Error(response.error || 'TMDB search failed');
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
@@ -581,7 +573,7 @@ export default function SettingsModal({
     let lastError: unknown = new Error('TMDB detail failed');
     for (let attempt = 0; attempt < 3; attempt++) {
       if (batchCancelRef.current) throw new Error('Batch cancelled');
-      const response = await getTmdbDetailAsync({ apiKey: tmdbKey.trim(), id, mediaType, language: 'zh-CN' });
+      const response = await getTmdbDetailAsync({ id, mediaType, language: 'zh-CN' });
       if (response.success && response.data) return response.data;
       lastError = new Error(response.error || 'TMDB detail failed');
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
@@ -636,7 +628,7 @@ export default function SettingsModal({
 
   // 第一步只读取远端并生成预览，不写数据库。
   async function handlePrepareBatch() {
-    if (!tmdbKey.trim()) {
+    if (!tmdbSaved) {
       setBatchStatus('❌ 请先配置 TMDB API Key');
       onNotify?.('warning', '请先配置 TMDB API Key。');
       return;
@@ -954,7 +946,7 @@ export default function SettingsModal({
                   </div>
                   {tmdbSaved && (
                     <span className="text-xs px-2.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-semibold">
-                      已配置
+                      受 Windows 保护
                     </span>
                   )}
                 </div>
@@ -969,7 +961,7 @@ export default function SettingsModal({
                       className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                     />
                     <p className="text-[10px] text-gray-400">
-                      💡 密钥将以便携兼容格式保存在本地 data 目录，请妥善保护该目录。可以在 TMDB 官网的个人设置中申请获取该 API 密钥。
+                      💡 密钥保存在当前 Windows 用户的凭据管理器中，不会写入 data 目录；移动到其他电脑或 Windows 用户后需要重新输入。可以在 TMDB 官网的个人设置中申请。
                     </p>
                     <button
                       onClick={handleSaveTmdbKey}
@@ -985,7 +977,7 @@ export default function SettingsModal({
                       <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      <span className="text-sm text-gray-700 font-medium">已配置 TMDB API 密钥</span>
+                      <span className="text-sm text-gray-700 font-medium">TMDB API 密钥已受 Windows 保护</span>
                     </div>
                     <button
                       onClick={handleClearTmdbKey}
@@ -1048,7 +1040,7 @@ export default function SettingsModal({
                   </div>
                   {saved && (
                     <span className="text-xs px-2.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-semibold">
-                      已配置
+                      受 Windows 保护
                     </span>
                   )}
                 </div>
@@ -1373,6 +1365,9 @@ export default function SettingsModal({
                     <span>自动保留最近 10 个 · 上限 {formatBytes(recoveryPoints.capacityBytes)}</span>
                   </div>
                 )}
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-5 text-amber-800">
+                  🔐 新凭据仅保存在当前 Windows 用户的凭据管理器中。迁移前创建的恢复点、手工数据库副本或旧便携目录仍可能含旧格式凭据；程序不会自动删除这些文件，必要时请轮换 WebDAV 密码和 TMDB Key。
+                </div>
                 {recoveryPoints?.capacityExceeded && (
                   <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                     手工保留的恢复点使总容量超过上限；程序不会自动删除手工保留项，请按需清理。

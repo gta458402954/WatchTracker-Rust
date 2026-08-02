@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { WatchRecord, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
-import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
+import { downloadPosterAsync, getTmdbCredentialStatus, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
 import {
   classifyTmdb,
   inferPlatformFromTmdb,
@@ -114,24 +114,6 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
   const [selectedSeries, setSelectedSeries] = useState<TmdbMedia | null>(null);
   const isEpisodic = isAlwaysEpisodic(form.mediaType) || Boolean(form.totalEpisodes);
 
-  // 获取解密后的 TMDB API Key
-  async function getTMDBApiKey() {
-    const encrypted = await getSettingAsync('tmdb_api_key');
-    if (!encrypted) return null;
-    try {
-      const decrypted = await safeDecrypt(encrypted);
-      if (decrypted === '__ERR_DECRYPT_VERSION_MISMATCH__' || decrypted === '__ERR_DECRYPT_FAILED__') {
-        onNotify?.('warning', 'TMDB 密钥格式已过期，请在设置中重新保存。');
-        return null;
-      }
-      return decrypted;
-    } catch (error) {
-      reportOperationFailure('RecordForm.DecryptTmdbKey', error);
-      onNotify?.('warning', 'TMDB 密钥无法读取，请在设置中重新保存。');
-      return null;
-    }
-  }
-
   async function handleTMDBSearch() {
     let query = form.imdbId || form.chineseName || form.originalName;
     if (!query) return;
@@ -142,8 +124,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
       .replace(/第\s*[一二三四五六七八九十]+\s*季/g, '')
       .trim();
 
-    const apiKey = await getTMDBApiKey();
-    if (!apiKey) {
+    if (!(await getTmdbCredentialStatus()).available) {
       setSearchError('请先在设置中配置 TMDB API KEY');
       setShowResults(true);
       return;
@@ -156,7 +137,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
     setSelectedSeries(null);
 
     try {
-      const result = await searchTmdbAsync({ apiKey, query, language: 'zh-CN' });
+      const result = await searchTmdbAsync({ query, language: 'zh-CN' });
       if (!result.success) {
         setSearchError(publicFailureMessage('搜索 TMDB'));
         return;
@@ -170,8 +151,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
     }
   }
   async function handleSelectResult(item: TmdbMedia) {
-    const API_KEY = await getTMDBApiKey();
-    if (!API_KEY) return;
+    if (!(await getTmdbCredentialStatus()).available) return;
 
     const type = item.media_type || (isEpisodic ? 'tv' : 'movie');
     const isSeason = type === 'tv_season';
@@ -187,7 +167,6 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
     try {
       setSearchError(null);
       const result = await getTmdbDetailAsync({
-        apiKey: API_KEY,
         id: fetchId,
         mediaType: fetchType,
         language: 'zh-CN'

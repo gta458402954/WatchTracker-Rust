@@ -35,3 +35,7 @@ machine-uid = "0.6.0"
 sha2 = "0.10.9"
 infer = "0.22.0"
 uuid = { version = "1.23.1", features = ["v4"] }
+zeroize = "1.8.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }

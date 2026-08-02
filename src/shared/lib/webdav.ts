@@ -5,11 +5,10 @@ import {
   commitSyncResult,
   activateSyncTarget,
   disconnectSyncTarget,
-  getActiveSyncCredentials,
+  getActiveSyncConnection,
   getSettingAsync,
   getSyncSnapshot,
   prepareSyncPublishIntent,
-  safeDecrypt,
 } from './database';
 import {
   emptySyncPayload,
@@ -27,7 +26,7 @@ const V3_RESOURCE = 'records-v3.json';
 const LEGACY_RESOURCE = 'records.json';
 const MAX_PRECONDITION_RETRIES = 3;
 
-export interface WebDAVCreds { username: string; password: string; url?: string; targetId?: string; targetEpoch?: number; }
+export interface WebDAVCreds { username: string; password?: string; url?: string; targetId?: string; targetEpoch?: number; credentialAvailable?: boolean; }
 interface LegacyTombstone { id: string; deletedAt: string; }
 interface LegacyPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: LegacyTombstone[]; }
 interface WebDavResponse { status: number; body: unknown | null; etag: string | null; text: string | null; }
@@ -73,28 +72,20 @@ export function syncFailureMessage(error?: string): string | null {
   }
 }
 
-export async function saveCreds(creds: WebDAVCreds) {
+export async function saveCreds(creds: WebDAVCreds & { password: string }) {
   await activateSyncTarget({ url: creds.url || DEFAULT_WEBDAV_BASE_URL, username: creds.username, password: creds.password });
 }
 
 export async function getCreds(): Promise<WebDAVCreds | null> {
   try {
-    const active = await getActiveSyncCredentials();
-    return active ? { ...active } : null;
+    const active = await getActiveSyncConnection();
+    return active?.credentialAvailable ? { ...active } : null;
   } catch (error) {
-    if (String(error).includes('target_migration_required')) return null;
-    // Older test/runtime adapters can still read the pre-isolation format.
-    if (!String(error).includes('Unknown command')) throw error;
+    const message = String(error);
+    if (['target_migration_required', 'credential_reentry_required', 'credential_missing', 'credential_store_unavailable', 'credential_store_unsupported']
+      .some(code => message.includes(code))) return null;
+    throw error;
   }
-  const stored = await getSettingAsync('webdav_creds');
-  if (!stored) return null;
-  const url = await getSettingAsync('webdav_url') || DEFAULT_WEBDAV_BASE_URL;
-  try {
-    const decrypted = await safeDecrypt(stored);
-    if (!decrypted || decrypted.startsWith('__ERR_DECRYPT')) return null;
-    const separator = decrypted.indexOf(':');
-    return separator < 0 ? null : { username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1), url };
-  } catch { return null; }
 }
 
 export async function clearCreds() { await disconnectSyncTarget(); }
@@ -183,12 +174,17 @@ async function webdavRequest(
 ): Promise<WebDavResponse> {
   const baseUrl = creds.url?.endsWith('/') ? creds.url : `${creds.url}/`;
   const url = method === 'MKCOL' ? baseUrl : `${baseUrl}${resource}`;
-  return invoke('webdav_request', {
-    request: {
+  if (creds.password !== undefined) {
+    return invoke('probe_webdav_request', { request: {
       method, url, username: creds.username, password: creds.password, proxy, body,
       ifMatch, ifNoneMatch, ifDavEtag,
-    },
-  });
+    } });
+  }
+  if (!creds.targetId || creds.targetEpoch === undefined) throw new Error('credential_missing');
+  return invoke('webdav_request', { request: {
+    targetId: creds.targetId, targetEpoch: creds.targetEpoch, method, url, proxy, body,
+    ifMatch, ifNoneMatch, ifDavEtag,
+  } });
 }
 
 export interface SyncTargetProbe { kind: 'empty' | 'v3' | 'legacy'; recordCount: number; revision: number | null; }

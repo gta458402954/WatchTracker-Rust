@@ -116,6 +116,8 @@ dependencies = [
  "thiserror 2.0.19",
  "urlencoding",
  "uuid",
+ "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

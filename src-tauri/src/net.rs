@@ -353,6 +353,20 @@ pub struct WebDavRequest {
     pub if_dav_etag: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoredWebDavRequest {
+    pub target_id: String,
+    pub target_epoch: u64,
+    pub method: String,
+    pub url: String,
+    pub body: Option<String>,
+    pub proxy: Option<String>,
+    pub if_match: Option<String>,
+    pub if_none_match: Option<String>,
+    pub if_dav_etag: Option<String>,
+}
+
 fn etag_shape(value: Option<&str>) -> &'static str {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return "missing";

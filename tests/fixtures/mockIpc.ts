@@ -413,14 +413,14 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'open_backup_directory':
               requireKeys(command, args, []);
               return null;
-            case 'get_active_sync_credentials': {
+            case 'get_active_sync_connection': {
               requireKeys(command, args, []);
               if (!activeTargetId || !snapshot.settings.webdav_creds) return null;
               const decrypted = String(snapshot.settings.webdav_creds).replace(/^encrypted:/, '');
               const separator = decrypted.indexOf(':');
               return {
                 targetId: activeTargetId, targetEpoch, url: snapshot.settings.webdav_url,
-                username: decrypted.slice(0, separator), password: decrypted.slice(separator + 1),
+                username: decrypted.slice(0, separator), credentialAvailable: true,
               };
             }
             case 'get_sync_targets':
@@ -448,21 +448,27 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               requireKeys(command, args, ['key', 'value']);
               snapshot.settings[args.key as string] = args.value as string;
               return true;
-            case 'encrypt':
-              requireKeys(command, args, ['tag', 'text']);
-              return `encrypted:${String(args.text)}`;
-            case 'decrypt':
-              requireKeys(command, args, ['id']);
-              return String(args.id).replace(/^encrypted:/, '');
+            case 'get_tmdb_credential_status':
+              requireKeys(command, args, []);
+              return { available: Boolean(snapshot.settings.tmdb_api_key), state: snapshot.settings.tmdb_api_key ? 'protected' : 'missing' };
+            case 'save_tmdb_credential':
+              requireKeys(command, args, ['secret']);
+              snapshot.settings.tmdb_api_key = 'wincred:v1';
+              return { available: true, state: 'protected' };
+            case 'clear_tmdb_credential':
+              requireKeys(command, args, []);
+              snapshot.settings.tmdb_api_key = '';
+              return { available: false, state: 'missing' };
             case 'search_tmdb':
-              requireKeys(command, args, ['apiKey', 'language', 'proxy', 'query']);
+              requireKeys(command, args, ['language', 'proxy', 'query']);
               if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return { results: structuredClone(tmdbSearchResults) };
             case 'get_tmdb_detail':
-              requireKeys(command, args, ['apiKey', 'id', 'language', 'mediaType', 'proxy']);
+              requireKeys(command, args, ['id', 'language', 'mediaType', 'proxy']);
               if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return structuredClone(tmdbDetail);
             case 'webdav_request':
+            case 'probe_webdav_request':
               requireKeys(command, args, ['request']);
               {
               const request = args.request as Record<string, unknown>;

@@ -1,9 +1,9 @@
 use crate::app_paths::AppPaths;
 use crate::db::{self, DatabaseCompatibilityIssue, DbState};
 use crate::models::{UpdateWatchRecord, WatchRecord};
+use crate::net;
 use crate::recovery_points;
 use crate::sync_state;
-use crate::{auth, net};
 use serde_json::Value;
 use tauri::State;
 
@@ -178,10 +178,10 @@ pub fn get_sync_targets(
 }
 
 #[tauri::command]
-pub fn get_active_sync_credentials(
+pub fn get_active_sync_connection(
     state: State<DbState>,
     paths: State<AppPaths>,
-) -> Result<Option<crate::sync_targets::ActiveTargetCredentials>, crate::error::AppError> {
+) -> Result<Option<crate::sync_targets::ActiveSyncConnection>, crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
     crate::sync_targets::credentials(&mut conn, paths.inner())
 }
@@ -358,26 +358,99 @@ pub fn set_setting(
     Ok(db::set_setting(&conn, key, value)?)
 }
 
-#[tauri::command]
-pub fn encrypt(text: String, tag: Option<String>) -> Result<String, crate::error::AppError> {
-    auth::encrypt(&text, tag.as_deref().unwrap_or("webdav_creds"))
-        .map_err(crate::error::AppError::General)
+fn tmdb_secret(
+    conn: &rusqlite::Connection,
+) -> Result<Option<zeroize::Zeroizing<String>>, crate::error::AppError> {
+    crate::secret_store::resolve_or_migrate(
+        conn,
+        "tmdb_api_key",
+        &crate::secret_store::LogicalSecret::Tmdb,
+        "api-key",
+        |legacy| Ok(legacy.to_string()),
+    )
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialStatus {
+    available: bool,
+    state: String,
 }
 
 #[tauri::command]
-pub fn decrypt(id: String) -> Result<String, crate::error::AppError> {
-    auth::decrypt(&id).map_err(crate::error::AppError::General)
+pub fn get_tmdb_credential_status(
+    state: State<DbState>,
+) -> Result<CredentialStatus, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    match tmdb_secret(&conn) {
+        Ok(secret) => Ok(CredentialStatus {
+            available: secret.is_some(),
+            state: if secret.is_some() {
+                "protected".into()
+            } else {
+                "missing".into()
+            },
+        }),
+        Err(error) => Ok(CredentialStatus {
+            available: false,
+            state: if error.to_string().contains("credential_reentry_required") {
+                "reentry-required".into()
+            } else {
+                "unavailable".into()
+            },
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn save_tmdb_credential(
+    state: State<DbState>,
+    secret: String,
+) -> Result<CredentialStatus, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    crate::secret_store::save_setting_secret(
+        &conn,
+        "tmdb_api_key",
+        &crate::secret_store::LogicalSecret::Tmdb,
+        "api-key",
+        &secret,
+    )?;
+    Ok(CredentialStatus {
+        available: true,
+        state: "protected".into(),
+    })
+}
+
+#[tauri::command]
+pub fn clear_tmdb_credential(
+    state: State<DbState>,
+) -> Result<CredentialStatus, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    crate::secret_store::clear_setting_secret(
+        &conn,
+        "tmdb_api_key",
+        &crate::secret_store::LogicalSecret::Tmdb,
+    )?;
+    Ok(CredentialStatus {
+        available: false,
+        state: "missing".into(),
+    })
 }
 
 #[tauri::command]
 pub async fn search_tmdb(
-    api_key: String,
+    state: State<'_, DbState>,
     query: String,
     language: Option<String>,
     proxy: Option<String>,
 ) -> Result<Value, crate::error::AppError> {
+    let api_key = {
+        let conn = lock_database(state.inner())?;
+        tmdb_secret(&conn)?
+            .ok_or_else(|| crate::error::AppError::General("credential_missing".into()))?
+    };
     net::search_tmdb(
-        api_key,
+        api_key.to_string(),
         query,
         language.unwrap_or("zh-CN".to_string()),
         proxy,
@@ -388,14 +461,19 @@ pub async fn search_tmdb(
 
 #[tauri::command]
 pub async fn get_tmdb_detail(
-    api_key: String,
+    state: State<'_, DbState>,
     id: i32,
     media_type: String,
     language: Option<String>,
     proxy: Option<String>,
 ) -> Result<Value, crate::error::AppError> {
+    let api_key = {
+        let conn = lock_database(state.inner())?;
+        tmdb_secret(&conn)?
+            .ok_or_else(|| crate::error::AppError::General("credential_missing".into()))?
+    };
     net::get_tmdb_detail(
-        api_key,
+        api_key.to_string(),
         id,
         media_type,
         language.unwrap_or("zh-CN".to_string()),
@@ -418,7 +496,9 @@ pub async fn download_poster(
 
 #[tauri::command]
 pub async fn webdav_request(
-    request: net::WebDavRequest,
+    state: State<'_, DbState>,
+    paths: State<'_, AppPaths>,
+    request: net::StoredWebDavRequest,
 ) -> Result<net::WebDavResponse, crate::error::AppError> {
     if !matches!(
         request.method.as_str(),
@@ -428,7 +508,19 @@ pub async fn webdav_request(
             "Unsupported WebDAV method".to_string(),
         ));
     }
-    if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
+    let (base_url, username, password) = {
+        let mut conn = lock_database(state.inner())?;
+        crate::sync_targets::active_request_credentials(
+            &mut conn,
+            paths.inner(),
+            &request.target_id,
+            request.target_epoch,
+        )?
+    };
+    let allowed_url = request.url == base_url
+        || request.url == format!("{base_url}records-v3.json")
+        || request.url == format!("{base_url}records.json");
+    if !allowed_url {
         return Err(crate::error::AppError::General(
             "Invalid WebDAV URL".to_string(),
         ));
@@ -439,6 +531,34 @@ pub async fn webdav_request(
         request.if_none_match.as_deref(),
         request.if_dav_etag.as_deref(),
     )?;
+    net::webdav_request(net::WebDavRequest {
+        method: request.method,
+        url: request.url,
+        username,
+        password: password.to_string(),
+        body: request.body,
+        proxy: request.proxy,
+        if_match: request.if_match,
+        if_none_match: request.if_none_match,
+        if_dav_etag: request.if_dav_etag,
+    })
+    .await
+    .map_err(crate::error::AppError::General)
+}
+
+#[tauri::command]
+pub async fn probe_webdav_request(
+    request: net::WebDavRequest,
+) -> Result<net::WebDavResponse, crate::error::AppError> {
+    if !matches!(request.method.as_str(), "GET" | "PROPFIND") {
+        return Err(crate::error::AppError::General(
+            "Probe must be read-only".into(),
+        ));
+    }
+    if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
+        return Err(crate::error::AppError::General("Invalid WebDAV URL".into()));
+    }
+    validate_webdav_conditions(&request.method, None, None, None)?;
     net::webdav_request(request)
         .await
         .map_err(crate::error::AppError::General)

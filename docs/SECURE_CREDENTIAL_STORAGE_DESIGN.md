@@ -1,6 +1,6 @@
 # TASK-D-SEC-001：Windows 凭据保护与旧格式迁移专项设计
 
-> 状态：DRAFT，等待用户确认后实施
+> 状态：IMPLEMENTED（2026-08-02）
 > 日期：2026-08-02
 > 数据库：继续使用 V18；秘密本体移出 SQLite
 > 依赖：`TASK-D-SYNC-003` 已实现的 WebDAV target ID 与目标级命名空间
@@ -68,7 +68,7 @@ credential_security_state_v1   = <版本、完成时间、历史备份提示>
 
 Credential Manager 与 SQLite 不能组成一个原子事务，因此使用不含秘密的写前迁移日志，而不是假装跨系统原子：
 
-1. 枚举所有 `sync_target::<id>::credentials` 和 `tmdb_api_key`。已经是 `wincred:v1` 的项目只验证引用，不重复迁移。
+1. 在首次访问对应 WebDAV target 或 TMDB 凭据时逐项迁移；已经是 `wincred:v1` 的项目只验证引用，不重复迁移。这样单项失败不会阻断应用启动和本地影视数据。
 2. SQLite 单事务写入 `credential_migration_v1`，记录每项逻辑 ID、源格式、源值 SHA-256 指纹和阶段 `planned`；源值保持原样。
 3. 在内存中解析 `portable:v1` 或解密 `machine_bound:v1`。WebDAV 信封中的用户名必须与 target 注册表一致。
 4. `CredWriteW` 写入派生 TargetName，随后 `CredReadW` 回读并以常量时间比较完整信封；成功后将该项标为 `vault_verified`。
@@ -156,9 +156,10 @@ Credential Manager 与 SQLite 不能组成一个原子事务，因此使用不�
 
 真实便携数据库仅在部署前后做只读 V18、记录数、完整性和哈希核验。首次正式迁移由用户启动新版触发，不在打包测试中操作真实凭据。
 
-## 10. 待确认方案
+## 10. 实施结果
 
-推荐按本文方案实施，尤其确认以下边界：
+已按确认方案完成：秘密本体进入 Windows Credential Manager，SQLite 仅保留 `wincred:v1`；旧格式按使用时逐项迁移，写入、回读验证和数据库切换由不含秘密的日志协调。WebDAV 日常请求和 TMDB 请求由 Rust 内部取密钥，通用 `encrypt` / `decrypt` IPC 已移除；新目标只读探测仍允许一次性临时密码，但确认前不持久化。
 
-1. 使用 Windows Credential Manager 保存秘密本体，数据库仅保留 `wincred:v1`；因此便携程序文件和数据库可以移动，但已保存密码不会随之迁移，换机后需要重新输入。
-2. 第一版只提示历史备份可能含旧秘密，不自动删除任何恢复点；后续可单独实现经用户确认的“清理迁移前自动恢复点”。
+便携程序和数据库移动后不会携带已保存密码，新机器或其他 Windows 用户需要重新输入。设置页会提示迁移前恢复点、手工副本和旧便携目录可能仍含旧格式秘密，第一版不自动删除任何文件。
+
+本地门禁：Rust 66/66、Node 68/68、Playwright 53/53，并通过 typecheck、lint、生产前端 build、rustfmt 与 clippy。自动测试使用 fake SecretStore 与临时 SQLite，没有写入真实用户 Credential Manager；真实便携数据库仅在部署前后做只读核验。

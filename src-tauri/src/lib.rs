@@ -10,6 +10,7 @@ mod models;
 mod net;
 mod record_validation;
 mod recovery_points;
+mod secret_store;
 mod sync_staging;
 mod sync_state;
 mod sync_targets;
@@ -127,7 +128,7 @@ pub fn run() {
             commands::get_sync_snapshot,
             commands::get_sync_runtime_state,
             commands::get_sync_targets,
-            commands::get_active_sync_credentials,
+            commands::get_active_sync_connection,
             commands::activate_sync_target,
             commands::disconnect_sync_target,
             commands::set_auto_sync_paused,
@@ -144,12 +145,14 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::vacuum_db,
-            commands::encrypt,
-            commands::decrypt,
+            commands::get_tmdb_credential_status,
+            commands::save_tmdb_credential,
+            commands::clear_tmdb_credential,
             commands::search_tmdb,
             commands::get_tmdb_detail,
             commands::download_poster,
             commands::webdav_request,
+            commands::probe_webdav_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

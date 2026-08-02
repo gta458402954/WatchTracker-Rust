@@ -182,10 +182,10 @@ export async function resolveSyncConflict(id: string, resolution: SyncConflictRe
 
 export interface SyncTargetDescriptor { id: string; normalizedUrl: string; username: string; createdAt: string; lastActivatedAt: string; }
 export interface SyncTargetRegistry { version: 1; activeTargetId: string | null; targetEpoch: number; targets: SyncTargetDescriptor[]; }
-export interface ActiveSyncCredentials { targetId: string; targetEpoch: number; url: string; username: string; password: string; }
+export interface ActiveSyncConnection { targetId: string; targetEpoch: number; url: string; username: string; credentialAvailable: boolean; }
 
 export const getSyncTargets = (): Promise<SyncTargetRegistry> => invoke('get_sync_targets');
-export const getActiveSyncCredentials = (): Promise<ActiveSyncCredentials | null> => invoke('get_active_sync_credentials');
+export const getActiveSyncConnection = (): Promise<ActiveSyncConnection | null> => invoke('get_active_sync_connection');
 export const activateSyncTarget = (input: { url: string; username: string; password: string }): Promise<SyncTargetRegistry> => invoke('activate_sync_target', { input });
 export const disconnectSyncTarget = (): Promise<SyncTargetRegistry> => invoke('disconnect_sync_target');
 
@@ -230,24 +230,17 @@ export async function vacuumDbAsync(): Promise<void> {
   return invoke('vacuum_db');
 }
 
-export async function safeEncrypt(text: string, tag?: string): Promise<string> {
-  return invoke('encrypt', { text, tag });
-}
+export interface CredentialStatus { available: boolean; state: 'protected' | 'missing' | 'reentry-required' | 'unavailable'; }
+export const getTmdbCredentialStatus = (): Promise<CredentialStatus> => invoke('get_tmdb_credential_status');
+export const saveTmdbCredential = (secret: string): Promise<CredentialStatus> => invoke('save_tmdb_credential', { secret });
+export const clearTmdbCredential = (): Promise<CredentialStatus> => invoke('clear_tmdb_credential');
 
-export async function safeDecrypt(id: string): Promise<string> {
-  return invoke('decrypt', { id });
-}
-
-interface TmdbRequest {
-  apiKey: string;
-  language?: string;
-}
+interface TmdbRequest { language?: string; }
 
 export async function searchTmdbAsync(args: TmdbRequest & { query: string }): Promise<TmdbSearchResponse> {
   try {
     const proxy = await getSettingAsync('network_proxy');
     const response = await invoke<TmdbSearchResponse>('search_tmdb', {
-      apiKey: args.apiKey,
       query: args.query,
       language: args.language,
       proxy,
@@ -262,7 +255,6 @@ export async function getTmdbDetailAsync(args: TmdbRequest & { id: number; media
   try {
     const proxy = await getSettingAsync('network_proxy');
     const data = await invoke<TmdbMedia>('get_tmdb_detail', {
-      apiKey: args.apiKey,
       id: args.id,
       mediaType: args.mediaType,
       language: args.language,
