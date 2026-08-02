@@ -1486,7 +1486,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | --- | --- | --- | --- | --- |
 | `TASK-D-DATA-001` | R0 | 数据安全 | IMPLEMENTED | R0 元数据补全 |
 | `TASK-D-DATA-002` | R0 | 数据完整性 | IMPLEMENTED | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
-| `TASK-D-DATA-003` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
+| `TASK-D-DATA-003` | R0 | 数据正确性 | SPECIFIED | 新增：国家解析与平台字段保护；排为当前下一项 |
+| `TASK-D-DATA-004` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | NEEDS-DESIGN | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
@@ -1527,7 +1528,31 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Implemented Domain Boundary: records 与 settings 已移除 `INSERT OR REPLACE`；records 使用 `ON CONFLICT(id) DO UPDATE`，不会隐式删除再插入。本地新增严格校验名称、媒体类型与数值范围，时间/修订字段由 Rust 生成；部分更新只验证本次变更并允许修复旧脏行；导入/同步替换兼容规范化旧媒体类型、空文本和旧数值，重复 ID 在删除前整批拒绝，锁定本地记录继续优先保留。
 - Final Acceptance: Rust 临时库验证 UPSERT 不触发 DELETE、系统字段所有权、非法新增零副作用、旧脏行无关字段可修改、名称/媒体类型约束、导入兼容规范化、重复 ID 回滚、锁定保留，以及此前 V19/V20 版本矩阵；前端使用 Rust 返回的持久化新增记录，避免时间/修订状态漂移。
 
-### TASK-D-DATA-003：高风险操作自动恢复点
+### TASK-D-DATA-003：国家解析统一与平台字段保护
+
+- Phase: NEXT
+- Owner: Codex
+- Status: SPECIFIED
+- Priority: R0
+- Business Source: `.agent-work/REQUEST.md` 9.4
+- Problem: `App.handleSave` 和 `RecordForm` 三条 TMDB 路径使用 `includes('CN')/includes('中国')`；前者会在普通保存时清空已有平台，后者重复了脆弱判断。“中国香港”“中国台湾”旧值也会因包含“中国”而被误判为中国大陆。
+- Scope: 统一精确国家解析；集中平台推测与名称规范化；普通保存不再改写平台；电影、剧集、具体季和批量补全只在本地平台缺失时写入推测值，CN 只抑制推测值，不清空已有值。
+- Implementation Plan:
+  1. 在 `classification.ts` 或相邻共享模块增加基于 `normalizeCountryCodes` 的具名国家谓词，以及纯函数形式的平台推测规范化入口。
+  2. 删除 `App.handleSave` 中按国家强制设置 `data.platform = ''` 的逻辑，确保新增、编辑和无关字段更新保留用户值。
+  3. 将 `RecordForm` 的电影、剧集、具体季三处分支和 `batchMetadata.ts` 接入同一共享函数；移除所有国家子串判断和重复的平台别名分支。
+  4. 保持 `regionCodesForTopFilter(...).slice(0, 1)` 不变；“顶部只看第一个国家”与“是否包含 CN 时抑制自动平台推测”分别测试，不混用语义。
+  5. 增补 Node 纯函数测试和 Playwright 用户路径测试，再执行完整前后端回归、生产构建和便携版安全部署。
+- Compatibility: 无 schema/migration；读取兼容 ISO、旧中文名称、别名、小写、空白及中英文逗号；不批量改写国家或平台，不恢复无可靠来源的历史丢失值。
+- Acceptance:
+  - `CN` 精确命中；`HK`、`TW`、`ACN`、`CND` 不命中；`cn`、`中国大陆` 和合法多国值按规范化结果工作。
+  - 保存含 CN 的已有记录时，手工平台及无关字段修改后的平台保持不变；HK/TW 不再被中国大陆规则误伤。
+  - TMDB 返回 CN 时不自动填入推测平台，但不会覆盖已有平台；非 CN 仅在平台缺失时填入并沿用 CBS/Apple TV+ 规范化。
+  - 源码中不再存在业务层 `originCountry.includes('CN')` 或 `includes('中国')`；批量补全继续满足“只填缺失字段”。
+  - typecheck、lint、Node、Playwright、Rust、生产构建全部通过；便携版由干净提交构建，部署前后数据库哈希、V18 版本和记录数一致。
+- Safety: 自动化只使用 mock/临时数据；真实便携数据库只做部署前后只读校验，不运行清洗、迁移或测试。
+
+### TASK-D-DATA-004：高风险操作自动恢复点
 
 - Phase: DEFERRED
 - Owner: Unassigned
@@ -1582,7 +1607,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Owner: Unassigned
 - Status: SPECIFIED
 - Priority: R1
-- Business Source: `.agent-work/REQUEST.md` 9.4
+- Business Source: `.agent-work/REQUEST.md` 9.5
 - Scope: 下一集语义、单集完成三态、跳集空时间、最后一集完结、幂等历史、旧进度兼容、migration、导入导出与同步边界。
 - Required Design: `records.nextEpisode` 与独立 `episode_completions`；下一集更新和完成事件同事务；旧 `progress` 不自动推断；回退不删除历史。
 - First-Version Boundary: 下一集选择、三态、跳集、完结和旧数据显式启用；不含观看时长、批量补历史、跨季聚合和历史编辑。
