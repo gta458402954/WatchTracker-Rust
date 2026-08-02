@@ -2,6 +2,7 @@ use crate::db;
 use crate::db_atomic_helpers::{get_tombstones_tx, mark_records_mutated, set_tombstones_tx};
 use crate::error::AppError;
 use crate::models::{Patch, RecordStatus, UpdateWatchRecord, WatchRecord};
+use crate::record_validation::prepare_update;
 use chrono::Utc;
 use rusqlite::{types::Value, Connection};
 
@@ -14,11 +15,8 @@ pub fn update_record_atomic(
     if actor_id.trim().is_empty() {
         return Err(AppError::General("Missing revision actor ID".to_string()));
     }
-    if matches!(updates.imdb_rating, Patch::Value(value) if !value.is_finite()) {
-        return Err(AppError::General(
-            "Invalid non-finite number for imdbRating".to_string(),
-        ));
-    }
+    let updates = prepare_update(updates.clone())?;
+    let names_changed = updates.original_name.is_some() || updates.chinese_name.is_some();
 
     let mut clauses = Vec::new();
     let mut values = Vec::new();
@@ -120,6 +118,11 @@ pub fn update_record_atomic(
     mark_records_mutated(&transaction)?;
     let record = db::get_record(&transaction, id)?
         .ok_or_else(|| AppError::General(format!("Record not found after update: {id}")))?;
+    if names_changed && record.original_name.is_empty() && record.chinese_name.is_empty() {
+        return Err(AppError::General(
+            "Invalid name: at least one title is required".to_string(),
+        ));
+    }
     transaction.commit()?;
     Ok(record)
 }

@@ -32,7 +32,10 @@ pub fn get_all_records(state: State<DbState>) -> Result<Vec<WatchRecord>, crate:
 }
 
 #[tauri::command]
-pub fn insert_record(state: State<DbState>, r: WatchRecord) -> Result<(), crate::error::AppError> {
+pub fn insert_record(
+    state: State<DbState>,
+    r: WatchRecord,
+) -> Result<WatchRecord, crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
     crate::db_atomic_crud::insert_record_atomic(&mut conn, r)
 }

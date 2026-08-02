@@ -7,8 +7,8 @@ export async function getAllRecordsAsync(): Promise<WatchRecord[]> {
   return invoke('get_all_records');
 }
 
-export async function insertRecord(record: WatchRecord): Promise<void> {
-  await invoke('insert_record', { r: record });
+export async function insertRecord(record: WatchRecord): Promise<WatchRecord> {
+  return invoke<WatchRecord>('insert_record', { r: record });
 }
 
 export async function updateRecord(id: string, updates: UpdateWatchRecord): Promise<WatchRecord> {

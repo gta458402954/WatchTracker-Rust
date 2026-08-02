@@ -4,12 +4,29 @@ use crate::db_atomic_helpers::{
 };
 use crate::error::AppError;
 use crate::models::WatchRecord;
+use crate::record_validation::{prepare_import_batch, prepare_record, RecordWriteContext};
 use chrono::Utc;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
+use std::collections::HashSet;
 
-pub fn insert_record_atomic(conn: &mut Connection, record: WatchRecord) -> Result<(), AppError> {
+pub fn insert_record_atomic(
+    conn: &mut Connection,
+    record: WatchRecord,
+) -> Result<WatchRecord, AppError> {
+    let mut record = prepare_record(record, RecordWriteContext::Local)?;
     let transaction = conn.transaction()?;
     let id = record.id.clone();
+    let previous_revision = transaction
+        .query_row("SELECT rev FROM records WHERE id = ?1", [&id], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?
+        .unwrap_or(0);
+    record.updated_at = Some(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+    record.rev = previous_revision
+        .checked_add(1)
+        .ok_or_else(|| AppError::General("Record revision overflow".to_string()))?;
+    record.rev_actor = "local".to_string();
     db::insert_record(&transaction, record)?;
 
     let mut tombstones = get_tombstones_tx(&transaction)?;
@@ -18,8 +35,10 @@ pub fn insert_record_atomic(conn: &mut Connection, record: WatchRecord) -> Resul
         set_tombstones_tx(&transaction, &tombstones)?;
     }
     mark_records_mutated(&transaction)?;
+    let persisted = db::get_record(&transaction, &id)?
+        .ok_or_else(|| AppError::General(format!("Record not found after upsert: {id}")))?;
     transaction.commit()?;
-    Ok(())
+    Ok(persisted)
 }
 
 pub fn delete_record_atomic(conn: &mut Connection, id: &str) -> Result<(), AppError> {
@@ -45,6 +64,19 @@ pub fn replace_all_records_atomic(
     records: Vec<WatchRecord>,
 ) -> Result<(), AppError> {
     let transaction = conn.transaction()?;
+    let locked_ids = {
+        let mut statement = transaction.prepare("SELECT id FROM records WHERE isLocked = 1")?;
+        let ids = statement
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<HashSet<String>, _>>()?;
+        ids
+    };
+    let records = prepare_import_batch(
+        records
+            .into_iter()
+            .filter(|record| !locked_ids.contains(record.id.trim()))
+            .collect(),
+    )?;
     db::replace_all_records_tx(&transaction, records)?;
     mark_records_mutated(&transaction)?;
     transaction.commit()?;

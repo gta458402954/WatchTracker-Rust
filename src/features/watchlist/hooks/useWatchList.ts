@@ -98,9 +98,9 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
       createdAt: now,
       updatedAt: now,
     };
-    await insertRecord(newRecord);
+    const persisted = await insertRecord(newRecord);
     revisionRef.current++;
-    const updated = [newRecord, ...recordsRef.current];
+    const updated = [persisted, ...recordsRef.current];
     recordsRef.current = updated;
     setRecords(updated);
     autoSyncDebounced();
@@ -138,11 +138,11 @@ export function useWatchList(syncInterval = 30, onBackgroundError?: (message: st
 
   const restoreRecord = useCallback(async (record: WatchRecord) => {
     const restored = { ...record, updatedAt: new Date().toISOString() };
-    await insertRecord(restored);
+    const persisted = await insertRecord(restored);
     revisionRef.current++;
-    const updated = recordsRef.current.some(item => item.id === restored.id)
-      ? recordsRef.current.map(item => item.id === restored.id ? restored : item)
-      : [restored, ...recordsRef.current];
+    const updated = recordsRef.current.some(item => item.id === persisted.id)
+      ? recordsRef.current.map(item => item.id === persisted.id ? persisted : item)
+      : [persisted, ...recordsRef.current];
     recordsRef.current = updated;
     setRecords(updated);
     autoSyncDebounced();

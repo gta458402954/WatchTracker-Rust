@@ -8,6 +8,7 @@ mod db_atomic_update;
 mod error;
 mod models;
 mod net;
+mod record_validation;
 
 #[cfg(test)]
 mod db_atomic_tests;

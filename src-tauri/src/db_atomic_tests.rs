@@ -313,6 +313,138 @@ mod tests {
     }
 
     #[test]
+    fn record_upsert_never_deletes_and_rust_owns_revision_fields() {
+        let mut conn = database();
+        db::insert_record(&conn, record("upserted")).expect("seed existing record");
+        conn.execute_batch(
+            "CREATE TABLE delete_audit (id TEXT NOT NULL);
+             CREATE TRIGGER audit_record_delete AFTER DELETE ON records
+             BEGIN INSERT INTO delete_audit(id) VALUES (OLD.id); END;",
+        )
+        .expect("install delete audit");
+
+        let mut replacement = record("upserted");
+        replacement.chinese_name = "明确 UPSERT".to_string();
+        replacement.updated_at = Some("1900-01-01T00:00:00Z".to_string());
+        replacement.rev = 999;
+        replacement.rev_actor = "untrusted".to_string();
+        let persisted = insert_record_atomic(&mut conn, replacement).expect("upsert record");
+
+        let deletes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM delete_audit", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            deletes, 0,
+            "UPSERT must not use delete-and-reinsert semantics"
+        );
+        assert_eq!(persisted.chinese_name, "明确 UPSERT");
+        assert_eq!(persisted.rev, 3);
+        assert_eq!(persisted.rev_actor, "local");
+        assert_ne!(
+            persisted.updated_at.as_deref(),
+            Some("1900-01-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn local_insert_rejects_invalid_domain_values_without_side_effects() {
+        let mut conn = database();
+        let mut blank = record("blank-name");
+        blank.original_name = "  ".to_string();
+        blank.chinese_name = "".to_string();
+        assert!(insert_record_atomic(&mut conn, blank).is_err());
+
+        let mut invalid_type = record("invalid-type");
+        invalid_type.media_type = "legacy-type".to_string();
+        assert!(insert_record_atomic(&mut conn, invalid_type).is_err());
+
+        let mut invalid_numbers = record("invalid-numbers");
+        invalid_numbers.rating = Some(11);
+        invalid_numbers.movie_duration = Some(-1);
+        assert!(insert_record_atomic(&mut conn, invalid_numbers).is_err());
+
+        assert_eq!(db::get_all_records(&conn).unwrap().len(), 0);
+        assert_eq!(get_records_generation(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn update_validates_changed_fields_but_allows_unrelated_repairs_on_legacy_rows() {
+        let mut conn = database();
+        db::insert_record(&conn, record("legacy-row")).expect("seed record");
+        conn.execute(
+            "UPDATE records SET mediaType = 'legacy-type' WHERE id = 'legacy-row'",
+            [],
+        )
+        .expect("seed compatible dirty field");
+
+        let notes_update = UpdateWatchRecord {
+            notes: Some("仍可修改备注".to_string()),
+            ..Default::default()
+        };
+        let repaired = update_record_atomic(&mut conn, "legacy-row", &notes_update, "local")
+            .expect("update unrelated field on legacy row");
+        assert_eq!(repaired.notes, "仍可修改备注");
+        assert_eq!(repaired.media_type, "legacy-type");
+
+        let invalid_type = UpdateWatchRecord {
+            media_type: Some("bad-type".to_string()),
+            ..Default::default()
+        };
+        assert!(update_record_atomic(&mut conn, "legacy-row", &invalid_type, "local").is_err());
+
+        let blank_names = UpdateWatchRecord {
+            original_name: Some(" ".to_string()),
+            chinese_name: Some("".to_string()),
+            ..Default::default()
+        };
+        assert!(update_record_atomic(&mut conn, "legacy-row", &blank_names, "local").is_err());
+        let unchanged = db::get_record(&conn, "legacy-row").unwrap().unwrap();
+        assert_eq!(unchanged.chinese_name, "原始记录");
+    }
+
+    #[test]
+    fn replacement_normalizes_legacy_values_and_rejects_duplicate_ids_before_deleting() {
+        let mut conn = database();
+        db::insert_record(&conn, record("existing")).expect("seed existing record");
+
+        let mut legacy = record(" legacy ");
+        legacy.original_name = "".to_string();
+        legacy.chinese_name = "".to_string();
+        legacy.media_type = "old-category".to_string();
+        legacy.total_episodes = Some(0);
+        legacy.movie_progress = Some(-1);
+        legacy.movie_duration = Some(0);
+        legacy.rating = Some(99);
+        legacy.interest_level = Some(0);
+        legacy.episode_runtime = Some(-1);
+        legacy.imdb_rating = Some(11.0);
+        legacy.rev = -5;
+        legacy.imdb_id = Some("  ".to_string());
+        replace_all_records_atomic(&mut conn, vec![legacy]).expect("normalize legacy batch");
+
+        let normalized = db::get_record(&conn, "legacy").unwrap().unwrap();
+        assert_eq!(normalized.media_type, "电影");
+        assert_eq!(normalized.total_episodes, None);
+        assert_eq!(normalized.movie_progress, None);
+        assert_eq!(normalized.movie_duration, None);
+        assert_eq!(normalized.rating, None);
+        assert_eq!(normalized.interest_level, None);
+        assert_eq!(normalized.episode_runtime, None);
+        assert_eq!(normalized.imdb_rating, None);
+        assert_eq!(normalized.imdb_id, None);
+        assert_eq!(normalized.rev, 0);
+
+        let before_generation = get_records_generation(&conn).unwrap();
+        let mut duplicate_a = record(" duplicate ");
+        duplicate_a.chinese_name = "第一条".to_string();
+        let mut duplicate_b = record("duplicate");
+        duplicate_b.chinese_name = "第二条".to_string();
+        assert!(replace_all_records_atomic(&mut conn, vec![duplicate_a, duplicate_b]).is_err());
+        assert!(db::get_record(&conn, "legacy").unwrap().is_some());
+        assert_eq!(get_records_generation(&conn).unwrap(), before_generation);
+    }
+
+    #[test]
     fn record_sql_failure_leaves_all_atomic_state_unchanged() {
         let mut conn = database();
         db::insert_record(&conn, record("sql-failure")).expect("seed record");

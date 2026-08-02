@@ -19,6 +19,7 @@ WatchTracker 是一款基于 React、TypeScript、Rust 和 Tauri 2 的 Windows �
 - 已知 V19 数据库会先在 `backups/` 创建并校验快照，再事务化转换回 V18；V20 及更高未知版本会明确拒绝且不修改数据库。
 - WebDAV 使用 schema v2、时间戳合并和简单 Tombstone；ETag、`expectedGeneration`、原子 `SyncCommit`、持久化 outbox 和主动拉取仍属于路线图。
 - 本地 CRUD/全量替换已通过 Rust/SQLite 事务维护记录、Tombstone 和 `records_generation`。
+- 新增、更新、JSON 导入和 WebDAV 替换共用 Rust 领域边界；records 使用明确 UPSERT，本地写入严格校验，旧导入数据采用兼容规范化。
 
 完整架构和已实现/未实现边界见 [docs/CURRENT_ARCHITECTURE.md](docs/CURRENT_ARCHITECTURE.md)。
 

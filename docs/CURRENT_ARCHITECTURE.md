@@ -59,6 +59,7 @@ React UI
 | `src-tauri/src/db_atomic_crud.rs` | 原子新增、删除和全量替换 |
 | `src-tauri/src/db_atomic_update.rs` | 强类型原子部分更新 |
 | `src-tauri/src/db_atomic_helpers.rs` | generation 与 Tombstone helper |
+| `src-tauri/src/record_validation.rs` | 本地严格写入、部分更新及导入/同步兼容规范化的统一领域规则 |
 
 ## 4. 数据库兼容性
 
@@ -70,6 +71,8 @@ React UI
 2. 不要让当前程序与历史 V19 程序交替打开同一个活动数据库，否则历史程序可能再次升级列名。
 3. migration、导入、恢复和同步测试只能使用临时数据库或独立副本。
 4. 未知更高版本不得推测字段或自动降级；应使用支持该版本的程序先导出或提供明确迁移规格。
+
+数据库写入边界统一保留 V18：records 使用明确的 `ON CONFLICT(id) DO UPDATE`，不再依靠删除再插入语义。本地新增严格校验至少一个名称、固定媒体类型和数值范围，并由 Rust 写入 `updatedAt`、`rev`、`revActor`；部分更新只验证被修改字段，因此旧脏行仍可逐步修复。导入和同步全量替换采用兼容模式规范化空文本、旧媒体类型和无效旧数值，重复 ID 会在删除现有记录前使整批失败，锁定记录仍保留本地版本。
 
 ## 5. 当前同步边界
 

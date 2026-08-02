@@ -81,9 +81,16 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               requireKeys(command, args, ['r']);
               const record = structuredClone(args.r as WatchRecord);
               const existingIndex = snapshot.records.findIndex(item => item.id === record.id);
-              if (existingIndex >= 0) snapshot.records[existingIndex] = record;
-              else snapshot.records.unshift(record);
-              return null;
+              const previous = existingIndex >= 0 ? snapshot.records[existingIndex] : undefined;
+              const persisted: WatchRecord = {
+                ...record,
+                updatedAt: new Date().toISOString(),
+                rev: (previous?.rev ?? 0) + 1,
+                revActor: 'local',
+              };
+              if (existingIndex >= 0) snapshot.records[existingIndex] = persisted;
+              else snapshot.records.unshift(persisted);
+              return structuredClone(persisted);
             }
             case 'update_record': {
               requireKeys(command, args, ['id', 'updates']);

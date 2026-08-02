@@ -612,14 +612,71 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
     );
     let is_locked_int = r.is_locked.map(|b| if b { 1 } else { 0 });
     conn.execute(
-        "INSERT OR REPLACE INTO records (id, originalName, chineseName, progress, totalEpisodes, status, platform, rating, startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear, posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating, tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags, rev, revActor) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO records (
+            id, originalName, chineseName, progress, totalEpisodes, status, platform, rating,
+            startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear,
+            posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating,
+            tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags, rev, revActor
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+            originalName = excluded.originalName,
+            chineseName = excluded.chineseName,
+            progress = excluded.progress,
+            totalEpisodes = excluded.totalEpisodes,
+            status = excluded.status,
+            platform = excluded.platform,
+            rating = excluded.rating,
+            startDate = excluded.startDate,
+            endDate = excluded.endDate,
+            notes = excluded.notes,
+            createdAt = excluded.createdAt,
+            movieProgress = excluded.movieProgress,
+            movieDuration = excluded.movieDuration,
+            releaseYear = excluded.releaseYear,
+            posterPath = excluded.posterPath,
+            updatedAt = excluded.updatedAt,
+            imdbId = excluded.imdbId,
+            isLocked = excluded.isLocked,
+            genres = excluded.genres,
+            originCountry = excluded.originCountry,
+            imdbRating = excluded.imdbRating,
+            tmdbStatus = excluded.tmdbStatus,
+            interestLevel = excluded.interestLevel,
+            episodeRuntime = excluded.episodeRuntime,
+            mediaType = excluded.mediaType,
+            contentTags = excluded.contentTags,
+            rev = excluded.rev,
+            revActor = excluded.revActor",
         params![
-            r.id, r.original_name, r.chinese_name, r.progress, r.total_episodes,
-            r.status, r.platform, r.rating, r.start_date, r.end_date,
-            r.notes, r.created_at, r.movie_progress, r.movie_duration,
-            r.release_year, r.poster_path, r.updated_at, r.imdb_id, is_locked_int,
-            r.genres, r.origin_country, r.imdb_rating, r.tmdb_status, r.interest_level, r.episode_runtime, r.media_type, r.content_tags,
-            r.rev, r.rev_actor
+            r.id,
+            r.original_name,
+            r.chinese_name,
+            r.progress,
+            r.total_episodes,
+            r.status,
+            r.platform,
+            r.rating,
+            r.start_date,
+            r.end_date,
+            r.notes,
+            r.created_at,
+            r.movie_progress,
+            r.movie_duration,
+            r.release_year,
+            r.poster_path,
+            r.updated_at,
+            r.imdb_id,
+            is_locked_int,
+            r.genres,
+            r.origin_country,
+            r.imdb_rating,
+            r.tmdb_status,
+            r.interest_level,
+            r.episode_runtime,
+            r.media_type,
+            r.content_tags,
+            r.rev,
+            r.rev_actor
         ],
     )?;
     Ok(())
@@ -649,7 +706,8 @@ pub(crate) fn replace_all_records_tx(conn: &Connection, records: Vec<WatchRecord
 
 pub fn set_setting(conn: &Connection, key: String, value: String) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value],
     )?;
     Ok(())

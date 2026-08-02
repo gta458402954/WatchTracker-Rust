@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001` 已实现，`TASK-D-DATA-002` 已部分实现，剩余为 1 个 `SPECIFIED`、15 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001` 与 `TASK-D-DATA-002` 已实现，剩余为 1 个 `SPECIFIED`、15 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1485,7 +1485,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | 任务 | 优先级 | 分类 | 状态 | 原路线图归属 |
 | --- | --- | --- | --- | --- |
 | `TASK-D-DATA-001` | R0 | 数据安全 | IMPLEMENTED | R0 元数据补全 |
-| `TASK-D-DATA-002` | R0 | 数据完整性 | PARTIALLY_IMPLEMENTED | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
+| `TASK-D-DATA-002` | R0 | 数据完整性 | IMPLEMENTED | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
 | `TASK-D-DATA-003` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | NEEDS-DESIGN | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
@@ -1517,14 +1517,15 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-DATA-002：V18/V19 兼容与领域约束加固
 
-- Phase: ACTIVE
+- Phase: COMPLETED
 - Owner: Codex
-- Status: PARTIALLY_IMPLEMENTED
+- Status: IMPLEMENTED
 - Priority: R0
 - Scope: 高版本数据库显式拒绝或兼容迁移、V18/V19 策略、明确 UPSERT、导入/全量替换/部分更新统一校验。
 - Implemented Compatibility: V18 是唯一运行格式；V19 打开前使用 SQLite backup API 创建并校验快照，然后在单一事务中恢复 21 个 camelCase 列名及 V18 版本标记；失败整体回滚并阻止读写。V20+ 在任何 schema 写入前明确拒绝。界面显示版本专用错误或一次性成功提示。
 - Acceptance Evidence: Rust 临时文件库覆盖 V19 成功、故障触发器回滚/备份保留及 V20 源文件逐字节不变；Playwright mock 覆盖 V20 不读取 records/settings 和 V19 成功提示只显示一次。
-- Remaining Design: legacy records `INSERT OR REPLACE`、导入/全量替换/部分更新与 Rust 边界的统一领域校验、明确 UPSERT 语义仍未完成。
+- Implemented Domain Boundary: records 与 settings 已移除 `INSERT OR REPLACE`；records 使用 `ON CONFLICT(id) DO UPDATE`，不会隐式删除再插入。本地新增严格校验名称、媒体类型与数值范围，时间/修订字段由 Rust 生成；部分更新只验证本次变更并允许修复旧脏行；导入/同步替换兼容规范化旧媒体类型、空文本和旧数值，重复 ID 在删除前整批拒绝，锁定本地记录继续优先保留。
+- Final Acceptance: Rust 临时库验证 UPSERT 不触发 DELETE、系统字段所有权、非法新增零副作用、旧脏行无关字段可修改、名称/媒体类型约束、导入兼容规范化、重复 ID 回滚、锁定保留，以及此前 V19/V20 版本矩阵；前端使用 Rust 返回的持久化新增记录，避免时间/修订状态漂移。
 
 ### TASK-D-DATA-003：高风险操作自动恢复点
 
