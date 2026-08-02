@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已实现，剩余为 1 个 `SPECIFIED`、12 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：18 个按领域重新归类的独立任务；`TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已实现，剩余为 2 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1489,7 +1489,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-DATA-003` | R0 | 数据正确性 | IMPLEMENTED | 国家解析与平台字段保护 |
 | `TASK-D-DATA-004` | R0 | 数据恢复 | IMPLEMENTED | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | IMPLEMENTED | R0 冲突与版本记录 |
-| `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
+| `TASK-D-SYNC-002` | R0 | 同步可靠性 | SPECIFIED | 专项设计见 `docs/SYNC_RELIABILITY_DESIGN.md` |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | NEEDS-DESIGN | R0 WebDAV 目标隔离 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
@@ -1585,11 +1585,15 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 - Phase: DEFERRED
 - Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Status: SPECIFIED
 - Priority: R0
 - Scope: 持久化 dirty/outbox、崩溃恢复补跑、暂停/恢复语义，以及启动、窗口聚焦、网络恢复和可配置周期拉取。
 - Current Basis: 当前仅有写入后内存 debounce 和单进程 in-flight 串行化；退出会丢失定时意图，没有无本地修改时的主动发现。
 - Dependency: 与 `TASK-D-SYNC-001` 共用幂等提交、重试和冲突语义，但可分阶段交付。
+- Approved Design: `docs/SYNC_RELIABILITY_DESIGN.md` 使用单槽 generation 高水位 outbox；所有本地记录事务原子入队，只有成功的 `commit_sync_result(expectedGeneration)` 才能原子确认。暂停状态和退避持久化，暂停不删除任务且允许手动同步；编辑 debounce 与默认 15 分钟的主动拉取周期分离。
+- Trigger Model: 启动、窗口重新聚焦、页面重新可见、网络恢复和周期到期进入同一串行协调器；运行中触发只请求基于最新 SQLite 状态再跑一次，不复用旧 snapshot，也不阻塞应用退出。
+- Failure Model: 网络/5xx/remote busy 持久退避，`stale_local_snapshot` 快速重读，认证和安全门禁停止自动重试；outbox 无过期时间，通知按错误码去重。
+- Boundary: 保持 V18；不实施 WebDAV target ID、账号/URL 切换迁移、凭据保护或后台常驻服务，这些仍由 `TASK-D-SYNC-003`、`TASK-D-SEC-001` 及后续任务跟踪。
 
 ### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
 

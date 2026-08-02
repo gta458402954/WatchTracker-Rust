@@ -1,6 +1,6 @@
 # 完整实施方案
 
-> **状态更新（2026-08-02）：** Gate A/B、路线图 `TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已完成，当前权威源码为本仓库 `main`；正式便携版的精确构建提交号显示在应用顶部栏。schema v3、强 ETag、三方字段合并和 `expectedGeneration` 已成为当前实现；Zustand、持久化 outbox、主动拉取和同步目标隔离仍属于后续路线图。当前实现边界见 `docs/CURRENT_ARCHITECTURE.md`。
+> **状态更新（2026-08-02）：** Gate A/B、路线图 `TASK-D-DATA-001`~`004` 与 `TASK-D-SYNC-001` 已完成，当前权威源码为本仓库 `main`；正式便携版的精确构建提交号显示在应用顶部栏。schema v3、强 ETag、三方字段合并和 `expectedGeneration` 已成为当前实现；`TASK-D-SYNC-002` 的持久化 outbox 与主动拉取已完成专项设计、尚未实施，Zustand 和同步目标隔离仍属于后续路线图。当前实现边界见 `docs/CURRENT_ARCHITECTURE.md`。
 
 > 原方案基于 2026-07-26 的实际工作区；2026-07-27 已增加恢复 V2 前置门禁。实施者必须完整读取 `.agent-work/RECOVERY_REBUILD_PLAN.md`。Gate R 通过前不得直接实施本文件 Phase A；阶段 A 未经 Codex 验收为 PASS（或用户明确接受的 CONDITIONAL PASS）前，阶段 B 不得进入 READY。
 
