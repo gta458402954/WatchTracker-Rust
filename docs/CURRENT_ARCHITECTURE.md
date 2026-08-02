@@ -104,7 +104,9 @@ React UI
 
 `TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003` 与同步修订 `TASK-D-SYNC-001-R2` 已经实现。同步使用独立 `records-v3.json` 和 ETag 条件提交（强 ETag 走 HTTP `If-Match`，弱 ETag 走 WebDAV `If`）：不同字段按本地共同基线三方合并，同字段、删除/编辑和锁定差异进入持久冲突中心；Rust 以 `expectedGeneration` 和单事务 SyncCommit 防止网络等待期间的新本地修改被覆盖。所有本地业务写入同时提升当前目标的持久 outbox，并维护按 ID 合并的版本暂存；PUT 前写入可恢复发布意图。自动协调器在启动、聚焦、网络恢复和周期到期时始终先拉取，再合并并按需上传；本地提交只写变化的记录。
 
-WebDAV URL＋保留大小写的用户名经规范化后生成 SHA-256 target ID。凭据、baseline、ETag、冲突、last commit、旧版指纹、outbox、scheduler、staging 与 publish intent 均按 `sync_target::<id>::…` 隔离；records、Tombstone、generation 和 device ID 继续全局共用。切换前只有只读探测，确认激活会提升 target epoch 并立即 Pull → Merge → Push；切换期间完成的旧请求无法通过 target ID＋epoch CAS 提交到新目标。断开和切换只冻结旧目标状态，切回时按旧 baseline 重建离线差异。旧全局同步键先创建 `target-migration` 恢复点，再以一个 SQLite 事务迁入目标命名空间。数据库仍为 V18，高风险落盘继续先创建恢复点。当前下一项 R0 路线图任务为 `TASK-D-SEC-001`，需要先完成专项设计。完整清单和状态以 `.agent-work/TASKS.md` 为准。
+WebDAV URL＋保留大小写的用户名经规范化后生成 SHA-256 target ID。凭据、baseline、ETag、冲突、last commit、旧版指纹、outbox、scheduler、staging 与 publish intent 均按 `sync_target::<id>::…` 隔离；records、Tombstone、generation 和 device ID 继续全局共用。切换前只有只读探测，确认激活会提升 target epoch 并立即 Pull → Merge → Push；切换期间完成的旧请求无法通过 target ID＋epoch CAS 提交到新目标。断开和切换只冻结旧目标状态，切回时按旧 baseline 重建离线差异。旧全局同步键先创建 `target-migration` 恢复点，再以一个 SQLite 事务迁入目标命名空间。数据库仍为 V18，高风险落盘继续先创建恢复点。
+
+下一项 R0 路线图任务 `TASK-D-SEC-001` 已形成 `docs/SECURE_CREDENTIAL_STORAGE_DESIGN.md` 草案：计划把 WebDAV/TMDB 秘密本体迁入当前 Windows 用户的 Credential Manager，SQLite 仅保留固定引用标记，并移除已保存秘密往返 React 的通用解密 IPC。该设计等待用户确认后实施。完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 

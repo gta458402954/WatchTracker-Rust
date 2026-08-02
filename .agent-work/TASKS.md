@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003` 与 `TASK-D-SYNC-001-R2` 已实现，剩余为 1 个 `SPECIFIED`、11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003` 与 `TASK-D-SYNC-001-R2` 已实现，剩余为 1 个 `DRAFT`、1 个 `SPECIFIED`、10 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1492,7 +1492,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | IMPLEMENTED | 持久 outbox、主动拉取与退避已实现 |
 | `TASK-D-SYNC-001-R2` | R0 | 同步恢复与增量落盘 | IMPLEMENTED | 版本暂存、发布意图与伪冲突修复 |
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | IMPLEMENTED | R0 WebDAV 目标隔离、安全切换与 V18 迁移已实现 |
-| `TASK-D-SEC-001` | R0 | 凭据安全 | NEEDS-DESIGN | R0 Windows 凭据迁移 |
+| `TASK-D-SEC-001` | R0 | 凭据安全 | DRAFT | R0 Windows Credential Manager 迁移设计待确认 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | SPECIFIED | R1 逐集完成时间 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | NEEDS-DESIGN | R1 今晚看什么 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | R1 Trakt |
@@ -1628,13 +1628,16 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-SEC-001：Windows 凭据保护与旧格式迁移
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: DESIGN
+- Owner: Codex
+- Status: DRAFT
 - Priority: R0
 - Scope: 使用 Windows 原生受保护存储保存 WebDAV/TMDB 凭据，迁移 `portable:v1` 和 `machine_bound:v1`，并提供机器变化后的可诊断恢复流程。
 - Current Basis: 当前 AES-GCM 密钥由 machine UID 与固定 salt 派生；`portable:v1` 仍可直接 Base64 还原。
 - Security Gate: 不在日志、导出、同步载荷或错误通知中暴露凭据；迁移成功后才删除旧值。
+- Draft Design: `docs/SECURE_CREDENTIAL_STORAGE_DESIGN.md`。推荐使用当前 Windows 用户的 Credential Manager `CRED_TYPE_GENERIC`＋`CRED_PERSIST_LOCAL_MACHINE`；数据库仅保存 `wincred:v1`，TargetName 由固定逻辑 ID 派生。WebDAV/TMDB 已保存秘密不再返回 React，Rust 网络命令内部读取。
+- Migration Boundary: 以不含秘密的逐项写前日志协调 Credential Manager 与 SQLite；先 CredWrite＋CredRead 回读验证，再以 V18 事务替换旧值。失败只阻断对应 secret 功能，本地记录与其他 target 可用。迁移不创建会复制弱格式秘密的普通全库恢复点。
+- Pending Confirmation: 便携数据库移到新机器时不携带已保存密码，需要重新输入；第一版只提示迁移前历史备份风险，不自动删除任何恢复点。确认后转 READY。
 
 ### TASK-D-HISTORY-001：逐集完成时间与完结状态
 
