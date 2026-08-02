@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { WatchRecord, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
-import { classifyTmdb, mediaTypeOf, mergeContentTags, TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
+import { classifyTmdb, inferPlatformFromTmdb, mediaTypeOf, mergeContentTags, TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
 import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 
 interface RecordFormProps {
@@ -204,13 +204,10 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
         const classification = classifyTmdb(detail, isTV, form.mediaType);
         const originCountry = classification.originCountry;
-        let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
-        if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
-          networkName = '';
-        } else {
-          if (networkName === 'CBS All Access') networkName = 'CBS';
-          if (networkName && /^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
-        }
+        const networkName = inferPlatformFromTmdb(
+          originCountry,
+          detail.networks?.[0]?.name || detail.production_companies?.[0]?.name,
+        );
         const genres = classification.genres;
 
         const updates: Partial<typeof form> = {
@@ -262,13 +259,10 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
       const classification = classifyTmdb(detail, isTV, form.mediaType);
       const originCountry = classification.originCountry;
-      let networkName = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
-      if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
-        networkName = '';
-      } else {
-        if (networkName === 'CBS All Access') networkName = 'CBS';
-        if (networkName && /^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
-      }
+      const networkName = inferPlatformFromTmdb(
+        originCountry,
+        detail.networks?.[0]?.name || detail.production_companies?.[0]?.name,
+      );
       const genres = classification.genres;
 
       // 电影或单季剧集直接填充
@@ -325,13 +319,10 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
     const classification = classifyTmdb(selectedSeries, true, form.mediaType);
     const originCountry = classification.originCountry;
-    let networkName = selectedSeries.networks?.[0]?.name || selectedSeries.production_companies?.[0]?.name;
-    if (originCountry && (originCountry.includes('CN') || originCountry.includes('中国'))) {
-      networkName = '';
-    } else {
-      if (networkName === 'CBS All Access') networkName = 'CBS';
-      if (networkName && /^Apple\s*Tv/i.test(networkName)) networkName = 'Apple TV+';
-    }
+    const networkName = inferPlatformFromTmdb(
+      originCountry,
+      selectedSeries.networks?.[0]?.name || selectedSeries.production_companies?.[0]?.name,
+    );
     const genres = classification.genres;
 
     setForm(prev => ({

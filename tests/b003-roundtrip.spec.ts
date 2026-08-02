@@ -269,6 +269,48 @@ test('@conditional-record-form new movie preserves all normalized countries and 
   expect(inserted.contentTags).toBe('律政,自定义,美国,英国');
 });
 
+test('@expected-record-form saving a mainland-China record never clears a user platform', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [record('平台保护', {
+      mediaType: '剧集', totalEpisodes: 12, originCountry: 'CN', platform: '用户手工平台',
+    })],
+  });
+  await page.goto('/');
+  await page.getByTitle('编辑').click();
+  await page.getByPlaceholder('随便写点什么...').fill('只修改备注');
+  await page.getByRole('button', { name: '保存修改' }).click();
+
+  const update = (await mockSnapshot(page)).calls.find(call => call.command === 'update_record');
+  expect(update?.args.updates).toMatchObject({ notes: '只修改备注', platform: '用户手工平台' });
+});
+
+test('@expected-record-form mainland-China TMDB metadata does not infer a missing platform', async ({ page }) => {
+  await setupMockIpc(page, {
+    settings: { tmdb_api_key: 'encrypted:test-key' },
+    tmdbSearchResults: [{ id: 451, name: '大陆剧集候选', media_type: 'tv' }],
+    tmdbDetail: {
+      id: 451,
+      name: '大陆剧集候选',
+      original_name: 'Mainland Series',
+      origin_country: ['CN'],
+      networks: [{ name: 'Tencent Video' }],
+      number_of_episodes: 20,
+    },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await page.locator('select:has(option[value="剧集"])').selectOption('剧集');
+  await page.getByPlaceholder('请输入中文名称').fill('大陆剧集候选');
+  await page.getByRole('button', { name: /自动填充/ }).click();
+  await page.getByRole('button', { name: /大陆剧集候选/ }).click();
+  await expect(page.getByPlaceholder('Netflix / 爱奇艺 / B站...')).toHaveValue('');
+  await page.getByRole('button', { name: '添加记录' }).click();
+
+  const inserted = (await mockSnapshot(page)).calls.find(call => call.command === 'insert_record')?.args.r as WatchRecord;
+  expect(inserted.originCountry).toBe('CN');
+  expect(inserted.platform).toBe('');
+});
+
 test('@conditional-record-form edited TV season preserves countries and custom tags', async ({ page }) => {
   await setupMockIpc(page, {
     records: [record('旧剧集', {
@@ -284,6 +326,7 @@ test('@conditional-record-form edited TV season preserves countries and custom t
       name: '剧集候选',
       original_name: 'Series Candidate',
       origin_country: [' hk ', 'TW', 'uk', 'HK'],
+      networks: [{ name: 'Apple Tv' }],
       genres: [{ name: 'Drama' }],
       seasons: [{ id: 510, name: '第一季', season_number: 1, episode_count: 10 }],
     },
@@ -300,6 +343,7 @@ test('@conditional-record-form edited TV season preserves countries and custom t
   expect(update?.args.updates).toMatchObject({
     originCountry: 'HK, TW, GB',
     contentTags: '悬疑,自定义,中国香港,中国台湾,英国',
+    platform: 'Apple TV+',
   });
 });
 

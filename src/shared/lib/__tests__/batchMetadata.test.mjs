@@ -70,12 +70,12 @@ describe('field-level safe patch', () => {
   test('fills movie fields only and never overwrites existing metadata', () => {
     const original = record({
       genres: 'Local genre', originCountry: 'JP', contentTags: '自定义', imdbRating: 8.8,
-      tmdbStatus: 'Local status', mediaType: '电影',
+      tmdbStatus: 'Local status', mediaType: '电影', platform: '用户平台',
     });
     const patch = buildBatchMetadataPatch(original, {
       runtime: 120, vote_average: 6.5, status: 'Released', genres: [{ name: 'Drama' }],
       production_countries: [{ iso_3166_1: 'US' }], number_of_episodes: 99,
-      episode_run_time: [45],
+      episode_run_time: [45], production_companies: [{ name: 'Remote Platform' }],
     }, 'movie');
 
     assert.deepEqual(patch.updates, { movieDuration: 7200 });
@@ -107,6 +107,16 @@ describe('field-level safe patch', () => {
       runtime: 0, vote_average: 0, status: ' ', genres: [], production_countries: [],
     }, 'movie');
     assert.deepEqual(patch.updates, {});
+  });
+
+  test('does not infer a platform for mainland-China metadata', () => {
+    const patch = buildBatchMetadataPatch(record(), {
+      production_countries: [{ iso_3166_1: 'CN' }],
+      production_companies: [{ name: 'Tencent Video' }],
+    }, 'movie');
+
+    assert.equal('platform' in patch.updates, false);
+    assert.equal(patch.updates.originCountry, 'CN');
   });
 
   test('fills every supported missing field supplied by TMDB', () => {

@@ -1,5 +1,5 @@
 import type { MediaType, UpdateWatchRecord, WatchRecord } from '../types/index.ts';
-import { classifyTmdb, mediaTypeOf, type TmdbMedia } from './classification.ts';
+import { classifyTmdb, inferPlatformFromTmdb, mediaTypeOf, type TmdbMedia } from './classification.ts';
 
 export type TmdbEntityType = 'movie' | 'tv';
 export type BatchMetadataField = keyof Pick<UpdateWatchRecord,
@@ -181,13 +181,10 @@ export function buildBatchMetadataPatch(
   const releaseDate = targetSeason?.air_date || detail.release_date || detail.first_air_date;
   const releaseYear = releaseDate?.split('-')[0];
   const posterPath = targetSeason?.poster_path || detail.poster_path;
-  let platform = detail.networks?.[0]?.name || detail.production_companies?.[0]?.name;
-  if (classification.originCountry?.split(/[,，]/).map(code => code.trim()).includes('CN')) {
-    platform = undefined;
-  } else {
-    if (platform === 'CBS All Access') platform = 'CBS';
-    if (platform && /^Apple\s*Tv/i.test(platform)) platform = 'Apple TV+';
-  }
+  const platform = inferPlatformFromTmdb(
+    classification.originCountry,
+    detail.networks?.[0]?.name || detail.production_companies?.[0]?.name,
+  );
 
   if (isMissingText(record.chineseName) && localizedName?.trim()) updates.chineseName = localizedName.trim();
   if (isMissingText(record.originalName) && originalName?.trim()) updates.originalName = originalName.trim();

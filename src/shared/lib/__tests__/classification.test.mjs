@@ -5,6 +5,8 @@ import {
   aggregateRegions,
   compareRegionOptions,
   classifyTmdb,
+  hasCountryCode,
+  inferPlatformFromTmdb,
   mergeContentTags,
   normalizeCountryCodes,
   regionCodesOf,
@@ -34,6 +36,25 @@ describe('country-code normalization (FR-01)', () => {
   test('keeps CN, HK, and TW distinct and recognizes legacy Chinese labels', () => {
     assert.deepEqual(normalizeCountryCodes('中国大陆, 香港, TW'), ['CN', 'HK', 'TW']);
     assert.equal(countryCodeOfLabel('英国'), 'GB');
+  });
+});
+
+describe('TASK-D-DATA-003 exact country and platform inference', () => {
+  test('matches mainland China only after normalization without confusing HK, TW, or substrings', () => {
+    assert.equal(hasCountryCode('us, cn，GB', 'CN'), true);
+    assert.equal(hasCountryCode('中国大陆, 香港, TW', 'cn'), true);
+    assert.equal(hasCountryCode('中国香港, 中国台湾', 'CN'), false);
+    assert.equal(hasCountryCode('ACN, CND', 'CN'), false);
+    assert.equal(hasCountryCode('', 'CN'), false);
+  });
+
+  test('suppresses only inferred mainland-China platforms and normalizes known platform names', () => {
+    assert.equal(inferPlatformFromTmdb('CN, US', 'Tencent Video'), null);
+    assert.equal(inferPlatformFromTmdb('中国大陆', ' iQIYI '), null);
+    assert.equal(inferPlatformFromTmdb('HK, TW', ' Apple Tv '), 'Apple TV+');
+    assert.equal(inferPlatformFromTmdb('US', 'CBS All Access'), 'CBS');
+    assert.equal(inferPlatformFromTmdb('US', ' Netflix '), 'Netflix');
+    assert.equal(inferPlatformFromTmdb('US', '  '), null);
   });
 });
 

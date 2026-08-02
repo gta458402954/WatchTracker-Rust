@@ -196,9 +196,6 @@ export default function App() {
     const today = localDateString();
     if (data.status === '在看' && !data.startDate) data.startDate = today;
     if (data.status === '已看' && !data.endDate) data.endDate = today;
-    if (data.originCountry && (data.originCountry.includes('CN') || data.originCountry.includes('中国'))) {
-      data.platform = '';
-    }
 
     try {
       if (editingRecord) {

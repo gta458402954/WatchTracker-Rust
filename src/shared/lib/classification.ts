@@ -96,6 +96,25 @@ export function normalizeCountryCodes(originCountry?: string | null): CountryCod
   return [...new Set(codes)];
 }
 
+export function hasCountryCode(originCountry: string | null | undefined, countryCode: CountryCode): boolean {
+  const normalizedCode = countryCode.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalizedCode)
+    && normalizeCountryCodes(originCountry).includes(normalizedCode);
+}
+
+export function inferPlatformFromTmdb(
+  originCountry: string | null | undefined,
+  candidate: string | null | undefined,
+): string | null {
+  if (hasCountryCode(originCountry, 'CN')) return null;
+
+  const platform = candidate?.trim();
+  if (!platform) return null;
+  if (platform === 'CBS All Access') return 'CBS';
+  if (/^Apple\s*Tv/i.test(platform)) return 'Apple TV+';
+  return platform;
+}
+
 export function regionCodesOf(
   record: Pick<WatchRecord, 'originCountry' | 'contentTags'>,
 ): CountryCode[] {

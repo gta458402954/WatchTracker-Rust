@@ -1486,7 +1486,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | --- | --- | --- | --- | --- |
 | `TASK-D-DATA-001` | R0 | 数据安全 | IMPLEMENTED | R0 元数据补全 |
 | `TASK-D-DATA-002` | R0 | 数据完整性 | IMPLEMENTED | R1 数据库加固，提升为 R0并纳入 V18/V19 兼容 |
-| `TASK-D-DATA-003` | R0 | 数据正确性 | SPECIFIED | 新增：国家解析与平台字段保护；排为当前下一项 |
+| `TASK-D-DATA-003` | R0 | 数据正确性 | IMPLEMENTED | 国家解析与平台字段保护 |
 | `TASK-D-DATA-004` | R0 | 数据恢复 | NEEDS-DESIGN | R3 自动备份，提升为 R0 |
 | `TASK-D-SYNC-001` | R0 | 同步一致性 | NEEDS-DESIGN | R0 冲突与版本记录 |
 | `TASK-D-SYNC-002` | R0 | 同步可靠性 | NEEDS-DESIGN | 合并 R0 outbox 与主动拉取 |
@@ -1530,9 +1530,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-DATA-003：国家解析统一与平台字段保护
 
-- Phase: NEXT
+- Phase: COMPLETED
 - Owner: Codex
-- Status: SPECIFIED
+- Status: IMPLEMENTED
 - Priority: R0
 - Business Source: `.agent-work/REQUEST.md` 9.4
 - Problem: `App.handleSave` 和 `RecordForm` 三条 TMDB 路径使用 `includes('CN')/includes('中国')`；前者会在普通保存时清空已有平台，后者重复了脆弱判断。“中国香港”“中国台湾”旧值也会因包含“中国”而被误判为中国大陆。
@@ -1551,6 +1551,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
   - 源码中不再存在业务层 `originCountry.includes('CN')` 或 `includes('中国')`；批量补全继续满足“只填缺失字段”。
   - typecheck、lint、Node、Playwright、Rust、生产构建全部通过；便携版由干净提交构建，部署前后数据库哈希、V18 版本和记录数一致。
 - Safety: 自动化只使用 mock/临时数据；真实便携数据库只做部署前后只读校验，不运行清洗、迁移或测试。
+- Implementation: `classification.ts` 新增精确国家谓词与平台推测纯函数；`App.handleSave` 不再改写平台；RecordForm 的电影、剧集、具体季和 `batchMetadata.ts` 已统一接入该函数。顶部筛选仍只读取第一个国家，平台推测则按完整国家列表判断是否包含 CN。
+- Acceptance Evidence: Node 55/55 覆盖 CN/HK/TW、旧中文名称、非法子串、平台别名和批量 CN 抑制；Playwright 29/29 覆盖普通保存保留用户平台、CN 表单补全不推测平台及 HK/TW 正常填入 Apple TV+；typecheck、lint、生产构建、Rust fmt/clippy 和 36/36 Rust tests 全部通过。源码扫描确认业务层不再存在 `originCountry.includes('CN')` 或 `includes('中国')`。
 
 ### TASK-D-DATA-004：高风险操作自动恢复点
 
