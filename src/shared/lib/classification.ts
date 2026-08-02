@@ -115,6 +115,17 @@ export function inferPlatformFromTmdb(
   return platform;
 }
 
+export function positiveEpisodeRuntimeOf(
+  detail: Pick<TmdbMedia, 'episode_run_time' | 'runtime'>,
+): number | null {
+  const runtime = detail.episode_run_time?.find(value => Number.isFinite(value) && value > 0)
+    ?? detail.runtime;
+  if (typeof runtime !== 'number' || !Number.isFinite(runtime) || runtime <= 0) return null;
+
+  const rounded = Math.round(runtime);
+  return rounded > 0 ? rounded : null;
+}
+
 export function regionCodesOf(
   record: Pick<WatchRecord, 'originCountry' | 'contentTags'>,
 ): CountryCode[] {

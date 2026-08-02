@@ -49,12 +49,16 @@ pub fn update_record(
 ) -> Result<WatchRecord, crate::error::AppError> {
     log::info!("[Commands] update_record called for id: {}", id);
     let mut conn = lock_database(state.inner())?;
-    crate::db_atomic_update::update_record_atomic(
+    let result = crate::db_atomic_update::update_record_atomic(
         &mut conn,
         &id,
         &updates,
         actor_id.as_deref().unwrap_or("local"),
-    )
+    );
+    if let Err(error) = &result {
+        log::warn!("[Commands] update_record rejected for id {id}: {error}");
+    }
+    result
 }
 
 #[tauri::command]

@@ -253,6 +253,7 @@ test('@conditional-record-form new movie preserves all normalized countries and 
         { iso_3166_1: 'us' }, { iso_3166_1: ' UK ' }, { iso_3166_1: 'xx' },
       ],
       genres: [{ name: 'Drama' }],
+      runtime: 110,
     },
   });
   await page.goto('/');
@@ -267,6 +268,8 @@ test('@conditional-record-form new movie preserves all normalized countries and 
   const inserted = snapshot.calls.find(call => call.command === 'insert_record')?.args.r as WatchRecord;
   expect(inserted.originCountry).toBe('US, GB, XX');
   expect(inserted.contentTags).toBe('律政,自定义,美国,英国');
+  expect(inserted.movieDuration).toBe(6600);
+  expect(inserted.episodeRuntime).toBeNull();
 });
 
 test('@expected-record-form saving a mainland-China record never clears a user platform', async ({ page }) => {
@@ -309,6 +312,7 @@ test('@expected-record-form mainland-China TMDB metadata does not infer a missin
   const inserted = (await mockSnapshot(page)).calls.find(call => call.command === 'insert_record')?.args.r as WatchRecord;
   expect(inserted.originCountry).toBe('CN');
   expect(inserted.platform).toBe('');
+  expect(inserted.episodeRuntime).toBeNull();
 });
 
 test('@conditional-record-form edited TV season preserves countries and custom tags', async ({ page }) => {
@@ -344,6 +348,7 @@ test('@conditional-record-form edited TV season preserves countries and custom t
     originCountry: 'HK, TW, GB',
     contentTags: '悬疑,自定义,中国香港,中国台湾,英国',
     platform: 'Apple TV+',
+    episodeRuntime: null,
   });
 });
 

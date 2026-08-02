@@ -1,5 +1,11 @@
 import type { MediaType, UpdateWatchRecord, WatchRecord } from '../types/index.ts';
-import { classifyTmdb, inferPlatformFromTmdb, mediaTypeOf, type TmdbMedia } from './classification.ts';
+import {
+  classifyTmdb,
+  inferPlatformFromTmdb,
+  mediaTypeOf,
+  positiveEpisodeRuntimeOf,
+  type TmdbMedia,
+} from './classification.ts';
 
 export type TmdbEntityType = 'movie' | 'tv';
 export type BatchMetadataField = keyof Pick<UpdateWatchRecord,
@@ -213,9 +219,9 @@ export function buildBatchMetadataPatch(
       updates.movieDuration = Math.round(detail.runtime * 60);
     }
   } else {
-    const runtime = detail.episode_run_time?.find(isPositiveNumber) ?? detail.runtime;
-    if (!isPositiveNumber(record.episodeRuntime) && isPositiveNumber(runtime)) {
-      updates.episodeRuntime = Math.round(runtime);
+    const runtime = positiveEpisodeRuntimeOf(detail);
+    if (!isPositiveNumber(record.episodeRuntime) && runtime !== null) {
+      updates.episodeRuntime = runtime;
     }
 
     const episodeCount = seasonNumber == null

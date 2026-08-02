@@ -1552,7 +1552,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
   - typecheck、lint、Node、Playwright、Rust、生产构建全部通过；便携版由干净提交构建，部署前后数据库哈希、V18 版本和记录数一致。
 - Safety: 自动化只使用 mock/临时数据；真实便携数据库只做部署前后只读校验，不运行清洗、迁移或测试。
 - Implementation: `classification.ts` 新增精确国家谓词与平台推测纯函数；`App.handleSave` 不再改写平台；RecordForm 的电影、剧集、具体季和 `batchMetadata.ts` 已统一接入该函数。顶部筛选仍只读取第一个国家，平台推测则按完整国家列表判断是否包含 CN。
-- Acceptance Evidence: Node 55/55 覆盖 CN/HK/TW、旧中文名称、非法子串、平台别名和批量 CN 抑制；Playwright 29/29 覆盖普通保存保留用户平台、CN 表单补全不推测平台及 HK/TW 正常填入 Apple TV+；typecheck、lint、生产构建、Rust fmt/clippy 和 36/36 Rust tests 全部通过。源码扫描确认业务层不再存在 `originCountry.includes('CN')` 或 `includes('中国')`。
+- Acceptance Evidence: Node 56/56 覆盖 CN/HK/TW、旧中文名称、非法子串、平台别名、批量 CN 抑制及 TMDB 缺失/零/异常单集时长；Playwright 29/29 覆盖普通保存保留用户平台、CN 表单补全不推测平台、HK/TW 正常填入 Apple TV+，以及电影不混写单集时长、剧集缺失时长保持空值；typecheck、lint、生产构建、Rust fmt/clippy 和 36/36 Rust tests 全部通过。源码扫描确认业务层不再存在 `originCountry.includes('CN')` 或 `includes('中国')`。
+- Follow-up Fix: 便携版日志定位到 RecordForm 在 TMDB 不提供剧集时长时发送 `episodeRuntime: 0`，与 DATA-002 的正数领域约束冲突。电影、剧集和具体季现复用 `positiveEpisodeRuntimeOf`：电影不写单集时长，剧集仅在远端提供正数时更新，否则保留原值/null；IPC mock 会拒绝零值，Rust 命令日志会记录安全的字段级拒绝原因。
 
 ### TASK-D-DATA-004：高风险操作自动恢复点
 

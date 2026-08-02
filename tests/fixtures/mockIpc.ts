@@ -95,6 +95,9 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'update_record': {
               requireKeys(command, args, ['id', 'updates']);
               const id = args.id as string;
+              if ((args.updates as Partial<WatchRecord>).episodeRuntime === 0) {
+                throw new Error('Invalid episodeRuntime: must be greater than zero');
+              }
               if ((remainingUpdateFailures[id] ?? 0) > 0) {
                 remainingUpdateFailures[id] -= 1;
                 throw new Error('Injected update failure');

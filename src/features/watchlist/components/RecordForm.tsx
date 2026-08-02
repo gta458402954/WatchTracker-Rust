@@ -2,7 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { WatchRecord, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getSettingAsync, safeDecrypt, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
-import { classifyTmdb, inferPlatformFromTmdb, mediaTypeOf, mergeContentTags, TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
+import {
+  classifyTmdb,
+  inferPlatformFromTmdb,
+  mediaTypeOf,
+  mergeContentTags,
+  positiveEpisodeRuntimeOf,
+  TmdbMedia,
+  TmdbSeason,
+} from '../../../shared/lib/classification';
 import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 
 interface RecordFormProps {
@@ -208,6 +216,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
           originCountry,
           detail.networks?.[0]?.name || detail.production_companies?.[0]?.name,
         );
+        const episodeRuntime = positiveEpisodeRuntimeOf(detail);
         const genres = classification.genres;
 
         const updates: Partial<typeof form> = {
@@ -221,9 +230,9 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
           originCountry,
           imdbRating: detail.vote_average || null,
           tmdbStatus: detail.status || null,
-          episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
           mediaType: classification.mediaType,
           contentTags: mergeContentTags(form.contentTags, classification.contentTags),
+          ...(episodeRuntime !== null ? { episodeRuntime } : {}),
         };
 
         if (networkName && (!form.platform || form.platform.trim() === '')) {
@@ -275,9 +284,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
         originCountry,
         imdbRating: detail.vote_average || null,
         tmdbStatus: detail.status || null,
-        episodeRuntime: detail.episode_run_time?.[0] || detail.runtime || 0,
-          mediaType: classification.mediaType,
-          contentTags: mergeContentTags(form.contentTags, classification.contentTags),
+        mediaType: classification.mediaType,
+        contentTags: mergeContentTags(form.contentTags, classification.contentTags),
       };
 
       if (networkName && (!form.platform || form.platform.trim() === '')) {
@@ -286,6 +294,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
       if (isTV) {
         updates.totalEpisodes = detail.number_of_episodes || null;
+        const episodeRuntime = positiveEpisodeRuntimeOf(detail);
+        if (episodeRuntime !== null) updates.episodeRuntime = episodeRuntime;
       } else {
         updates.movieDuration = detail.runtime ? detail.runtime * 60 : null;
         setMovieDurationStr(updates.movieDuration != null ? formatMovieTime(updates.movieDuration) : '');
@@ -323,6 +333,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
       originCountry,
       selectedSeries.networks?.[0]?.name || selectedSeries.production_companies?.[0]?.name,
     );
+    const episodeRuntime = positiveEpisodeRuntimeOf(selectedSeries);
     const genres = classification.genres;
 
     setForm(prev => ({
@@ -337,10 +348,10 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
       originCountry,
       imdbRating: selectedSeries.vote_average || null,
       tmdbStatus: selectedSeries.status || null,
-      episodeRuntime: selectedSeries.episode_run_time?.[0] || selectedSeries.runtime || 0,
       mediaType: classification.mediaType,
       contentTags: mergeContentTags(form.contentTags, classification.contentTags),
       ...(networkName && (!prev.platform || prev.platform.trim() === '') ? { platform: networkName } : {}),
+      ...(episodeRuntime !== null ? { episodeRuntime } : {}),
     }));
     setShowResults(false);
     setSeasons([]);

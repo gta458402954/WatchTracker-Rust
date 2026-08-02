@@ -9,6 +9,7 @@ import {
   inferPlatformFromTmdb,
   mergeContentTags,
   normalizeCountryCodes,
+  positiveEpisodeRuntimeOf,
   regionCodesOf,
   regionCodesForTopFilter,
   regionsOf,
@@ -55,6 +56,14 @@ describe('TASK-D-DATA-003 exact country and platform inference', () => {
     assert.equal(inferPlatformFromTmdb('US', 'CBS All Access'), 'CBS');
     assert.equal(inferPlatformFromTmdb('US', ' Netflix '), 'Netflix');
     assert.equal(inferPlatformFromTmdb('US', '  '), null);
+  });
+
+  test('returns only a positive episode runtime and never uses zero as a missing-value sentinel', () => {
+    assert.equal(positiveEpisodeRuntimeOf({ episode_run_time: [0, -1, 46.4], runtime: 52 }), 46);
+    assert.equal(positiveEpisodeRuntimeOf({ episode_run_time: [], runtime: 52 }), 52);
+    assert.equal(positiveEpisodeRuntimeOf({ episode_run_time: [0], runtime: 0 }), null);
+    assert.equal(positiveEpisodeRuntimeOf({ runtime: Number.NaN }), null);
+    assert.equal(positiveEpisodeRuntimeOf({}), null);
   });
 });
 

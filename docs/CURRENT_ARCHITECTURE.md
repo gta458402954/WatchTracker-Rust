@@ -107,7 +107,7 @@ React UI
 ```text
 npm run typecheck  PASS
 npm run lint       PASS
-npm run test       PASS（55/55）
+npm run test       PASS（56/56）
 npx playwright test PASS（29/29）
 npm run build      PASS
 cargo fmt/clippy   PASS
