@@ -28,7 +28,7 @@ const MAX_PRECONDITION_RETRIES = 3;
 export interface WebDAVCreds { username: string; password: string; url?: string; }
 interface LegacyTombstone { id: string; deletedAt: string; }
 interface LegacyPayload { schemaVersion: 2; updatedAt: string; records: WatchRecord[]; tombstones: LegacyTombstone[]; }
-interface WebDavResponse { status: number; body: unknown | null; etag: string | null; }
+interface WebDavResponse { status: number; body: unknown | null; etag: string | null; text: string | null; }
 export interface SyncResult {
   ok: boolean;
   error?: string;
@@ -121,7 +121,7 @@ async function contentFingerprint(value: unknown): Promise<string> {
 }
 
 async function webdavRequest(
-  method: 'MKCOL' | 'PUT' | 'GET',
+  method: 'MKCOL' | 'PUT' | 'GET' | 'PROPFIND',
   creds: WebDAVCreds,
   proxy: string | null,
   resource: string,
@@ -134,6 +134,31 @@ async function webdavRequest(
   return invoke('webdav_request', {
     request: { method, url, username: creds.username, password: creds.password, proxy, body, ifMatch, ifNoneMatch },
   });
+}
+
+function davEtagFromPropfind(text: string | null): string | null {
+  if (!text) return null;
+  const document = new DOMParser().parseFromString(text, 'application/xml');
+  if (document.querySelector('parsererror')) return null;
+  for (const element of Array.from(document.getElementsByTagNameNS('*', 'getetag'))) {
+    const value = element.textContent?.trim() ?? '';
+    if (strongEtag(value)) return value;
+  }
+  return null;
+}
+
+async function strongEtagForResource(
+  response: WebDavResponse,
+  creds: WebDAVCreds,
+  proxy: string | null,
+  resource: string,
+): Promise<string> {
+  if (strongEtag(response.etag)) return response.etag;
+  const properties = await webdavRequest('PROPFIND', creds, proxy, resource);
+  if (!successful(properties.status)) throw new Error('conditional_write_unsupported');
+  const etag = strongEtag(properties.etag) ? properties.etag : davEtagFromPropfind(properties.text);
+  if (!strongEtag(etag)) throw new Error('conditional_write_unsupported');
+  return etag;
 }
 
 function payloadForCommit(
@@ -189,11 +214,10 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       let legacyFingerprint = snapshot.v2SourceFingerprint;
 
       if (v3Response.status === 200) {
-        if (!strongEtag(v3Response.etag)) throw new Error('conditional_write_unsupported');
+        etag = await strongEtagForResource(v3Response, creds, proxy, V3_RESOURCE);
         remotePayload = parseSyncPayloadV3(v3Response.body);
         remoteSide = sideOfPayload(remotePayload);
         baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : { records: [], tombstones: [] };
-        etag = v3Response.etag;
         const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
         if (legacyResponse.status === 200) {
           const currentFingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
@@ -247,13 +271,11 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
         confirmedEtag = put.etag;
         if (!strongEtag(confirmedEtag)) {
           const verification = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
-          if (verification.status !== 200 || !strongEtag(verification.etag)) {
-            throw new Error('conditional_write_unsupported');
-          }
+          if (verification.status !== 200) throw new Error('conditional_write_unsupported');
           const verified = parseSyncPayloadV3(verification.body);
           if (verified.commitId !== nextPayload.commitId) continue;
           confirmedPayload = verified;
-          confirmedEtag = verification.etag;
+          confirmedEtag = await strongEtagForResource(verification, creds, proxy, V3_RESOURCE);
         }
       }
 
@@ -314,7 +336,7 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
     const snapshot = await getSyncSnapshot();
     const v3Response = await webdavRequest('GET', creds, proxy, V3_RESOURCE);
     if (v3Response.status !== 200) throw new Error(`HTTP Error: ${v3Response.status}`);
-    if (!strongEtag(v3Response.etag)) throw new Error('conditional_write_unsupported');
+    const v3Etag = await strongEtagForResource(v3Response, creds, proxy, V3_RESOURCE);
     const v3 = parseSyncPayloadV3(v3Response.body);
     const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
     if (legacyResponse.status !== 200) throw new Error(`HTTP Error: ${legacyResponse.status}`);
@@ -367,7 +389,7 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
       tombstones: snapshot.tombstones,
       baseline: v3,
       conflicts,
-      remoteEtag: v3Response.etag,
+      remoteEtag: v3Etag,
       lastCommit: { revision: v3.revision, commitId: v3.commitId, committedAt: v3.committedAt },
       v2SourceFingerprint: fingerprint,
       acknowledgeOutbox: false,

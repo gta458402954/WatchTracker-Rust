@@ -159,3 +159,41 @@ test('@expected-sync-v3 authentication blocker keeps the outbox and does not aut
   await page.waitForTimeout(700);
   expect(await webdavCallCount(page)).toBe(count);
 });
+
+test('@expected-sync-v3 startup retries a persisted conditional-write blocker through DAV getetag', async ({ page }) => {
+  const remote = payload([record('升级后恢复同步')]);
+  const pending = record('升级后恢复同步', {
+    notes: '本地待上传修改',
+    updatedAt: '2026-08-02T00:01:00.000Z',
+    rev: 2,
+    revActor: 'local-device',
+  });
+  await setupMockIpc(page, {
+    records: [pending],
+    webdavV3Remote: remote,
+    webdavV3Etag: '"upgrade-etag"',
+    omitGetEtag: true,
+    settings: {
+      ...credentials,
+      sync_v3_baseline: JSON.stringify(remote),
+      sync_outbox_v1: JSON.stringify({
+        version: 1, pending: true, dirtyGeneration: 97, reasons: ['record-update'],
+        firstQueuedAt: '2026-08-02T00:00:00.000Z', lastQueuedAt: '2026-08-02T00:00:00.000Z',
+      }),
+      sync_scheduler_v1: JSON.stringify({
+        version: 1, paused: false, consecutiveFailures: 2, nextAttemptAt: null,
+        lastAttemptAt: '2026-08-02T00:00:00.000Z', lastSuccessAt: null,
+        lastErrorCode: 'conditional_write_unsupported', lastRemoteCheckAt: null,
+      }),
+    },
+  });
+
+  await page.goto('/');
+  await expect.poll(async () => JSON.parse((await mockSnapshot(page)).settings.sync_outbox_v1 as string).pending).toBe(false);
+
+  const snapshot = await mockSnapshot(page);
+  const runtime = JSON.parse(snapshot.settings.sync_scheduler_v1 as string);
+  expect(runtime.lastErrorCode).toBeNull();
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PROPFIND')).toBe(true);
+  expect(snapshot.calls.some(call => call.command === 'webdav_request' && call.args.method === 'PUT')).toBe(true);
+});

@@ -73,7 +73,7 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 - 首次创建：PUT 必须携带 `If-None-Match: *`。
 - 412：表示资源已变化，不落本地合并结果；重新 GET、重新三方合并并重试，建议最多 3 次。
 - 连续 3 次 412：停止并提示“云端数据持续变化，请稍后重试”，不进行无条件覆盖。
-- 弱 ETag 或缺少 ETag：默认进入安全只读模式，允许下载和预览，不允许自动 PUT。
+- GET/PUT 响应缺少 ETag 时，先以受限的 `PROPFIND Depth: 0` 读取标准 `DAV:getetag`；只有取得强 ETag 才允许条件 PUT。弱 ETag 或 GET/PROPFIND 均缺少强 ETag时进入安全只读模式，允许下载和预览，不允许自动 PUT。
 - PUT 成功但响应未返回新 ETag：立即 GET 验证 `commitId`，以验证响应的 ETag/内容作为新基线。
 
 依据：WebDAV RFC 4918 明确指出时间戳不如 ETag 适合避免 lost update；HTTP RFC 9110 规定 `If-Match` 不满足时应以 412 阻止状态变更。实现不采用 WebDAV LOCK，因为部署差异、锁续期和崩溃后的锁恢复会扩大本任务复杂度。
@@ -187,6 +187,6 @@ Rust 网络边界改为结构化响应，至少返回 `status`、`body`、`etag`
 
 ## 13. 实施结果
 
-2026-08-02 已按本设计完成 schema v3 条件同步。实现包含纯函数三方合并、冲突冻结、独立 `records-v3.json`、强 ETag、`If-Match`/`If-None-Match: *`、三次 412 重拉、PUT 后 commitId 验证、稳定设备 UUID、Rust `get_sync_snapshot`/`commit_sync_result`、本地 generation CAS、同步恢复点、原子冲突选择、旧版文件变化检测和显式冲突导入。数据库继续保持 V18。
+2026-08-02 已按本设计完成 schema v3 条件同步。实现包含纯函数三方合并、冲突冻结、独立 `records-v3.json`、强 ETag、`If-Match`/`If-None-Match: *`、三次 412 重拉、PUT 后 commitId 验证、稳定设备 UUID、Rust `get_sync_snapshot`/`commit_sync_result`、本地 generation CAS、同步恢复点、原子冲突选择、旧版文件变化检测和显式冲突导入。针对坚果云普通 GET/PUT 不返回 ETag 的行为，已增加受限 `PROPFIND Depth: 0` 的 `DAV:getetag` 回退；安全门禁和条件 PUT 要求不变。数据库继续保持 V18。
 
 `TASK-D-SYNC-002` 的持久化 outbox、异常退出后重试、启动/聚焦/周期主动拉取，以及 `TASK-D-SYNC-003` 的目标命名空间隔离均未混入本任务。

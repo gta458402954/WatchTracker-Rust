@@ -82,7 +82,7 @@ React UI
 
 已经实现：
 
-- 独立 `records-v3.json`、强 ETag、`If-Match`/`If-None-Match: *` 和 412 重拉；
+- 独立 `records-v3.json`、强 ETag、`If-Match`/`If-None-Match: *` 和 412 重拉；普通响应无 ETag 时以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，仍无强 ETag则禁止上传；
 - 共同 baseline 三方字段合并、删除 Tombstone、锁定保护和持久冲突中心；
 - `get_sync_snapshot`、`commit_sync_result(expectedGeneration)`、恢复点和本地原子落盘；
 - 旧数组/schema v2 首次迁移、旧客户端后续写入检测和显式冲突导入；
@@ -110,7 +110,7 @@ React UI
 npm run typecheck  PASS
 npm run lint       PASS
 npm run test       PASS（68/68）
-npx playwright test PASS（43/43）
+npx playwright test PASS（45/45）
 npm run build      PASS
 cargo fmt/clippy   PASS
 cargo test --locked PASS（56/56）

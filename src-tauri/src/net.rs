@@ -335,6 +335,7 @@ pub struct WebDavResponse {
     pub status: u16,
     pub body: Option<Value>,
     pub etag: Option<String>,
+    pub text: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -363,12 +364,25 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
 
     let mut req_builder = match request.method.as_str() {
         "MKCOL" => client.request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &request.url),
+        "PROPFIND" => client.request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &request.url,
+        ),
         "PUT" => client.put(&request.url),
         "GET" => client.get(&request.url),
         _ => return Err(format!("Unsupported method: {}", request.method)),
     };
 
     req_builder = req_builder.basic_auth(request.username, Some(request.password));
+
+    if request.method == "PROPFIND" {
+        req_builder = req_builder
+            .header("Depth", "0")
+            .header("Content-Type", "application/xml; charset=utf-8")
+            .body(
+                r#"<?xml version="1.0" encoding="utf-8" ?><d:propfind xmlns:d="DAV:"><d:prop><d:getetag /></d:prop></d:propfind>"#,
+            );
+    }
 
     if let Some(value) = request.if_match {
         req_builder = req_builder.header(reqwest::header::IF_MATCH, value);
@@ -377,10 +391,12 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
         req_builder = req_builder.header(reqwest::header::IF_NONE_MATCH, value);
     }
 
-    if let Some(b) = request.body {
-        req_builder = req_builder
-            .header("Content-Type", "application/json")
-            .body(b);
+    if request.method != "PROPFIND" {
+        if let Some(b) = request.body {
+            req_builder = req_builder
+                .header("Content-Type", "application/json")
+                .body(b);
+        }
     }
 
     let res = req_builder.send().await.map_err(|e| {
@@ -396,6 +412,11 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
         .map(str::to_string);
 
     if request.method == "GET" && status.is_success() {
+        log::info!(
+            "[WebDAV] GET completed with status {}; ETag header present: {}",
+            status.as_u16(),
+            etag.is_some()
+        );
         let json: Value = res.json().await.map_err(|e| {
             log::error!("[WebDAV] JSON parse error: {}", e);
             e.to_string()
@@ -404,12 +425,38 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
             status: status.as_u16(),
             body: Some(json),
             etag,
+            text: None,
         });
     }
+
+    if request.method == "PROPFIND" && status.is_success() {
+        let text = res.text().await.map_err(|error| {
+            log::error!("[WebDAV] PROPFIND response error: {}", error);
+            error.to_string()
+        })?;
+        log::info!(
+            "[WebDAV] PROPFIND completed with status {} and response body",
+            status.as_u16()
+        );
+        return Ok(WebDavResponse {
+            status: status.as_u16(),
+            body: None,
+            etag,
+            text: Some(text),
+        });
+    }
+
+    log::info!(
+        "[WebDAV] {} completed with status {}; ETag header present: {}",
+        request.method,
+        status.as_u16(),
+        etag.is_some()
+    );
 
     Ok(WebDavResponse {
         status: status.as_u16(),
         body: None,
         etag,
+        text: None,
     })
 }

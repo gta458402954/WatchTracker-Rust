@@ -18,6 +18,7 @@ export interface MockIpcOptions {
   webdavPreconditionFailures?: number;
   mutateLocalDuringPut?: boolean;
   omitPutEtag?: boolean;
+  omitGetEtag?: boolean;
   webdavFailureStatus?: number;
   webdavFailureCount?: number;
   databaseCompatibilityIssue?: {
@@ -48,7 +49,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, mutateLocalDuringPut, omitPutEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
+    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -394,10 +395,15 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 return { status: webdavFailureStatus, body: null, etag: null };
               }
               if (request.method === 'MKCOL') return { status: 405, body: null, etag: null };
+              if (request.method === 'PROPFIND') {
+                if (!snapshot.webdavV3Remote) return { status: 404, body: null, etag: null, text: null };
+                const value = v3Etag ? `<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:getetag>${v3Etag.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}</d:getetag></d:prop></d:propstat></d:response></d:multistatus>` : '<d:multistatus xmlns:d="DAV:" />';
+                return { status: 207, body: null, etag: null, text: value };
+              }
               if (request.method === 'GET') {
                 if (String(request.url).endsWith('records-v3.json')) {
                   return snapshot.webdavV3Remote
-                    ? { status: 200, body: structuredClone(snapshot.webdavV3Remote), etag: v3Etag }
+                    ? { status: 200, body: structuredClone(snapshot.webdavV3Remote), etag: omitGetEtag ? null : v3Etag }
                     : { status: 404, body: null, etag: null };
                 }
                 return { status: 200, body: structuredClone(webdavRemote), etag: '"legacy-1"' };
@@ -444,6 +450,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       webdavPreconditionFailures: options.webdavPreconditionFailures ?? 0,
       mutateLocalDuringPut: options.mutateLocalDuringPut ?? false,
       omitPutEtag: options.omitPutEtag ?? false,
+      omitGetEtag: options.omitGetEtag ?? false,
       webdavFailureStatus: options.webdavFailureStatus ?? 503,
       webdavFailureCount: options.webdavFailureCount ?? 0,
       databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,

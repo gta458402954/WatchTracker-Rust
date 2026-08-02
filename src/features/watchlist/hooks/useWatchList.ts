@@ -143,7 +143,10 @@ export function useWatchList(
     try {
       const runtime = await refreshSyncRuntime();
       if (runtime.scheduler.paused || !await hasCreds()) return;
-      if (runtime.scheduler.lastErrorCode && !runtime.scheduler.nextAttemptAt && trigger !== 'resume') return;
+      const retryFixedConditionalWriteOnStartup = trigger === 'startup'
+        && runtime.scheduler.lastErrorCode === 'conditional_write_unsupported';
+      if (runtime.scheduler.lastErrorCode && !runtime.scheduler.nextAttemptAt
+        && trigger !== 'resume' && !retryFixedConditionalWriteOnStartup) return;
       if (trigger !== 'online' && trigger !== 'resume' && !isDue(runtime.scheduler.nextAttemptAt, Date.now())) {
         queueAutomaticRef.current(
           'retry',

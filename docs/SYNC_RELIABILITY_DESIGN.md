@@ -136,7 +136,7 @@
 | --- | --- | --- |
 | 可重试 | 断网、超时、HTTP 408/429/5xx、`remote_busy`、远端成功后本地确认失败 | outbox 保留，记录退避并重试 |
 | 本地并发 | `stale_local_snapshot` | 不增加故障噪声；重新读取最新 generation，短延迟补跑 |
-| 需要用户处理 | 401/403、无凭据、`conditional_write_unsupported`、`unsupported_remote_schema`、`legacy_remote_changed` | outbox 保留；停止自动重试，等待凭据/配置变化或用户手动操作 |
+| 需要用户处理 | 401/403、无凭据、`conditional_write_unsupported`、`unsupported_remote_schema`、`legacy_remote_changed` | outbox 保留；停止当前会话自动重试，等待凭据/配置变化或用户手动操作；因客户端现已支持 DAV `getetag`，历史 `conditional_write_unsupported` 在下次启动时允许一次安全重试 |
 | 正常冲突 | 同字段或删除/编辑冲突 | 本轮可成功；显示冲突数，等待用户选择，选择后重新入队 |
 
 后台失败通知按错误码去重，同一错误在状态未变化时不反复弹出。设置页始终显示待同步、暂停、退避到期时间、最近成功和阻断原因；手动同步仍返回即时、明确的结果。

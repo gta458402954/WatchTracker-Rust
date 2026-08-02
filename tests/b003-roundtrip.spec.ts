@@ -475,6 +475,33 @@ test('@expected-sync-v3 blocks upload when the server has no strong ETag', async
   expect(snapshot.records[0].notes).toBe('local change');
 });
 
+test('@expected-sync-v3 uses DAV getetag when GET and PUT omit ETag headers', async ({ page }) => {
+  const base = record('propfind-server');
+  const local = record('propfind-server', { notes: 'safe local change' });
+  await setupMockIpc(page, {
+    records: [local],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([base])),
+    },
+    webdavV3Remote: v3Payload([base]),
+    webdavV3Etag: '"v3-1"',
+    omitGetEtag: true,
+    omitPutEtag: true,
+  });
+  await page.goto('/');
+  const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
+  expect(result.ok).toBe(true);
+  const snapshot = await mockSnapshot(page);
+  const propfinds = snapshot.calls.filter(call => call.command === 'webdav_request' && call.args.method === 'PROPFIND');
+  expect(propfinds).toHaveLength(2);
+  const put = snapshot.calls.find(call => call.command === 'webdav_request' && call.args.method === 'PUT');
+  expect(put?.args.ifMatch).toBe('"v3-1"');
+  expect(snapshot.webdavV3Remote?.records[0].notes).toBe('safe local change');
+  expect(snapshot.settings.sync_v3_remote_etag).toBe('"v3-2"');
+});
+
 test('@expected-sync-v3 keeps same-field divergence pending without overwriting either side', async ({ page }) => {
   const base = record('conflicted', { notes: 'base' });
   const local = record('conflicted', { notes: 'local' });

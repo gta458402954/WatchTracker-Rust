@@ -321,7 +321,10 @@ pub async fn download_poster(
 pub async fn webdav_request(
     request: net::WebDavRequest,
 ) -> Result<net::WebDavResponse, crate::error::AppError> {
-    if !matches!(request.method.as_str(), "GET" | "PUT" | "MKCOL") {
+    if !matches!(
+        request.method.as_str(),
+        "GET" | "PUT" | "MKCOL" | "PROPFIND"
+    ) {
         return Err(crate::error::AppError::General(
             "Unsupported WebDAV method".to_string(),
         ));
@@ -352,6 +355,7 @@ mod command_tests {
         assert!(validate_webdav_conditions("PUT", Some("W/\"weak\""), None).is_err());
         assert!(validate_webdav_conditions("PUT", Some("\"bad\r\nheader\""), None).is_err());
         assert!(validate_webdav_conditions("GET", Some("\"etag\""), None).is_err());
+        assert!(validate_webdav_conditions("PROPFIND", None, None).is_ok());
         assert!(validate_webdav_conditions("PUT", Some("\"etag\""), Some("*")).is_err());
     }
 }
