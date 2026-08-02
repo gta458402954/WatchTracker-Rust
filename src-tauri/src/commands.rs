@@ -67,6 +67,7 @@ fn validate_webdav_conditions(
     if let Some(value) = if_dav_etag {
         let opaque = value
             .strip_prefix("W/\"")
+            .or_else(|| value.strip_prefix('"'))
             .and_then(|rest| rest.strip_suffix('"'));
         let valid = opaque.is_some_and(|inner| {
             !inner.is_empty()
@@ -75,7 +76,7 @@ fn validate_webdav_conditions(
         });
         if !valid {
             return Err(crate::error::AppError::General(
-                "Invalid weak WebDAV entity tag".to_string(),
+                "Invalid WebDAV entity tag".to_string(),
             ));
         }
     }
@@ -387,6 +388,7 @@ mod command_tests {
     fn webdav_condition_headers_accept_only_safe_put_preconditions() {
         assert!(validate_webdav_conditions("PUT", Some("\"etag\""), None, None).is_ok());
         assert!(validate_webdav_conditions("PUT", None, Some("*"), None).is_ok());
+        assert!(validate_webdav_conditions("PUT", None, None, Some("\"strong\"")).is_ok());
         assert!(validate_webdav_conditions("PUT", None, None, Some("W/\"weak\"")).is_ok());
         assert!(validate_webdav_conditions("PUT", Some("W/\"weak\""), None, None).is_err());
         assert!(validate_webdav_conditions("PUT", Some("\"bad\r\nheader\""), None, None).is_err());
@@ -398,5 +400,7 @@ mod command_tests {
         assert!(
             validate_webdav_conditions("PUT", None, None, Some("W/\"bad\r\nheader\"")).is_err()
         );
+        assert!(validate_webdav_conditions("PUT", None, None, Some("unquoted")).is_err());
+        assert!(validate_webdav_conditions("PUT", None, None, Some("\"bad\r\nheader\"")).is_err());
     }
 }

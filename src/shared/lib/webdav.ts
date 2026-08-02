@@ -230,6 +230,7 @@ function syncError(error: unknown): SyncResult {
   if (message.includes('unsupported_remote_schema')) return { ok: false, error: 'unsupported_remote_schema' };
   if (message.includes('conditional_write_unsupported')) return { ok: false, error: 'conditional_write_unsupported' };
   if (message.includes('conditional_validator_rejected')) return { ok: false, error: 'conditional_validator_rejected' };
+  if (message.includes('Invalid WebDAV entity tag')) return { ok: false, error: 'conditional_write_unsupported' };
   if (message.includes('legacy_remote_changed')) return { ok: false, error: 'legacy_remote_changed' };
   return { ok: false, error: message };
 }
