@@ -43,7 +43,7 @@ export default function App() {
     notify('warning', message);
   }, [notify]);
   const {
-    records, loadRecords, addRecord, updateRecord, deleteRecord, replaceRecords, syncNow,
+    records, loadRecords, addRecord, updateRecord, deleteRecord, changeNextEpisode, replaceRecords, syncNow,
     syncRuntime, isSyncPaused, toggleSyncPause, notifySyncConfigurationChanged, reloadAndSchedule,
   } = useWatchList(syncInterval, pullIntervalMinutes, handleBackgroundError);
 
@@ -299,20 +299,23 @@ export default function App() {
     }
   }
 
-  async function handleProgressChange(id: string, progress: string) {
-    const record = records.find(r => r.id === id);
-    const updates: Partial<WatchRecord> = { progress };
-    if (record && record.status === '未看') {
-      updates.status = '在看';
-      if (!record.startDate) {
-        updates.startDate = localDateString();
-      }
-    }
+  async function handleNextEpisodeChange(record: WatchRecord, nextEpisode: number | null) {
     try {
-      await updateRecord(id, updates);
+      const result = await changeNextEpisode(record, nextEpisode);
+      const unknown = result.completions.filter(item => item.completedAt === null).length;
+      notify('success', nextEpisode === null
+        ? `已记录完结，共有 ${result.completions.length} 集完成记录。`
+        : `下一集已设为第 ${nextEpisode} 集${unknown ? `；${unknown} 集时间未记录` : ''}。`);
     } catch (error) {
-      reportOperationFailure('App.ChangeProgress', error);
-      notify('error', publicFailureMessage('更新进度'));
+      reportOperationFailure('App.ChangeNextEpisode', error);
+      const message = String(error);
+      notify('error', message.includes('stale_episode_progress')
+        ? '记录已在其他操作中更新，请重试。'
+        : message.includes('episode_total_mismatch')
+          ? '总集数小于现有下一集或完成历史，请先修正总集数。'
+          : message.includes('episode_record_locked')
+            ? '条目已锁定，无法更新逐集进度。'
+            : publicFailureMessage('更新下一集'));
     }
   }
 
@@ -416,7 +419,7 @@ export default function App() {
               onDelete={handleDelete}
               onLockToggle={handleLockToggle}
               onStatusChange={handleStatusChange}
-              onProgressChange={handleProgressChange}
+              onNextEpisodeChange={handleNextEpisodeChange}
             />
         ) : (
           <PosterWall

@@ -2,12 +2,14 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { UpdateWatchRecord, WatchRecord } from '../../../shared/types';
 import {
   deleteRecord as dbDeleteRecord,
+  enableEpisodeTracking as dbEnableEpisodeTracking,
   getAllRecordsAsync,
   getSyncRuntimeState,
   insertRecord,
   recordSyncFailure,
   replaceAllRecords,
   setAutoSyncPaused,
+  setNextEpisode as dbSetNextEpisode,
   updateRecord as dbUpdateRecord,
   type SyncRuntimeState,
 } from '../../../shared/lib/database';
@@ -34,6 +36,7 @@ function safeFailureCode(error?: string): string {
     'remote_busy', 'stale_local_snapshot', 'conditional_write_unsupported',
     'conditional_validator_rejected',
     'unsupported_remote_schema', 'legacy_remote_changed',
+    'episode_sync_upgrade_required', 'episode_completion_conflict',
   ].find(code => value.includes(code));
   if (known) return known;
   const http = value.match(/HTTP Error:\s*(\d{3})/);
@@ -271,6 +274,18 @@ export function useWatchList(
     void scheduleLocalWrite();
   }, [scheduleLocalWrite]);
 
+  const changeNextEpisode = useCallback(async (record: WatchRecord, nextEpisode: number | null) => {
+    const expectedRev = record.rev ?? 0;
+    const tracking = record.episodeTrackingEnabled
+      ? await dbSetNextEpisode(record.id, nextEpisode, expectedRev)
+      : await dbEnableEpisodeTracking(record.id, nextEpisode as number, expectedRev);
+    const updated = recordsRef.current.map(item => item.id === record.id ? tracking.record : item);
+    recordsRef.current = updated;
+    setRecords(updated);
+    void scheduleLocalWrite();
+    return tracking;
+  }, [scheduleLocalWrite]);
+
   const replaceRecords = useCallback(async (newRecords: WatchRecord[]) => {
     await replaceAllRecords(newRecords, 'import');
     const persisted = await loadRecordsOnly();
@@ -312,6 +327,7 @@ export function useWatchList(
     addRecord,
     updateRecord,
     deleteRecord,
+    changeNextEpisode,
     replaceRecords,
     syncNow,
     syncRuntime,

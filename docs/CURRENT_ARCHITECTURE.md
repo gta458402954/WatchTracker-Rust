@@ -106,7 +106,9 @@ React UI
 
 WebDAV URL＋保留大小写的用户名经规范化后生成 SHA-256 target ID。凭据、baseline、ETag、冲突、last commit、旧版指纹、outbox、scheduler、staging 与 publish intent 均按 `sync_target::<id>::…` 隔离；records、Tombstone、generation 和 device ID 继续全局共用。切换前只有只读探测，确认激活会提升 target epoch 并立即 Pull → Merge → Push；切换期间完成的旧请求无法通过 target ID＋epoch CAS 提交到新目标。断开和切换只冻结旧目标状态，切回时按旧 baseline 重建离线差异。旧全局同步键先创建 `target-migration` 恢复点，再以一个 SQLite 事务迁入目标命名空间。数据库仍为 V18，高风险落盘继续先创建恢复点。
 
-`TASK-D-SEC-001` 已实现：WebDAV/TMDB 秘密本体保存在当前 Windows 用户的 Credential Manager，SQLite 仅保留固定 `wincred:v1` 引用；旧格式按首次使用逐项安全迁移，日常网络命令在 Rust 内部取密钥，已保存秘密不再往返 React。数据库继续使用 V18，便携目录换机后需要重新输入凭据。下一项 `TASK-D-HISTORY-001` 已形成 `docs/EPISODE_HISTORY_DESIGN.md` 草案，等待确认后实施；完整清单和状态以 `.agent-work/TASKS.md` 为准。
+`TASK-D-SEC-001` 已实现：WebDAV/TMDB 秘密本体保存在当前 Windows 用户的 Credential Manager，SQLite 仅保留固定 `wincred:v1` 引用；旧格式按首次使用逐项安全迁移，日常网络命令在 Rust 内部取密钥，已保存秘密不再往返 React。数据库继续使用 V18，便携目录换机后需要重新输入凭据。
+
+`TASK-D-HISTORY-001` 已实现：V18 通过独立 `episode_history_schema_version=1` 功能迁移增加 `episodeTrackingEnabled`、`nextEpisode` 与 `episode_completions`；启用、跳集、完结和后退由 Rust 原子命令处理，旧 `progress` 不自动转换。完成历史进入本地 V2 备份和 WebDAV V4；V3 可读，首次 V4 发布需确认，不同非空完成时间由用户选择。下一项为 `TASK-D-DISCOVERY-001`“今晚看什么”专项设计；完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 

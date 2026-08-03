@@ -38,6 +38,8 @@ export function normalizeImportedRecord(
     chineseName: text('chineseName'),
     progress: text('progress'),
     totalEpisodes: nullableNumber('totalEpisodes'),
+    episodeTrackingEnabled: source.episodeTrackingEnabled === true,
+    nextEpisode: nullableNumber('nextEpisode'),
     movieProgress: nullableNumber('movieProgress'),
     movieDuration: nullableNumber('movieDuration'),
     releaseYear: source.releaseYear == null ? null : String(source.releaseYear),

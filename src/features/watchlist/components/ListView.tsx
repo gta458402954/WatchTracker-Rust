@@ -7,14 +7,14 @@ interface ListViewProps {
   onDelete: (id: string) => void;
   onLockToggle: (id: string) => void;
   onStatusChange: (id: string, status: Status) => void;
-  onProgressChange: (id: string, progress: string) => void;
+  onNextEpisodeChange: (record: WatchRecord, nextEpisode: number | null) => void;
 }
 
-export default function ListView({ filtered, onEdit, onDelete, onLockToggle, onStatusChange, onProgressChange }: ListViewProps) {
+export default function ListView({ filtered, onEdit, onDelete, onLockToggle, onStatusChange, onNextEpisodeChange }: ListViewProps) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {filtered.map(record => (
-        <RecordCard key={record.id} record={record} onEdit={onEdit} onDelete={onDelete} onLockToggle={onLockToggle} onStatusChange={onStatusChange} onProgressChange={onProgressChange} />
+        <RecordCard key={record.id} record={record} onEdit={onEdit} onDelete={onDelete} onLockToggle={onLockToggle} onStatusChange={onStatusChange} onNextEpisodeChange={onNextEpisodeChange} />
       ))}
     </div>
   );

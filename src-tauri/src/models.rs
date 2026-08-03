@@ -42,6 +42,10 @@ pub struct WatchRecord {
     pub chinese_name: String,
     pub progress: String,
     pub total_episodes: Option<i32>,
+    #[serde(default)]
+    pub episode_tracking_enabled: bool,
+    #[serde(default)]
+    pub next_episode: Option<i32>,
     pub movie_progress: Option<i32>,
     pub movie_duration: Option<i32>,
     pub release_year: Option<String>,

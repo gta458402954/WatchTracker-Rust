@@ -132,6 +132,65 @@ pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::err
 }
 
 #[tauri::command]
+pub fn get_episode_tracking(
+    state: State<DbState>,
+    record_id: String,
+) -> Result<crate::episode_history::EpisodeTracking, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    crate::episode_history::tracking(&conn, &record_id)
+}
+
+#[tauri::command]
+pub fn get_all_episode_completions(
+    state: State<DbState>,
+) -> Result<Vec<crate::episode_history::EpisodeCompletion>, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    crate::episode_history::all_completions(&conn)
+}
+
+#[tauri::command]
+pub fn replace_library(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    records: Vec<WatchRecord>,
+    episode_completions: Vec<crate::episode_history::EpisodeCompletion>,
+) -> Result<(), crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    recovery_points::create(&conn, paths.inner(), "import")?;
+    crate::episode_history::replace_library_atomic(&mut conn, records, episode_completions)
+}
+
+#[tauri::command]
+pub fn enable_episode_tracking(
+    state: State<DbState>,
+    record_id: String,
+    initial_next_episode: i32,
+    expected_rev: i64,
+) -> Result<crate::episode_history::EpisodeTracking, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor_id = sync_state::device_id(&conn)?;
+    crate::episode_history::enable(
+        &mut conn,
+        &record_id,
+        initial_next_episode,
+        expected_rev,
+        &actor_id,
+    )
+}
+
+#[tauri::command]
+pub fn set_next_episode(
+    state: State<DbState>,
+    record_id: String,
+    next_episode: Option<i32>,
+    expected_rev: i64,
+) -> Result<crate::episode_history::EpisodeTracking, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor_id = sync_state::device_id(&conn)?;
+    crate::episode_history::set_next(&mut conn, &record_id, next_episode, expected_rev, &actor_id)
+}
+
+#[tauri::command]
 pub fn replace_all_records(
     state: State<DbState>,
     paths: State<AppPaths>,

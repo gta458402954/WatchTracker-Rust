@@ -1,4 +1,4 @@
-import type { WatchRecord } from '../types';
+import type { EpisodeCompletion, WatchRecord } from '../types';
 
 export interface SyncTombstoneV3 {
   id: string;
@@ -8,7 +8,7 @@ export interface SyncTombstoneV3 {
 }
 
 export interface SyncPayloadV3 {
-  schemaVersion: 3;
+  schemaVersion: 3 | 4;
   documentId: string;
   revision: number;
   commitId: string;
@@ -17,6 +17,7 @@ export interface SyncPayloadV3 {
   committedAt: string;
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
+  episodeCompletions?: EpisodeCompletion[];
 }
 
 export type SyncConflictKind = 'edit-edit' | 'delete-edit' | 'locked';
@@ -273,19 +274,26 @@ export function emptySyncPayload(deviceId: string, now = new Date().toISOString(
     committedAt: now,
     records: [],
     tombstones: [],
+    episodeCompletions: [],
   };
 }
 
 export function parseSyncPayloadV3(value: unknown): SyncPayloadV3 {
   if (!value || typeof value !== 'object') throw new Error('invalid_remote_payload');
   const payload = value as Partial<SyncPayloadV3> & { schemaVersion?: number };
-  if (typeof payload.schemaVersion === 'number' && payload.schemaVersion > 3) {
+  if (typeof payload.schemaVersion === 'number' && payload.schemaVersion > 4) {
     throw new Error('unsupported_remote_schema');
   }
   const validTombstones = Array.isArray(payload.tombstones) && payload.tombstones.every(item => item
     && typeof item.id === 'string' && typeof item.deletedAt === 'string'
     && Number.isInteger(item.rev) && item.rev >= 0 && typeof item.revActor === 'string');
-  if (payload.schemaVersion !== 3 || !Array.isArray(payload.records) || !validTombstones
+  const validCompletions = payload.schemaVersion === 3 || (Array.isArray(payload.episodeCompletions)
+    && payload.episodeCompletions.every(item => item && typeof item.id === 'string'
+      && typeof item.recordId === 'string' && Number.isInteger(item.episodeNumber) && item.episodeNumber > 0
+      && (item.completedAt === null || typeof item.completedAt === 'string')
+      && typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
+      && Number.isInteger(item.rev) && item.rev >= 0 && typeof item.revActor === 'string'));
+  if (![3, 4].includes(payload.schemaVersion ?? -1) || !Array.isArray(payload.records) || !validTombstones || !validCompletions
     || payload.records.some(record => !record || typeof record.id !== 'string')
     || typeof payload.documentId !== 'string' || !payload.documentId
     || !Number.isInteger(payload.revision) || (payload.revision ?? -1) < 0
@@ -294,5 +302,60 @@ export function parseSyncPayloadV3(value: unknown): SyncPayloadV3 {
     || !(payload.parentCommitId === null || typeof payload.parentCommitId === 'string')) {
     throw new Error('invalid_remote_payload');
   }
-  return payload as SyncPayloadV3;
+  return {
+    ...(payload as SyncPayloadV3),
+    episodeCompletions: payload.schemaVersion === 4 ? payload.episodeCompletions : [],
+  };
+}
+
+function completionKey(item: EpisodeCompletion): string {
+  return `${item.recordId}\0${item.episodeNumber}`;
+}
+
+/** Monotonic three-way merge for per-episode completion facts. */
+export function mergeEpisodeCompletions(
+  base: EpisodeCompletion[],
+  local: EpisodeCompletion[],
+  remote: EpisodeCompletion[],
+  resolveConflict?: (local: EpisodeCompletion, remote: EpisodeCompletion) => 'local' | 'remote',
+): EpisodeCompletion[] {
+  const maps = [base, local, remote].map(items => new Map(items.map(item => [completionKey(item), item])));
+  const keys = new Set(maps.flatMap(map => [...map.keys()]));
+  const result: EpisodeCompletion[] = [];
+  for (const key of [...keys].sort()) {
+    const [baseItem, localItem, remoteItem] = maps.map(map => map.get(key));
+    if (syncValuesEqual(localItem, remoteItem)) {
+      if (localItem) result.push(localItem);
+      continue;
+    }
+    if (syncValuesEqual(localItem, baseItem)) {
+      if (remoteItem) result.push(remoteItem);
+      continue;
+    }
+    if (syncValuesEqual(remoteItem, baseItem)) {
+      if (localItem) result.push(localItem);
+      continue;
+    }
+    if (localItem && remoteItem) {
+      if (localItem.completedAt === null && remoteItem.completedAt !== null) {
+        result.push(remoteItem);
+        continue;
+      }
+      if (remoteItem.completedAt === null && localItem.completedAt !== null) {
+        result.push(localItem);
+        continue;
+      }
+      if (localItem.completedAt === remoteItem.completedAt) {
+        result.push(localItem.rev >= remoteItem.rev ? localItem : remoteItem);
+        continue;
+      }
+      if (resolveConflict) {
+        result.push(resolveConflict(localItem, remoteItem) === 'local' ? localItem : remoteItem);
+        continue;
+      }
+      throw new Error(`episode_completion_conflict:${key}`);
+    }
+    result.push((localItem ?? remoteItem) as EpisodeCompletion);
+  }
+  return result;
 }

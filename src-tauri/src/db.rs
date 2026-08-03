@@ -92,6 +92,13 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
         );
     }
 
+    let needs_episode_history_backup = existing_db_version(&conn).unwrap_or(0) > 0
+        && !episode_history_schema_ready(&conn).unwrap_or(false);
+    if needs_episode_history_backup {
+        recovery_points::create(&conn, paths, "episode-history-migration")
+            .map_err(|error| format!("episode_history_migration_failed:{error}"))?;
+    }
+
     // 初始化表逻辑
     setup_db(&conn).map_err(|e| e.to_string())?;
 
@@ -503,6 +510,70 @@ pub(crate) fn setup_db(conn: &Connection) -> Result<()> {
         }
     }
 
+    migrate_episode_history_schema(conn)?;
+
+    Ok(())
+}
+
+fn episode_history_schema_ready(conn: &Connection) -> Result<bool> {
+    let columns = record_columns(conn)?;
+    let table_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_completions')",
+        [],
+        |row| row.get(0),
+    )?;
+    let index_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='episode_completions_record_episode')",
+        [],
+        |row| row.get(0),
+    )?;
+    let marker = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key='episode_history_schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(columns.contains("episodeTrackingEnabled")
+        && columns.contains("nextEpisode")
+        && table_exists
+        && index_exists
+        && marker.as_deref() == Some("1"))
+}
+
+pub(crate) fn migrate_episode_history_schema(conn: &Connection) -> Result<()> {
+    let transaction = conn.unchecked_transaction()?;
+    let columns = record_columns(&transaction)?;
+    if !columns.contains("episodeTrackingEnabled") {
+        transaction.execute(
+            "ALTER TABLE records ADD COLUMN episodeTrackingEnabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !columns.contains("nextEpisode") {
+        transaction.execute("ALTER TABLE records ADD COLUMN nextEpisode INTEGER", [])?;
+    }
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS episode_completions (
+            id TEXT PRIMARY KEY,
+            recordId TEXT NOT NULL,
+            episodeNumber INTEGER NOT NULL CHECK (episodeNumber > 0),
+            completedAt TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            rev INTEGER NOT NULL DEFAULT 0,
+            revActor TEXT NOT NULL DEFAULT '',
+            UNIQUE(recordId, episodeNumber),
+            FOREIGN KEY(recordId) REFERENCES records(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS episode_completions_record_episode
+           ON episode_completions(recordId, episodeNumber);
+         INSERT INTO settings(key, value) VALUES('episode_history_schema_version', '1')
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+         INSERT INTO settings(key, value) VALUES('required_app_features_v1', '[\"episode-history-v1\"]')
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -514,6 +585,12 @@ fn map_row_to_record(row: &Row<'_>) -> Result<WatchRecord> {
         chinese_name: row.get("chineseName")?,
         progress: row.get("progress")?,
         total_episodes: row.get("totalEpisodes")?,
+        episode_tracking_enabled: row
+            .get::<_, Option<i32>>("episodeTrackingEnabled")
+            .unwrap_or(None)
+            .unwrap_or(0)
+            != 0,
+        next_episode: row.get("nextEpisode").unwrap_or(None),
         status: row.get("status")?,
         platform: row.get("platform")?,
         rating: row.get("rating").unwrap_or(None),
@@ -585,16 +662,18 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
     let is_locked_int = r.is_locked.map(|b| if b { 1 } else { 0 });
     conn.execute(
         "INSERT INTO records (
-            id, originalName, chineseName, progress, totalEpisodes, status, platform, rating,
+            id, originalName, chineseName, progress, totalEpisodes, episodeTrackingEnabled, nextEpisode, status, platform, rating,
             startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear,
             posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating,
             tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags, rev, revActor
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
             originalName = excluded.originalName,
             chineseName = excluded.chineseName,
             progress = excluded.progress,
             totalEpisodes = excluded.totalEpisodes,
+            episodeTrackingEnabled = excluded.episodeTrackingEnabled,
+            nextEpisode = excluded.nextEpisode,
             status = excluded.status,
             platform = excluded.platform,
             rating = excluded.rating,
@@ -625,6 +704,8 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
             r.chinese_name,
             r.progress,
             r.total_episodes,
+            i64::from(r.episode_tracking_enabled),
+            r.next_episode,
             r.status,
             r.platform,
             r.rating,
@@ -767,6 +848,8 @@ mod tests {
             chinese_name: name.to_string(),
             progress: String::new(),
             total_episodes: None,
+            episode_tracking_enabled: false,
+            next_episode: None,
             movie_progress: None,
             movie_duration: Some(7_200),
             release_year: Some("2026".to_string()),

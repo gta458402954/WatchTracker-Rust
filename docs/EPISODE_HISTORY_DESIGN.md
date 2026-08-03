@@ -1,9 +1,11 @@
 # TASK-D-HISTORY-001：逐集完成时间与完结状态专项设计
 
-> 状态：DRAFT，等待用户确认后实施
-> 日期：2026-08-02
+> 状态：IMPLEMENTED（2026-08-03）
+> 设计日期：2026-08-02；实施日期：2026-08-03
 > 数据库主版本：继续使用 V18；新增独立、幂等的 `episode_history_schema_version=1` 功能迁移
 > 依赖：现有 Rust 原子写入、恢复点、sync payload V3、target 级同步状态与记录级 revision
+
+实施结果：三项推荐决策均已由用户确认并落地。数据库主版本保持 V18，功能迁移使用 `episode_history_schema_version=1`；卡片提供显式启用、下一集/完结选择和只读历史；完成事件、记录 revision、generation、staging 与 outbox 在 Rust 事务中更新；本地备份升级为 formatVersion 2；WebDAV 按需升级到 V4，首次发布前确认，同集不同非空完成时间由用户明确选择本机或云端。
 
 ## 1. 目标与第一版边界
 
@@ -261,10 +263,12 @@ target 级 baseline、staging、publish intent、payload fingerprint 和 commit 
 
 自动测试不读取或写入真实便携数据库和真实 WebDAV。部署前后只读核验 V18、记录数、完整性和哈希；复制阶段只替换 EXE。用户首次启动后再核验 `episode_history_schema_version=1`、原 records 数量不变和功能表初始为空，随后由用户手工确认一条测试记录的启用/推进行为。
 
-## 11. 待确认决策
+## 11. 已确认决策与验收结果
 
-推荐按本文方案实施，需确认以下三点：
+用户已确认以下三点：
 
 1. 为区分“未启用”和“已完结”，除 `nextEpisode` 外增加 `episodeTrackingEnabled`；旧 `progress` 原样保留，不再由新下拉框更新。
 2. 数据库主版本继续标记 V18，使用 `episode_history_schema_version=1` 做受控功能迁移；升级后的数据库不再与旧便携版交替使用。
 3. WebDAV payload 升级为 V4，并在首次发布前明确确认；旧客户端将安全停止同步，必须更新到支持 V4 的版本。
+
+本地门禁全部通过：Rust 70/70、Node 70/70、Playwright 56/56，以及 TypeScript typecheck、ESLint、生产构建、rustfmt 和 Clippy。新增验收覆盖显式启用不转换旧进度、跳集三态、完结与后退保留历史、总集数缩小阻断、删除子历史、旧格式导入保留匹配历史、V3→V4 确认升级，以及不同完成时间的本机/云端选择。自动测试仅使用临时 SQLite 与 mock WebDAV，未触碰真实便携数据库或真实远端。

@@ -645,7 +645,7 @@ test('@expected-sync-v3 rejects an unknown future payload without PUT or local c
       webdav_creds: 'encrypted:fixture-user:fixture-password',
       webdav_url: 'https://mock.invalid/dav/',
     },
-    webdavV3Remote: { schemaVersion: 4, records: [], tombstones: [] } as unknown as SyncPayloadV3,
+    webdavV3Remote: { schemaVersion: 5, records: [], tombstones: [] } as unknown as SyncPayloadV3,
   });
   await page.goto('/');
   const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
@@ -811,11 +811,11 @@ test('@conditional-watchlist-boundary local export and import preserve region fi
   await page.getByRole('button', { name: /导入本地 JSON/ }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles(path!);
-  await expect(page.getByText('已导入 1 条本地记录。')).toBeVisible();
+  await expect(page.getByText('已导入 1 条记录及 0 条逐集历史。')).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
-  const replacement = snapshot.calls.find(call => call.command === 'replace_all_records');
-  expect(replacement?.args.reason).toBe('import');
+  const replacement = snapshot.calls.find(call => call.command === 'replace_library');
+  expect(replacement?.args.episodeCompletions).toEqual([]);
   expect(replacement?.args.records).toEqual([
     expect.objectContaining({ originCountry: 'GB, XX, CN', contentTags: '律政,自定义,日本料理' }),
   ]);

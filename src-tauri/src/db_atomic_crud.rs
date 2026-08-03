@@ -7,7 +7,7 @@ use crate::models::WatchRecord;
 use crate::record_validation::{prepare_import_batch, prepare_record, RecordWriteContext};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub fn insert_record_atomic(
     conn: &mut Connection,
@@ -60,6 +60,7 @@ pub fn delete_record_atomic(
         [id],
         |row| row.get::<_, i64>(0),
     )?;
+    transaction.execute("DELETE FROM episode_completions WHERE recordId = ?1", [id])?;
     if transaction.execute("DELETE FROM records WHERE id = ?1", [id])? == 0 {
         return Err(AppError::General(format!("Record not found: {id}")));
     }
@@ -86,6 +87,16 @@ pub fn replace_all_records_atomic(
     records: Vec<WatchRecord>,
 ) -> Result<(), AppError> {
     let transaction = conn.transaction()?;
+    let previous_completions = crate::episode_history::all_completions(&transaction)?;
+    let existing_tracking = db::get_all_records(&transaction)?
+        .into_iter()
+        .map(|record| {
+            (
+                record.id.clone(),
+                (record.episode_tracking_enabled, record.next_episode),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let locked_ids = {
         let mut statement = transaction.prepare("SELECT id FROM records WHERE isLocked = 1")?;
         let ids = statement
@@ -93,13 +104,32 @@ pub fn replace_all_records_atomic(
             .collect::<Result<HashSet<String>, _>>()?;
         ids
     };
-    let records = prepare_import_batch(
+    let mut records = prepare_import_batch(
         records
             .into_iter()
             .filter(|record| !locked_ids.contains(record.id.trim()))
             .collect(),
     )?;
+    for record in &mut records {
+        if let Some((enabled, next_episode)) = existing_tracking.get(&record.id) {
+            record.episode_tracking_enabled = *enabled;
+            record.next_episode = *next_episode;
+        }
+    }
     db::replace_all_records_tx(&transaction, records)?;
+    let retained_ids = db::get_all_records(&transaction)?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<HashSet<_>>();
+    let retained_completions = previous_completions
+        .into_iter()
+        .filter(|item| retained_ids.contains(&item.record_id))
+        .collect::<Vec<_>>();
+    crate::episode_history::replace_completions_tx(
+        &transaction,
+        &retained_completions,
+        &locked_ids,
+    )?;
     let generation = mark_local_records_mutated(&transaction, "records-replace")?;
     crate::sync_staging::rebuild_from_current(&transaction, generation)?;
     transaction.commit()?;

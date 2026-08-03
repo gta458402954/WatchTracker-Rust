@@ -1,11 +1,13 @@
 import type { Page } from '@playwright/test';
 import type { WatchRecord } from '../../src/shared/types';
+import type { EpisodeCompletion } from '../../src/shared/types';
 import type { TmdbMedia } from '../../src/shared/lib/classification';
 import type { RecoveryPoint, SyncOutboxState, SyncSchedulerState } from '../../src/shared/lib/database';
 import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from '../../src/shared/lib/syncMerge';
 
 export interface MockIpcOptions {
   records?: WatchRecord[];
+  episodeCompletions?: EpisodeCompletion[];
   failRecordLoads?: boolean;
   settings?: Record<string, string | null>;
   tmdbSearchResults?: TmdbMedia[];
@@ -37,6 +39,7 @@ export interface MockSnapshot {
   settings: Record<string, string | null>;
   recoveryPoints: RecoveryPoint[];
   webdavV3Remote: SyncPayloadV3 | null;
+  episodeCompletions: EpisodeCompletion[];
 }
 
 declare global {
@@ -50,7 +53,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -63,6 +66,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
         settings: structuredClone(settings),
         recoveryPoints: structuredClone(recoveryPoints),
         webdavV3Remote: structuredClone(webdavV3Remote),
+        episodeCompletions: structuredClone(initialEpisodeCompletions),
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
       const remainingUpdateFailures = structuredClone(updateFailureCounts);
@@ -91,6 +95,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       let tombstones: SyncTombstoneV3[] = (() => {
         try { return JSON.parse(snapshot.settings.sync_tombstones || '[]'); } catch { return []; }
       })();
+      let episodeCompletions: EpisodeCompletion[] = snapshot.episodeCompletions;
 
       const persistRuntime = () => {
         snapshot.settings.sync_outbox_v1 = JSON.stringify(outbox);
@@ -211,15 +216,77 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'delete_record':
               requireKeys(command, args, ['id']);
               snapshot.records = snapshot.records.filter((record) => record.id !== args.id);
+              episodeCompletions = episodeCompletions.filter(item => item.recordId !== args.id);
+              snapshot.episodeCompletions = episodeCompletions;
               tombstones = tombstones.filter(item => item.id !== args.id);
               tombstones.push({ id: args.id as string, deletedAt: new Date().toISOString(), rev: 0, revActor: 'mock-device' });
               recordsGeneration += 1;
               queueOutbox('record-delete');
               return null;
+            case 'get_episode_tracking': {
+              requireKeys(command, args, ['recordId']);
+              const record = snapshot.records.find(item => item.id === args.recordId);
+              if (!record) throw new Error('episode_record_missing');
+              return { record: structuredClone(record), completions: structuredClone(episodeCompletions.filter(item => item.recordId === record.id)) };
+            }
+            case 'get_all_episode_completions':
+              requireKeys(command, args, []);
+              return structuredClone(episodeCompletions);
+            case 'replace_library': {
+              requireKeys(command, args, ['episodeCompletions', 'records']);
+              makeRecoveryPoint('import');
+              snapshot.records = structuredClone(args.records as WatchRecord[]);
+              episodeCompletions = structuredClone(args.episodeCompletions as EpisodeCompletion[]);
+              recordsGeneration += 1; queueOutbox('library-import');
+              return null;
+            }
+            case 'enable_episode_tracking': {
+              requireKeys(command, args, ['expectedRev', 'initialNextEpisode', 'recordId']);
+              const index = snapshot.records.findIndex(item => item.id === args.recordId);
+              if (index < 0) throw new Error('episode_record_missing');
+              const previous = snapshot.records[index];
+              if ((previous.rev ?? 0) !== args.expectedRev) throw new Error('stale_episode_progress');
+              snapshot.records[index] = { ...previous, episodeTrackingEnabled: true, nextEpisode: args.initialNextEpisode as number, status: '在看', rev: (previous.rev ?? 0) + 1, revActor: 'mock-device' };
+              recordsGeneration += 1; queueOutbox('episode-tracking-enable');
+              return { record: structuredClone(snapshot.records[index]), completions: [] };
+            }
+            case 'set_next_episode': {
+              requireKeys(command, args, ['expectedRev', 'nextEpisode', 'recordId']);
+              const index = snapshot.records.findIndex(item => item.id === args.recordId);
+              if (index < 0) throw new Error('episode_record_missing');
+              const previous = snapshot.records[index];
+              if ((previous.rev ?? 0) !== args.expectedRev) throw new Error('stale_episode_progress');
+              const current = previous.nextEpisode;
+              const target = args.nextEpisode as number | null;
+              if (typeof current === 'number' && (target === null || target > current)) {
+                const boundary = target === null ? (previous.totalEpisodes as number) : target - 1;
+                for (let episode = current; episode <= boundary; episode += 1) {
+                  const existing = episodeCompletions.find(item => item.recordId === previous.id && item.episodeNumber === episode);
+                  const completedAt = episode === boundary ? new Date().toISOString() : null;
+                  if (!existing) episodeCompletions.push({ id: `${previous.id}-${episode}`, recordId: previous.id, episodeNumber: episode, completedAt, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), rev: 1, revActor: 'mock-device' });
+                  else if (existing.completedAt === null && completedAt) existing.completedAt = completedAt;
+                }
+              }
+              snapshot.records[index] = { ...previous, nextEpisode: target, status: target === null ? '已看' : '在看', rev: (previous.rev ?? 0) + 1, revActor: 'mock-device' };
+              recordsGeneration += 1; queueOutbox('episode-progress');
+              return { record: structuredClone(snapshot.records[index]), completions: structuredClone(episodeCompletions.filter(item => item.recordId === previous.id)) };
+            }
             case 'replace_all_records':
               requireKeys(command, args, ['reason', 'records']);
               makeRecoveryPoint(args.reason as 'import' | 'sync');
-              snapshot.records = structuredClone(args.records as WatchRecord[]);
+              {
+                const tracking = new Map(snapshot.records.map(item => [item.id, {
+                  episodeTrackingEnabled: item.episodeTrackingEnabled,
+                  nextEpisode: item.nextEpisode,
+                }]));
+                snapshot.records = structuredClone(args.records as WatchRecord[]).map(item => ({
+                  ...item,
+                  ...(tracking.get(item.id) ?? {}),
+                }));
+                const retainedIds = new Set(snapshot.records.map(item => item.id));
+                episodeCompletions = episodeCompletions.filter(item => retainedIds.has(item.recordId));
+                snapshot.episodeCompletions = episodeCompletions;
+              }
               recordsGeneration += 1;
               queueOutbox('records-replace');
               return null;
@@ -234,6 +301,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 targetEpoch: activeTargetId ? targetEpoch : null,
                 records: structuredClone(snapshot.records),
                 tombstones: structuredClone(tombstones),
+                episodeCompletions: structuredClone(episodeCompletions),
                 recordsGeneration,
                 baseline: parse('sync_v3_baseline'),
                 deviceId: snapshot.settings.sync_device_id_v1 || 'mock-device',
@@ -315,6 +383,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 expectedGeneration: number;
                 records: WatchRecord[];
                 tombstones: SyncTombstoneV3[];
+                episodeCompletions: EpisodeCompletion[];
                 baseline: SyncPayloadV3;
                 conflicts: SyncConflictV3[];
                 remoteEtag: string;
@@ -325,10 +394,13 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (input.targetId !== activeTargetId || input.targetEpoch !== (activeTargetId ? targetEpoch : null)) throw new Error('stale_sync_target');
               if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
               const businessStateChanged = JSON.stringify(snapshot.records) !== JSON.stringify(input.records)
-                || JSON.stringify(tombstones) !== JSON.stringify(input.tombstones);
+                || JSON.stringify(tombstones) !== JSON.stringify(input.tombstones)
+                || JSON.stringify(episodeCompletions) !== JSON.stringify(input.episodeCompletions);
               if (businessStateChanged) makeRecoveryPoint('sync');
               snapshot.records = structuredClone(input.records);
               tombstones = structuredClone(input.tombstones);
+              episodeCompletions = structuredClone(input.episodeCompletions);
+              snapshot.episodeCompletions = episodeCompletions;
               snapshot.settings.sync_tombstones = JSON.stringify(tombstones);
               snapshot.settings.sync_v3_baseline = JSON.stringify(input.baseline);
               snapshot.settings.sync_v3_conflicts = JSON.stringify(input.conflicts);
@@ -523,6 +595,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
     },
     {
       records: options.records ?? [],
+      episodeCompletions: options.episodeCompletions ?? [],
       failRecordLoads: options.failRecordLoads ?? false,
       settings: options.settings ?? {},
       tmdbSearchResults: options.tmdbSearchResults ?? [],

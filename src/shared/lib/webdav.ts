@@ -7,11 +7,13 @@ import {
   disconnectSyncTarget,
   getActiveSyncConnection,
   getSettingAsync,
+  setSettingAsync,
   getSyncSnapshot,
   prepareSyncPublishIntent,
 } from './database';
 import {
   emptySyncPayload,
+  mergeEpisodeCompletions,
   mergeSyncStates,
   parseSyncPayloadV3,
   syncValuesEqual,
@@ -67,6 +69,10 @@ export function syncFailureMessage(error?: string): string | null {
       return '云端数据版本高于当前程序，已停止同步且未写入。';
     case 'legacy_remote_changed':
       return '检测到旧版程序仍在写入 records.json；请升级其他设备后再显式导入旧数据。';
+    case 'episode_sync_upgrade_required':
+      return '逐集历史尚未获准升级云端同步格式；本地数据已保留。';
+    case 'episode_completion_conflict':
+      return '两端为同一集记录了不同完成时间，已停止上传以避免覆盖。';
     default:
       return null;
   }
@@ -240,11 +246,14 @@ async function conditionalValidatorForResource(
 function payloadForCommit(
   current: SyncPayloadV3,
   remote: SyncMergeSide,
+  episodeCompletions: import('../types').EpisodeCompletion[],
   deviceId: string,
   now: string,
 ): SyncPayloadV3 {
+  const useV4 = current.schemaVersion === 4 || episodeCompletions.length > 0
+    || remote.records.some(record => record.episodeTrackingEnabled);
   return {
-    schemaVersion: 3,
+    schemaVersion: useV4 ? 4 : 3,
     documentId: current.documentId,
     revision: current.revision + 1,
     commitId: crypto.randomUUID(),
@@ -253,6 +262,7 @@ function payloadForCommit(
     committedAt: now,
     records: remote.records,
     tombstones: remote.tombstones,
+    ...(useV4 ? { episodeCompletions } : {}),
   };
 }
 
@@ -266,6 +276,8 @@ function syncError(error: unknown): SyncResult {
   if (message.includes('conditional_validator_rejected')) return { ok: false, error: 'conditional_validator_rejected' };
   if (message.includes('Invalid WebDAV entity tag')) return { ok: false, error: 'conditional_write_unsupported' };
   if (message.includes('legacy_remote_changed')) return { ok: false, error: 'legacy_remote_changed' };
+  if (message.includes('episode_completion_conflict')) return { ok: false, error: 'episode_completion_conflict' };
+  if (message.includes('episode_sync_upgrade_required')) return { ok: false, error: 'episode_sync_upgrade_required' };
   return { ok: false, error: message };
 }
 
@@ -349,12 +361,41 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       const merged = mergeSyncStates(
         baseSide, localSide, remoteSide, snapshot.deviceId, now, activeConflicts,
       );
-      const remoteChanged = !syncValuesEqual(merged.remote, remoteSide);
+      const baselinePayload = snapshot.baseline ? parseSyncPayloadV3(snapshot.baseline) : null;
+      const mergedCompletions = mergeEpisodeCompletions(
+        baselinePayload?.episodeCompletions ?? [],
+        snapshot.episodeCompletions,
+        remotePayload.episodeCompletions ?? [],
+        (localCompletion, remoteCompletion) => {
+          const record = snapshot.records.find(item => item.id === localCompletion.recordId)
+            ?? remotePayload.records.find(item => item.id === localCompletion.recordId);
+          const title = record?.chineseName || record?.originalName || localCompletion.recordId;
+          return window.confirm(
+            `「${title}」第 ${localCompletion.episodeNumber} 集在本机和云端记录了不同的完成时间。\n\n`
+            + `本机：${localCompletion.completedAt ?? '时间未知'}\n`
+            + `云端：${remoteCompletion.completedAt ?? '时间未知'}\n\n`
+            + '确定：采用本机；取消：采用云端。',
+          ) ? 'local' : 'remote';
+        },
+      );
+      const localRecordIds = new Set(merged.local.records.map(record => record.id));
+      const remoteRecordIds = new Set(merged.remote.records.map(record => record.id));
+      const localCompletions = mergedCompletions.filter(item => localRecordIds.has(item.recordId));
+      const remoteCompletions = mergedCompletions.filter(item => remoteRecordIds.has(item.recordId));
+      const remoteChanged = !syncValuesEqual(merged.remote, remoteSide)
+        || !syncValuesEqual(remoteCompletions, remotePayload.episodeCompletions ?? []);
       let confirmedPayload = remotePayload;
       let confirmedEtag = validator?.etag ?? null;
 
       if (creating || remoteChanged) {
-        const nextPayload = payloadForCommit(remotePayload, merged.remote, snapshot.deviceId, now);
+        const nextPayload = payloadForCommit(remotePayload, merged.remote, remoteCompletions, snapshot.deviceId, now);
+        if (remotePayload.schemaVersion === 3 && nextPayload.schemaVersion === 4
+          && await getSettingAsync('sync_v4_upgrade_confirmed') !== '1') {
+          if (!window.confirm('逐集历史需要把云端同步格式升级到 V4。旧版程序将安全停止同步，所有设备都需要更新到支持 V4 的版本。是否继续？')) {
+            throw new Error('episode_sync_upgrade_required');
+          }
+          await setSettingAsync('sync_v4_upgrade_confirmed', '1');
+        }
         await prepareSyncPublishIntent({
           targetId: snapshot.targetId,
           targetEpoch: snapshot.targetEpoch,
@@ -396,6 +437,7 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
         expectedGeneration: snapshot.recordsGeneration,
         records: merged.local.records,
         tombstones: merged.local.tombstones,
+        episodeCompletions: localCompletions,
         baseline: confirmedPayload,
         conflicts: merged.conflicts,
         remoteEtag: confirmedEtag,
@@ -505,6 +547,7 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
       expectedGeneration: snapshot.recordsGeneration,
       records: snapshot.records,
       tombstones: snapshot.tombstones,
+      episodeCompletions: snapshot.episodeCompletions,
       baseline: v3,
       conflicts,
       remoteEtag: v3Etag,

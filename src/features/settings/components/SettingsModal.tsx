@@ -8,6 +8,7 @@ import {
   clearTmdbCredential,
   deleteRecoveryPoint,
   getSettingAsync,
+  getAllEpisodeCompletions,
   getSyncSnapshot,
   getSyncTargets,
   getTmdbDetailAsync,
@@ -16,6 +17,7 @@ import {
   openBackupDirectory,
   restoreRecoveryPoint,
   resolveSyncConflict,
+  replaceLibrary,
   saveTmdbCredential,
   searchTmdbAsync,
   setRecoveryPointRetained,
@@ -96,6 +98,7 @@ const RECOVERY_REASON_LABELS: Record<RecoveryPoint['reason'], string> = {
   'batch-metadata': '批量补全前',
   migration: '数据库迁移前',
   'target-migration': '同步目标迁移前',
+  'episode-history-migration': '逐集历史迁移前',
   'pre-restore': '恢复操作前',
 };
 
@@ -429,16 +432,26 @@ export default function SettingsModal({
   }
 
   // 备份文件导出
-  function handleExport() {
-    const data = JSON.stringify(records, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `影视追踪_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  async function handleExport() {
+    try {
+      const episodeCompletions = await getAllEpisodeCompletions();
+      const data = JSON.stringify({
+        formatVersion: 2,
+        exportedAt: new Date().toISOString(),
+        records,
+        episodeCompletions,
+      }, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `影视追踪_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      showFailure('Settings.ExportLocal', '导出本地数据', error, setImportStatus);
+    }
   }
 
   // 本地文件导入
@@ -454,9 +467,20 @@ export default function SettingsModal({
         try {
           if (typeof reader.result !== 'string') throw new Error('无法读取文件内容');
           const parsed: unknown = JSON.parse(reader.result);
-          const completeData = normalizeImportedRecords(parsed);
-          await onImport(completeData);
-          showSuccess(`已导入 ${completeData.length} 条本地记录。`);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            && (parsed as { formatVersion?: unknown }).formatVersion === 2) {
+            const envelope = parsed as { records?: unknown; episodeCompletions?: unknown };
+            const completeData = normalizeImportedRecords(envelope.records);
+            if (!Array.isArray(envelope.episodeCompletions)) throw new Error('逐集历史格式无效');
+            await replaceLibrary(completeData, envelope.episodeCompletions as import('../../../shared/types').EpisodeCompletion[]);
+            await onDatabaseRestored();
+            showSuccess(`已导入 ${completeData.length} 条记录及 ${envelope.episodeCompletions.length} 条逐集历史。`);
+          } else {
+            const completeData = normalizeImportedRecords(parsed);
+            await onImport(completeData);
+            onNotify?.('info', '旧格式文件不含逐集历史；匹配条目的现有逐集历史已保留。');
+            showSuccess(`已导入 ${completeData.length} 条本地记录。`);
+          }
         } catch (error) {
           showFailure('Settings.ImportLocal', '导入本地文件', error, setImportStatus);
         }
@@ -1333,7 +1357,7 @@ export default function SettingsModal({
                     📤 导入本地 JSON
                   </button>
                   <button
-                    onClick={handleExport}
+                    onClick={() => void handleExport()}
                     className="flex-1 py-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 text-sm font-semibold text-gray-600 transition-colors shadow-sm"
                   >
                     📥 导出备份 JSON

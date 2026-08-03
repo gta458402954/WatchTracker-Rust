@@ -23,6 +23,8 @@ export function getEmptyRecord(): Omit<WatchRecord, 'id' | 'createdAt'> {
     chineseName: '',
     progress: '',
     totalEpisodes: null,
+    episodeTrackingEnabled: false,
+    nextEpisode: null,
     movieProgress: null,
     movieDuration: null,
     releaseYear: null,

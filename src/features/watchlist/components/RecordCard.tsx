@@ -1,8 +1,9 @@
-import React from 'react';
-import { WatchRecord, Status } from '../../../shared/types';
+import React, { useState } from 'react';
+import { type EpisodeCompletion, WatchRecord, Status } from '../../../shared/types';
 import { STATUS_CONFIG, formatMovieProgress } from '../../../shared/lib/constants';
 import { mediaTypeOf } from '../../../shared/lib/classification';
 import { open } from '@tauri-apps/plugin-shell';
+import { getEpisodeTracking } from '../../../shared/lib/database';
 
 const translateGenre = (genre: string): string => {
   const mapping: Record<string, string> = {
@@ -43,11 +44,11 @@ interface RecordCardProps {
   onEdit: (record: WatchRecord) => void;
   onDelete: (id: string) => void;
   onStatusChange: (id: string, status: Status) => void;
-  onProgressChange?: (id: string, progress: string) => void;  // 新增：进度更新回调
+  onNextEpisodeChange?: (record: WatchRecord, nextEpisode: number | null) => void;
   onLockToggle?: (id: string) => void;
 }
 
-export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onProgressChange, onLockToggle }: RecordCardProps) {
+export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onNextEpisodeChange, onLockToggle }: RecordCardProps) {
   const statusConf = STATUS_CONFIG[record.status];
   const mediaType = mediaTypeOf(record);
   const detailTags = record.genres;
@@ -75,24 +76,29 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
     return Array.from({ length: record.totalEpisodes }, (_, i) => i + 1);
   };
 
-  // 从进度文本中提取当前集数
-  const getCurrentEpisode = (): number | null => {
-    if (!record.progress) return null;
-    // 匹配 "第X集" 或纯数字
-    const match = record.progress.match(/第?(\d+)集?/);
-    if (match) return parseInt(match[1], 10);
-    return null;
-  };
-
   const episodeOptions = getEpisodeOptions();
-  const currentEpisode = getCurrentEpisode();
+  const [history, setHistory] = useState<EpisodeCompletion[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
 
   // 处理集数变更
   const handleEpisodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
-    if (value) {
-      onProgressChange?.(record.id, `第${value}集`);
-    }
+    if (!value) return;
+    const next = value === 'completed' ? null : Number(value);
+    if (!record.episodeTrackingEnabled && !window.confirm(
+      `将从第 ${next} 集开始记录“下一集”。旧进度“${record.progress || '空'}”不会转换，也不会补造此前集数的历史。是否启用？`,
+    )) return;
+    onNextEpisodeChange?.(record, next);
+  };
+
+  const toggleHistory = async () => {
+    if (history !== null) { setHistory(null); return; }
+    setHistoryLoading(true);
+    setHistoryError(false);
+    try { setHistory((await getEpisodeTracking(record.id)).completions); }
+    catch { setHistoryError(true); }
+    finally { setHistoryLoading(false); }
   };
 
   return (
@@ -217,15 +223,17 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
 
         {episodeOptions.length > 0 ? (
           <select
-            value={currentEpisode?.toString() || ''}
+            aria-label={`${record.chineseName || record.originalName} 下一集`}
+            value={record.episodeTrackingEnabled ? (record.nextEpisode?.toString() ?? 'completed') : ''}
             onChange={handleEpisodeChange}
             disabled={record.isLocked}
             className={`text-xs px-2 py-0.5 bg-orange-50 text-orange-600 border border-orange-100 rounded-full cursor-pointer outline-none ${record.isLocked ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
-            <option value="">选择集数</option>
+            <option value="">{record.episodeTrackingEnabled ? '下一集' : '启用逐集记录'}</option>
             {episodeOptions.map(ep => (
               <option key={ep} value={ep.toString()}>第{ep}集</option>
             ))}
+            {record.episodeTrackingEnabled && <option value="completed">完结</option>}
           </select>
         ) : isFilmLike && record.movieProgress !== null ? (
           <button
@@ -247,6 +255,22 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
           </span>
         )}
       </div>
+
+      {record.episodeTrackingEnabled && (
+        <div className="border-t border-gray-100 pt-2">
+          <button type="button" onClick={() => void toggleHistory()} className="text-[11px] font-semibold text-indigo-600 hover:underline">
+            {historyLoading ? '读取历史…' : history === null ? '查看逐集完成历史' : '收起逐集完成历史'}
+          </button>
+          {historyError && <p className="mt-1 text-[10px] text-red-500">逐集历史读取失败，请稍后重试。</p>}
+          {history !== null && (
+            <div className="mt-2 max-h-28 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-[10px] text-gray-600">
+              {history.length === 0 ? <p>尚无已完成集数。</p> : history.map(item => (
+                <p key={item.id}>第 {item.episodeNumber} 集 · {item.completedAt ? new Date(item.completedAt).toLocaleString('zh-CN') : '已完成，时间未记录'}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Rating */}
       <div className="flex items-center justify-between text-sm select-none">

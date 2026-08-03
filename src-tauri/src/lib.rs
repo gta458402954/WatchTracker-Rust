@@ -5,6 +5,7 @@ mod db;
 mod db_atomic_crud;
 mod db_atomic_helpers;
 mod db_atomic_update;
+mod episode_history;
 mod error;
 mod models;
 mod net;
@@ -124,6 +125,11 @@ pub fn run() {
             commands::insert_record,
             commands::update_record,
             commands::delete_record,
+            commands::get_episode_tracking,
+            commands::get_all_episode_completions,
+            commands::enable_episode_tracking,
+            commands::set_next_episode,
+            commands::replace_library,
             commands::replace_all_records,
             commands::get_sync_snapshot,
             commands::get_sync_runtime_state,

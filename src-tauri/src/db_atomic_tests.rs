@@ -19,6 +19,8 @@ mod tests {
             chinese_name: "原始记录".to_string(),
             progress: "0".to_string(),
             total_episodes: Some(10),
+            episode_tracking_enabled: false,
+            next_episode: None,
             movie_progress: None,
             movie_duration: None,
             release_year: Some("2026".to_string()),
@@ -108,15 +110,36 @@ mod tests {
     #[test]
     fn delete_commits_record_tombstone_and_generation_together() {
         let mut conn = database();
-        db::insert_record(&conn, record("deleted")).expect("seed record");
+        let mut deleted = record("deleted");
+        deleted.media_type = "剧集".to_string();
+        db::insert_record(&conn, deleted).expect("seed record");
+        let enabled = crate::episode_history::enable(&mut conn, "deleted", 2, 2, "test-actor")
+            .expect("enable episode tracking");
+        crate::episode_history::set_next(
+            &mut conn,
+            "deleted",
+            Some(3),
+            enabled.record.rev,
+            "test-actor",
+        )
+        .expect("create completion");
+        assert_eq!(
+            crate::episode_history::completions(&conn, "deleted")
+                .unwrap()
+                .len(),
+            1
+        );
 
         delete_record_atomic(&mut conn, "deleted", "test-actor").expect("delete record");
 
         assert!(db::get_record(&conn, "deleted").unwrap().is_none());
-        assert_eq!(get_records_generation(&conn).unwrap(), 1);
+        assert!(crate::episode_history::completions(&conn, "deleted")
+            .unwrap()
+            .is_empty());
+        assert_eq!(get_records_generation(&conn).unwrap(), 3);
         let outbox = get_sync_outbox(&conn).unwrap().unwrap();
         assert!(outbox.pending);
-        assert_eq!(outbox.reasons, vec!["record-delete"]);
+        assert!(outbox.reasons.contains(&"record-delete".to_string()));
         let tombstones = get_tombstones_tx(&conn).unwrap();
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].id, "deleted");
@@ -177,6 +200,28 @@ mod tests {
         assert!(db::get_record(&conn, "imported").unwrap().is_some());
         assert!(db::get_record(&conn, "old").unwrap().is_none());
         assert_eq!(get_records_generation(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn legacy_replacement_preserves_matching_episode_tracking_and_history() {
+        let mut conn = database();
+        let mut existing = record("series");
+        existing.media_type = "剧集".to_string();
+        db::insert_record(&conn, existing).unwrap();
+        let enabled = crate::episode_history::enable(&mut conn, "series", 2, 2, "actor").unwrap();
+        crate::episode_history::set_next(&mut conn, "series", Some(3), enabled.record.rev, "actor")
+            .unwrap();
+
+        let mut legacy = record("series");
+        legacy.media_type = "剧集".to_string();
+        legacy.episode_tracking_enabled = false;
+        legacy.next_episode = None;
+        replace_all_records_atomic(&mut conn, vec![legacy]).unwrap();
+
+        let tracking = crate::episode_history::tracking(&conn, "series").unwrap();
+        assert!(tracking.record.episode_tracking_enabled);
+        assert_eq!(tracking.record.next_episode, Some(3));
+        assert_eq!(tracking.completions.len(), 1);
     }
 
     #[test]

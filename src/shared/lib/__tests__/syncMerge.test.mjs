@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { mergeSyncStates, parseSyncPayloadV3 } from '../syncMerge.ts';
+import { mergeEpisodeCompletions, mergeSyncStates, parseSyncPayloadV3 } from '../syncMerge.ts';
 
 const now = '2026-08-02T00:00:00.000Z';
 function record(id, fields = {}) {
@@ -60,7 +60,7 @@ describe('TASK-D-SYNC-001 three-way merge', () => {
   });
 
   test('unknown future schema is rejected instead of parsed as empty data', () => {
-    assert.throws(() => parseSyncPayloadV3({ schemaVersion: 4, records: [], tombstones: [] }), /unsupported_remote_schema/);
+    assert.throws(() => parseSyncPayloadV3({ schemaVersion: 5, records: [], tombstones: [] }), /unsupported_remote_schema/);
   });
 
   test('malformed v3 metadata and tombstones are rejected before merge', () => {
@@ -91,5 +91,27 @@ describe('TASK-D-SYNC-001 three-way merge', () => {
     const result = mergeSyncStates(side(), side([local]), side([remote]), 'device-a', now);
     assert.equal(result.conflicts.length, 0);
     assert.equal(result.local.records[0].revActor, 'remote');
+  });
+});
+
+describe('TASK-D-HISTORY-001 completion merge', () => {
+  const completion = (completedAt, fields = {}) => ({
+    id: 'completion-id', recordId: 'series', episodeNumber: 1, completedAt,
+    createdAt: now, updatedAt: now, rev: 1, revActor: 'device', ...fields,
+  });
+
+  test('V3 reads as empty history and V4 validates completion rows', () => {
+    const common = { documentId: 'doc', revision: 1, commitId: 'c', parentCommitId: null, writerId: 'writer', committedAt: now, records: [], tombstones: [] };
+    assert.deepEqual(parseSyncPayloadV3({ schemaVersion: 3, ...common }).episodeCompletions, []);
+    assert.equal(parseSyncPayloadV3({ schemaVersion: 4, ...common, episodeCompletions: [completion(null)] }).episodeCompletions.length, 1);
+  });
+
+  test('known completion time wins over null while different known times block merge', () => {
+    const unknown = completion(null);
+    const known = completion(now, { rev: 2, revActor: 'remote' });
+    assert.equal(mergeEpisodeCompletions([], [unknown], [known])[0].completedAt, now);
+    assert.throws(() => mergeEpisodeCompletions([], [known], [completion('2026-08-03T00:00:00.000Z')]), /episode_completion_conflict/);
+    const remote = completion('2026-08-03T00:00:00.000Z');
+    assert.equal(mergeEpisodeCompletions([], [known], [remote], () => 'remote')[0].completedAt, remote.completedAt);
   });
 });

@@ -7,6 +7,8 @@ export interface WatchRecord {
   chineseName: string;
   progress: string;
   totalEpisodes: number | null;  // 总集数，电视剧/综艺专用
+  episodeTrackingEnabled?: boolean;
+  nextEpisode?: number | null;
   movieProgress: number | null;  // 电影当前观看秒数
   movieDuration: number | null;  // 电影总时长秒数
   releaseYear: string | null;    // 发布年份
@@ -32,6 +34,17 @@ export interface WatchRecord {
   contentTags?: string | null;
   rev?: number;
   revActor?: string;
+}
+
+export interface EpisodeCompletion {
+  id: string;
+  recordId: string;
+  episodeNumber: number;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  rev: number;
+  revActor: string;
 }
 
 export type UpdateWatchRecord = Partial<Pick<WatchRecord,

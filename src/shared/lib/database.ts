@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { UpdateWatchRecord, WatchRecord } from '../types';
+import { type EpisodeCompletion, UpdateWatchRecord, WatchRecord } from '../types';
 import { errorMessage, TmdbMedia, TmdbSearchResponse } from './classification';
 import { assertValidUpdateNumbers } from './updateValidation';
 import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from './syncMerge';
@@ -21,7 +21,25 @@ export async function deleteRecord(id: string): Promise<void> {
   await invoke('delete_record', { id });
 }
 
-export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'pre-restore';
+export interface EpisodeTracking {
+  record: WatchRecord;
+  completions: EpisodeCompletion[];
+}
+
+export const getEpisodeTracking = (recordId: string): Promise<EpisodeTracking> =>
+  invoke('get_episode_tracking', { recordId });
+export const getAllEpisodeCompletions = (): Promise<EpisodeCompletion[]> =>
+  invoke('get_all_episode_completions');
+
+export const enableEpisodeTracking = (recordId: string, initialNextEpisode: number, expectedRev: number): Promise<EpisodeTracking> =>
+  invoke('enable_episode_tracking', { recordId, initialNextEpisode, expectedRev });
+
+export const setNextEpisode = (recordId: string, nextEpisode: number | null, expectedRev: number): Promise<EpisodeTracking> =>
+  invoke('set_next_episode', { recordId, nextEpisode, expectedRev });
+export const replaceLibrary = (records: WatchRecord[], episodeCompletions: EpisodeCompletion[]): Promise<void> =>
+  invoke('replace_library', { records, episodeCompletions });
+
+export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'episode-history-migration' | 'pre-restore';
 
 export interface RecoveryPoint {
   id: string;
@@ -56,6 +74,7 @@ export interface SyncSnapshot {
   targetEpoch: number | null;
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
+  episodeCompletions: EpisodeCompletion[];
   recordsGeneration: number;
   baseline: SyncPayloadV3 | null;
   deviceId: string;
@@ -130,6 +149,7 @@ export interface SyncCommitInput {
   expectedGeneration: number;
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
+  episodeCompletions: EpisodeCompletion[];
   baseline: SyncPayloadV3;
   conflicts: SyncConflictV3[];
   remoteEtag: string;
