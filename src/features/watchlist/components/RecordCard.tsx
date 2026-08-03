@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { type EpisodeCompletion, WatchRecord, Status } from '../../../shared/types';
 import { STATUS_CONFIG, formatMovieProgress } from '../../../shared/lib/constants';
 import { mediaTypeOf } from '../../../shared/lib/classification';
@@ -78,8 +78,45 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
 
   const episodeOptions = getEpisodeOptions();
   const [history, setHistory] = useState<EpisodeCompletion[] | null>(null);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
+  const isCompleted = record.status === '已看';
+  const completedTracking = isCompleted && record.episodeTrackingEnabled && record.nextEpisode === null;
+  const inconsistentCompletedTracking = isCompleted && record.episodeTrackingEnabled && record.nextEpisode !== null;
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(false);
+    try {
+      setHistory((await getEpisodeTracking(record.id)).completions);
+    } catch {
+      setHistoryError(true);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [record.id]);
+
+  useEffect(() => {
+    if (!completedTracking) return undefined;
+    let active = true;
+    void getEpisodeTracking(record.id)
+      .then(result => { if (active) setHistory(result.completions); })
+      .catch(() => { if (active) setHistoryError(true); });
+    return () => { active = false; };
+  }, [completedTracking, record.id, record.rev]);
+
+  const maxCompletedEpisode = history?.reduce(
+    (maximum, item) => Math.max(maximum, item.episodeNumber),
+    0,
+  ) ?? 0;
+  const newlyAvailableEpisodes = completedTracking
+    && history !== null
+    && maxCompletedEpisode > 0
+    && record.totalEpisodes
+    && record.totalEpisodes > maxCompletedEpisode
+    ? record.totalEpisodes - maxCompletedEpisode
+    : 0;
 
   // 处理集数变更
   const handleEpisodeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -93,12 +130,12 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
   };
 
   const toggleHistory = async () => {
-    if (history !== null) { setHistory(null); return; }
-    setHistoryLoading(true);
-    setHistoryError(false);
-    try { setHistory((await getEpisodeTracking(record.id)).completions); }
-    catch { setHistoryError(true); }
-    finally { setHistoryLoading(false); }
+    if (historyExpanded) {
+      setHistoryExpanded(false);
+      return;
+    }
+    setHistoryExpanded(true);
+    if (history === null && !historyLoading) await loadHistory();
   };
 
   return (
@@ -221,7 +258,17 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
           </span>
         )}
 
-        {episodeOptions.length > 0 ? (
+        {episodeOptions.length > 0 && isCompleted ? (
+          <span className={`text-xs px-2 py-0.5 rounded-full border ${inconsistentCompletedTracking ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
+            {!record.episodeTrackingEnabled
+              ? '已完成 · 无逐集历史'
+              : inconsistentCompletedTracking
+                ? '已完成 · 状态与逐集进度不一致'
+                : history === null
+                  ? '已完成 · 正在读取逐集历史'
+                  : `已完成 · 已记录 ${history.length} 集历史`}
+          </span>
+        ) : episodeOptions.length > 0 ? (
           <select
             aria-label={`${record.chineseName || record.originalName} 下一集`}
             value={record.episodeTrackingEnabled ? (record.nextEpisode?.toString() ?? 'completed') : ''}
@@ -258,11 +305,24 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
 
       {record.episodeTrackingEnabled && (
         <div className="border-t border-gray-100 pt-2">
+          {newlyAvailableEpisodes > 0 && (
+            <div className="mb-2 flex items-center gap-2 text-[11px] text-orange-600">
+              <span>发现新增 {newlyAvailableEpisodes} 集</span>
+              <button
+                type="button"
+                disabled={record.isLocked}
+                onClick={() => onNextEpisodeChange?.(record, maxCompletedEpisode + 1)}
+                className={`rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 font-semibold ${record.isLocked ? 'cursor-not-allowed opacity-60' : 'hover:bg-orange-100'}`}
+              >
+                继续追更（第 {maxCompletedEpisode + 1} 集）
+              </button>
+            </div>
+          )}
           <button type="button" onClick={() => void toggleHistory()} className="text-[11px] font-semibold text-indigo-600 hover:underline">
-            {historyLoading ? '读取历史…' : history === null ? '查看逐集完成历史' : '收起逐集完成历史'}
+            {historyLoading ? '读取历史…' : historyExpanded ? '收起逐集完成历史' : '查看逐集完成历史'}
           </button>
           {historyError && <p className="mt-1 text-[10px] text-red-500">逐集历史读取失败，请稍后重试。</p>}
-          {history !== null && (
+          {historyExpanded && history !== null && (
             <div className="mt-2 max-h-28 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-[10px] text-gray-600">
               {history.length === 0 ? <p>尚无已完成集数。</p> : history.map(item => (
                 <p key={item.id}>第 {item.episodeNumber} 集 · {item.completedAt ? new Date(item.completedAt).toLocaleString('zh-CN') : '已完成，时间未记录'}</p>

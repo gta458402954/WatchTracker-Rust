@@ -1,7 +1,7 @@
 use crate::db;
 use crate::db_atomic_helpers::mark_local_records_mutated;
 use crate::error::AppError;
-use crate::models::WatchRecord;
+use crate::models::{RecordStatus, WatchRecord};
 use chrono::{Local, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
@@ -285,6 +285,9 @@ pub fn enable(
     let record =
         db::get_record(conn, record_id)?.ok_or_else(|| invalid("episode_record_missing"))?;
     let total = validate_record(&record, expected_rev)?;
+    if record.status == RecordStatus::Watched {
+        return Err(invalid("episode_record_already_completed"));
+    }
     validate_history_bounds(conn, &record, total)?;
     if record.episode_tracking_enabled {
         return Err(invalid("episode_tracking_already_enabled"));
@@ -431,6 +434,36 @@ mod tests {
         assert_eq!(retreated.record.status, RecordStatus::Watching);
         assert_eq!(retreated.completions.len(), 1);
         assert_eq!(retreated.record.progress, "旧进度");
+    }
+
+    #[test]
+    fn completed_record_cannot_enable_tracking() {
+        let mut conn = database();
+        conn.execute("UPDATE records SET status='已看' WHERE id='series'", [])
+            .unwrap();
+        let error = enable(&mut conn, "series", 1, 1, "device").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("episode_record_already_completed"));
+        let unchanged = tracking(&conn, "series").unwrap();
+        assert!(!unchanged.record.episode_tracking_enabled);
+        assert!(unchanged.completions.is_empty());
+    }
+
+    #[test]
+    fn completed_tracking_can_resume_when_total_increases() {
+        let mut conn = database();
+        let enabled = enable(&mut conn, "series", 6, 1, "device").unwrap();
+        let done = set_next(&mut conn, "series", None, enabled.record.rev, "device").unwrap();
+        let end_date = done.record.end_date.clone();
+        conn.execute("UPDATE records SET totalEpisodes=8 WHERE id='series'", [])
+            .unwrap();
+
+        let resumed = set_next(&mut conn, "series", Some(7), done.record.rev, "device").unwrap();
+        assert_eq!(resumed.record.status, RecordStatus::Watching);
+        assert_eq!(resumed.record.next_episode, Some(7));
+        assert_eq!(resumed.record.end_date, end_date);
+        assert_eq!(resumed.completions, done.completions);
     }
 
     #[test]

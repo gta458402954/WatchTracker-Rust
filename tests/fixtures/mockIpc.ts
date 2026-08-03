@@ -246,6 +246,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (index < 0) throw new Error('episode_record_missing');
               const previous = snapshot.records[index];
               if ((previous.rev ?? 0) !== args.expectedRev) throw new Error('stale_episode_progress');
+              if (previous.status === '已看') throw new Error('episode_record_already_completed');
               snapshot.records[index] = { ...previous, episodeTrackingEnabled: true, nextEpisode: args.initialNextEpisode as number, status: '在看', rev: (previous.rev ?? 0) + 1, revActor: 'mock-device' };
               recordsGeneration += 1; queueOutbox('episode-tracking-enable');
               return { record: structuredClone(snapshot.records[index]), completions: [] };

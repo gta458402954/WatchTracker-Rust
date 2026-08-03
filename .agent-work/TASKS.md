@@ -1653,9 +1653,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - First-Version Boundary: 下一集选择、三态、跳集、完结和旧数据显式启用；不含观看时长、批量补历史、跨季聚合和历史编辑。
 - Approved Design: `docs/EPISODE_HISTORY_DESIGN.md`。使用 `episodeTrackingEnabled + nextEpisode` 消除未启用/已完结的 NULL 歧义，并新增 `episode_completions`。数据库主版本保持 V18，使用独立功能 marker 幂等迁移；旧 `progress` 原样保留。
 - Atomic/Sync Boundary: 启用、推进、跳集、完结和后退均使用目的限定 Rust transaction，同步更新完成事件、record revision、generation、staging 和 outbox。WebDAV payload 升级到 V4；V3 可读，首次 V4 PUT 需确认，旧客户端遇到 V4 安全停止。
-- Implementation: 新增 V18 幂等功能迁移和迁移前恢复点；Rust 目的限定命令原子处理启用、推进、跳集、完结、后退、stale revision、总集数冲突及删除级联。卡片提供下一集选择与只读三态历史；本地 V2 信封完整导入导出 records 与完成事件，旧数组导入保留匹配历史。
+- Implementation: 新增 V18 幂等功能迁移和迁移前恢复点；Rust 目的限定命令原子处理启用、推进、跳集、完结、后退、stale revision、总集数冲突及删除级联。卡片提供下一集选择与只读三态历史；已看条目不再开放普通启用/回退入口，只有已记录条目发现新增集数时可“继续追更”，并保留历史与原完结日期。本地 V2 信封完整导入导出 records 与完成事件，旧数组导入保留匹配历史。
 - Sync/Compatibility: V3 继续可读并视为空历史；存在逐集状态时经用户确认安全升级 V4。完成事件使用确定性 ID 和三方合并，空时间可被已知时间补全，不同非空时间由用户选择本机或云端；V5+ 和旧客户端不兼容场景保持零 PUT。
-- Acceptance Evidence: Rust 70/70、Node 70/70、Playwright 56/56、typecheck、lint、build、rustfmt 与 Clippy 全部通过。测试仅使用临时 SQLite 与 mock WebDAV，未读写真实便携数据库或真实 WebDAV。
+- Acceptance Evidence: Rust 72/72、Node 70/70、Playwright 58/58、typecheck、lint、build、rustfmt 与 Clippy 全部通过。新增覆盖已看未启用记录的双层阻断、完结只读展示及新增集续追并保留历史/原完结日期。测试仅使用临时 SQLite 与 mock WebDAV，未读写真实便携数据库或真实 WebDAV。
 
 ### TASK-D-DISCOVERY-001：“今晚看什么”队列
 

@@ -34,11 +34,11 @@ function series(overrides: Partial<WatchRecord> = {}): WatchRecord {
   };
 }
 
-function completion(completedAt: string | null): EpisodeCompletion {
+function completion(completedAt: string | null, episodeNumber = 1): EpisodeCompletion {
   return {
-    id: 'episode-completion-1',
+    id: `episode-completion-${episodeNumber}`,
     recordId: 'episode-series',
-    episodeNumber: 1,
+    episodeNumber,
     completedAt,
     createdAt: '2026-08-01T00:00:00.000Z',
     updatedAt: completedAt ?? '2026-08-01T00:00:00.000Z',
@@ -89,16 +89,39 @@ test('@episode-history enables explicitly, records skips, completes, and preserv
   await expect(page.getByText('第 4 集 · 已完成，时间未记录')).toHaveCount(0);
 
   await selector.selectOption('completed');
-  await expect(selector).toHaveValue('completed');
+  await expect(selector).toHaveCount(0);
   snapshot = await mockSnapshot(page);
   expect(snapshot.records[0]).toMatchObject({ nextEpisode: null, status: '已看' });
-  const historyCount = snapshot.episodeCompletions.length;
+  await expect(page.getByText(`已完成 · 已记录 ${snapshot.episodeCompletions.length} 集历史`)).toBeVisible();
+});
 
-  await selector.selectOption('4');
-  await expect(selector).toHaveValue('4');
-  snapshot = await mockSnapshot(page);
-  expect(snapshot.records[0]).toMatchObject({ nextEpisode: 4, status: '在看', progress: '旧进度 E01' });
-  expect(snapshot.episodeCompletions).toHaveLength(historyCount);
+test('@episode-history keeps completed records read-only unless tracked episodes were added', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [series({ status: '已看', episodeTrackingEnabled: false, nextEpisode: null })],
+  });
+  await page.goto('/');
+
+  await expect(page.getByText('已完成 · 无逐集历史')).toBeVisible();
+  await expect(page.getByLabel('逐集测试剧 下一集')).toHaveCount(0);
+  await expect(page.getByText('启用逐集记录')).toHaveCount(0);
+});
+
+test('@episode-history resumes a completed tracked record only when new episodes exist', async ({ page }) => {
+  const completions = [completion('2026-08-01T10:00:00.000Z', 1), completion('2026-08-02T10:00:00.000Z', 2)];
+  await setupMockIpc(page, {
+    records: [series({ totalEpisodes: 4, status: '已看', episodeTrackingEnabled: true, nextEpisode: null, endDate: '2026-08-02' })],
+    episodeCompletions: completions,
+  });
+  await page.goto('/');
+
+  await expect(page.getByText('已完成 · 已记录 2 集历史')).toBeVisible();
+  await expect(page.getByText('发现新增 2 集')).toBeVisible();
+  await page.getByRole('button', { name: '继续追更（第 3 集）' }).click();
+
+  await expect(page.getByLabel('逐集测试剧 下一集')).toHaveValue('3');
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records[0]).toMatchObject({ status: '在看', nextEpisode: 3, endDate: '2026-08-02' });
+  expect(snapshot.episodeCompletions).toEqual(completions);
 });
 
 test('@episode-history upgrades WebDAV V3 to V4 only after confirmation', async ({ page }) => {
