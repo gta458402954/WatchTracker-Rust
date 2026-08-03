@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：19 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001` 与 `TASK-D-HISTORY-001` 已实现，剩余为 10 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001` 与 `TASK-D-HISTORY-001` 已实现，剩余为 12 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1504,6 +1504,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
 | `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
+| `TASK-D-RELEASE-001` | R3 | 发布与数据防护 | NEEDS-DESIGN | 正式发布的数据库隔离、审计、签名与分阶段放量 |
+| `TASK-D-HISTORY-002` | R3 | 多观看会话 | NEEDS-DESIGN | 重看与多轮观看历史；固定为路线图最后一项 |
 
 ### TASK-D-DATA-001：“一键补全缺失元数据”安全重构
 
@@ -1746,6 +1748,41 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Priority: R3
 - Scope: 每条记录保存多个平台/本地来源，提供 URL/协议校验、平台模板、排序和一键打开。
 - Current Basis: 当前卡片只基于 IMDb ID 打开 IMDb 页面，尚无通用来源模型。
+
+### TASK-D-RELEASE-001：正式发布与数据格式防误修改
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R3
+- Product Decision: WatchTracker 不采用完整 Event Sourcing；继续以当前记录模型、目的限定命令、事务、恢复点和轻量审计保障可恢复性。
+- Recommended Combination:
+  1. 保持 Rust 为唯一业务写入者，每类写入继续使用目的限定命令；
+  2. 增加正式的 `data_format_epoch`，所有正式版启动时必须先检查兼容性；
+  3. 旧 EXE 与活动数据库彻底隔离，旧程序不得直接打开需要更高 epoch 或能力标记的数据库；
+  4. migration 前使用 SQLite Backup API 建立并校验快照；
+  5. 所有业务写入继续保证 records、逐集历史、revision、staging/outbox 在同一事务提交；
+  6. 增加轻量审计表，至少记录操作类型、程序版本、Git commit、数据格式版本及操作前后哈希；
+  7. 启用 SQLite foreign keys、defensive mode，并在兼容性验证后尽量关闭 trusted schema；
+  8. 本地保留多代恢复点，并允许用户选择一个应用数据目录之外的外部备份目录；
+  9. Windows 正式安装包、便携包及自动更新产物统一签名并验证发布者；
+  10. 发布采用少量用户/设备验证后逐步放量，出现迁移或数据完整性异常时停止扩大范围；
+  11. 每个正式包明确显示产品版本、Git commit 和数据格式版本。
+- Required Design: 明确 epoch 与现有 `db_version`/功能 marker 的职责、旧 EXE 隔离方式、启动拒绝与只读恢复流程、审计哈希范围和保留周期、外部备份失败语义、证书/自动更新信任链、灰度指标及回滚边界。
+- Acceptance Boundary: 必须使用临时数据库与独立发布目录验证旧包零写入拒绝、migration 快照可还原、审计事务回滚、SQLite 安全开关兼容性、签名校验和分阶段发布停止条件；不得用活动用户数据库做故障注入。
+
+### TASK-D-HISTORY-002：多观看会话与重看历史
+
+- Phase: DEFERRED
+- Owner: Unassigned
+- Status: NEEDS-DESIGN
+- Priority: R3
+- Roadmap Position: 本任务固定为当前未来路线图的最后一项；在正式发布数据防护与现有逐集历史稳定前不实施。
+- Scope: 同一条目支持多次开始、暂停和完成观看；每次观看拥有独立会话、开始/完成时间、逐集完成归属和可选备注，并能区分首次观看、重看及仍在进行的会话。
+- Current Basis: `TASK-D-HISTORY-001` 只维护一组条目级 `startDate/endDate` 和逐集完成事件，不表达多轮观看，也不允许把“继续追更”误当作重看。
+- Required Design: 会话身份与当前活动会话约束、既有完成事件迁移、条目汇总状态、逐集事件归属、重看交互、删除/合并规则、导入导出、WebDAV schema 升级和同一会话的同步冲突策略。
+- Migration Boundary: 不从现有单一完成时间或逐集历史猜测过去观看次数；旧数据只能保留为明确的历史基线，是否建立首个会话必须采用可解释且可撤销的迁移方案。
+- Dependency: 应在 `TASK-D-RELEASE-001` 的 `data_format_epoch`、旧 EXE 隔离、迁移快照和审计边界落地后再设计实施。
 
 ## 已移出 DEFERRED
 
