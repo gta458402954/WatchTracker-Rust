@@ -127,3 +127,32 @@ test('@discovery combines platform, media, completion, and single-episode durati
   await expect(page.getByRole('heading', { name: '完结迷你剧' })).toBeVisible();
   await expect(page.getByText('单集时长未知，按 45 分钟估算')).toBeVisible();
 });
+
+test('@display-title hides a redundant mainland first season without rewriting stored identity', async ({ page }) => {
+  const mainlandSeries = record('mainland-season-one', {
+    chineseName: '大陆示例剧 第一季',
+    originalName: 'Mainland Example Season 1',
+    mediaType: '剧集',
+    totalEpisodes: 12,
+    episodeRuntime: 45,
+    originCountry: 'CN',
+  });
+  await setupMockIpc(page, { records: [mainlandSeries] });
+  await page.goto('/');
+
+  await expect(page.getByText('大陆示例剧', { exact: true })).toBeVisible();
+  await expect(page.getByText('大陆示例剧 第一季', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Mainland Example', { exact: true })).toBeVisible();
+
+  await openDashboard(page);
+  const discovery = page.getByRole('region', { name: '今晚看什么推荐' });
+  await expect(discovery.getByRole('heading', { name: '大陆示例剧' })).toBeVisible();
+  await discovery.getByRole('button', { name: '查看条目' }).click();
+  await expect(page.getByRole('region', { name: '大陆示例剧' })).toContainText('Mainland Example');
+
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records[0]).toMatchObject({
+    chineseName: '大陆示例剧 第一季',
+    originalName: 'Mainland Example Season 1',
+  });
+});

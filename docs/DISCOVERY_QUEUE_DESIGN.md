@@ -173,4 +173,4 @@
 
 ## 11. 实施证据
 
-本地完整门禁通过：Node 78/78、Playwright 61/61、Rust 72/72，以及 TypeScript typecheck、ESLint、生产构建、rustfmt 和 Clippy。专项测试覆盖锁定未看可推荐、在看/已看排除、电影/单集时长和默认估算、`Ended`/`Miniseries`、四类组合筛选、稳定分数与理由、本轮不重复、跳过跨筛选、关闭重置、只读摘要及零业务写 IPC。测试只使用纯函数夹具、临时 SQLite 和 mock IPC/WebDAV，未读取或写入正式便携数据库。
+本地完整门禁通过：Node 82/82、Playwright 62/62、Rust 72/72，以及 TypeScript typecheck、ESLint、生产构建、rustfmt 和 Clippy。专项测试覆盖锁定未看可推荐、在看/已看排除、电影/单集时长和默认估算、`Ended`/`Miniseries`、四类组合筛选、稳定分数与理由、本轮不重复、跳过跨筛选、关闭重置、只读摘要及零业务写 IPC。后续展示修订还覆盖中国大陆分集内容隐藏冗余“第一季 / Season 1”但保持原始数据不变。测试只使用纯函数夹具、临时 SQLite 和 mock IPC/WebDAV，未读取或写入正式便携数据库。

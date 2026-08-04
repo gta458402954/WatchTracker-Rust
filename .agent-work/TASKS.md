@@ -1672,7 +1672,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Data Boundary: 第一版全部使用 React 会话内状态，不新增 V18 schema/setting，不调用业务写 IPC，不提升 generation 或 outbox，也不改变 WebDAV V4。
 - Acceptance: 已看/在看实时排除、锁定可推荐、单次时长与估算标记、组合筛选、稳定排序、理由分项、本轮跳过/不重复/重置和零写入均需由 Node 与 Playwright 覆盖。
 - Implementation: 新增独立 discovery 纯函数，提供资格分层、电影整部/剧集单集时长、默认估算来源、完结语义、动态选项、四类组合筛选、兴趣主导的 100 分分项、最多三条理由和确定性平局排序。Dashboard 使用会话内 seen/skipped 状态实现换一个、本轮跳过、重新浏览、关闭重置、准确空状态和只读摘要；锁定只展示标记，不影响候选。
-- Acceptance Evidence: Node 78/78、Playwright 61/61、Rust 72/72、typecheck、lint、生产 build、rustfmt 与 Clippy 全部通过。专项浏览器验收确认所有推荐交互零业务写 IPC；测试未读取或写入正式便携数据库或真实 WebDAV。
+- Display Compatibility: 列表卡片、海报墙与观看概览统一通过纯展示函数隐藏中国大陆分集内容末尾冗余的“第一季 / 第 1 季 / Season 1”；第二季、官方上/下部、非大陆内容及数据库原始标题保持不变，季身份、补全、同步和导出不受影响。
+- Acceptance Evidence: Node 82/82、Playwright 62/62、Rust 72/72、typecheck、lint、生产 build、rustfmt 与 Clippy 全部通过。专项浏览器验收确认所有推荐交互零业务写 IPC，并验证首季展示不重写存储值；测试未读取或写入正式便携数据库或真实 WebDAV。
 
 ### TASK-D-IMPORT-001：Trakt 专项导入导出
 

@@ -4,6 +4,7 @@ import { STATUS_CONFIG, formatMovieProgress } from '../../../shared/lib/constant
 import { mediaTypeOf } from '../../../shared/lib/classification';
 import { open } from '@tauri-apps/plugin-shell';
 import { getEpisodeTracking } from '../../../shared/lib/database';
+import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 
 const translateGenre = (genre: string): string => {
   const mapping: Record<string, string> = {
@@ -53,6 +54,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
   const mediaType = mediaTypeOf(record);
   const detailTags = record.genres;
   const isFilmLike = Boolean(record.movieDuration) && !record.totalEpisodes;
+  const displayTitles = displayTitlesOf(record);
 
 
   // 计算显示的进度文本
@@ -144,12 +146,12 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="mb-2">
-            <div className="text-base font-semibold text-gray-900 truncate leading-tight" title={record.chineseName || record.originalName}>
-              {record.chineseName || record.originalName}
+            <div className="text-base font-semibold text-gray-900 truncate leading-tight" title={displayTitles.primary}>
+              {displayTitles.primary}
             </div>
-            {record.originalName && record.chineseName && (
-              <div className="text-xs text-gray-400 truncate mt-0.5" title={record.originalName}>
-                {record.originalName}
+            {displayTitles.secondary && (
+              <div className="text-xs text-gray-400 truncate mt-0.5" title={displayTitles.secondary}>
+                {displayTitles.secondary}
               </div>
             )}
           </div>
@@ -270,7 +272,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
           </span>
         ) : episodeOptions.length > 0 ? (
           <select
-            aria-label={`${record.chineseName || record.originalName} 下一集`}
+            aria-label={`${displayTitles.primary} 下一集`}
             value={record.episodeTrackingEnabled ? (record.nextEpisode?.toString() ?? 'completed') : ''}
             onChange={handleEpisodeChange}
             disabled={record.isLocked}

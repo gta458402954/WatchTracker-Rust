@@ -1,4 +1,5 @@
 import { WatchRecord } from '../../../shared/types';
+import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 
 interface PosterWallProps {
   filtered: WatchRecord[];
@@ -8,7 +9,9 @@ interface PosterWallProps {
 export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-      {filtered.map(record => (
+      {filtered.map(record => {
+        const displayTitle = displayTitlesOf(record).primary;
+        return (
         <div
           key={record.id}
           onClick={() => !record.isLocked && onEdit(record)}
@@ -26,20 +29,20 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
                   target.src = `https://image.tmdb.org/t/p/w342${record.posterPath}`;
                 }
               }}
-              alt={record.chineseName}
+              alt={displayTitle}
               className="w-full h-full object-cover"
             />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-gradient-to-br from-gray-100 to-gray-200">
               <span className="text-3xl mb-2">🎬</span>
-              <span className="text-xs font-bold text-gray-500 line-clamp-3">{record.chineseName}</span>
+              <span className="text-xs font-bold text-gray-500 line-clamp-3">{displayTitle}</span>
             </div>
           )}
 
           {/* Overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
             <div className="text-white">
-              <div className="text-xs font-bold truncate">{record.chineseName}</div>
+              <div className="text-xs font-bold truncate">{displayTitle}</div>
               <div className="flex items-center justify-between mt-1">
                 <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded backdrop-blur-md">
                   {record.releaseYear || '未知'}
@@ -84,7 +87,8 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
