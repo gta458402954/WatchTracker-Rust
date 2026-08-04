@@ -156,3 +156,19 @@ test('@display-title hides a redundant mainland first season without rewriting s
     originalName: 'Mainland Example Season 1',
   });
 });
+
+test('@dashboard-progress shows movie elapsed time, duration, and percentage', async ({ page }) => {
+  await setupMockIpc(page, {
+    records: [record('汉密尔顿', {
+      status: '在看',
+      movieProgress: 4020,
+      movieDuration: 9600,
+    })],
+  });
+  await page.goto('/');
+  await openDashboard(page);
+
+  await expect(page.getByText('已观看 1 小时 7 分钟 / 2 小时 40 分钟 · 42%')).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records[0]).toMatchObject({ movieProgress: 4020, movieDuration: 9600 });
+});
