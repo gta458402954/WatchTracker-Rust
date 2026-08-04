@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WatchRecord } from '../../../shared/types';
-import { calculateWatchValue, getGenreDistribution } from '../../../shared/lib/analytics';
+import { getGenreDistribution } from '../../../shared/lib/analytics';
 import { mediaTypeOf } from '../../../shared/lib/classification';
+import {
+  buildDiscoveryQueue,
+  discoveryEmptyMessage,
+  discoveryFilterOptions,
+  estimateDiscoveryViewing,
+  type DiscoveryDurationLimit,
+  type DiscoveryFilters,
+  type DiscoveryMediaFilter,
+} from '../../../shared/lib/discovery';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 interface DashboardProps { onClose: () => void; records: WatchRecord[]; }
@@ -14,21 +23,33 @@ function completionDate(record: WatchRecord) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
-function estimatedMinutes(record: WatchRecord) {
-  const episodic = Boolean(record.totalEpisodes) || ['剧集', '综艺'].includes(mediaTypeOf(record));
-  if (!episodic) return Math.ceil((record.movieDuration || 120 * 60) / 60);
-  return record.episodeRuntime || 45;
-}
 function completedMinutes(record: WatchRecord) {
   const episodic = Boolean(record.totalEpisodes) || ['剧集', '综艺'].includes(mediaTypeOf(record));
-  return episodic ? (record.totalEpisodes || 1) * (record.episodeRuntime || 45) : estimatedMinutes(record);
+  return episodic
+    ? (record.totalEpisodes || 1) * (record.episodeRuntime || 45)
+    : estimateDiscoveryViewing(record).minutes;
 }
 function formatDuration(minutes: number) { return minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60 ? `${minutes % 60} 分` : ''}` : `${minutes} 分`; }
 
+const DEFAULT_DISCOVERY_FILTERS: DiscoveryFilters = {
+  durationLimit: 120,
+  mediaType: '全部',
+  platform: null,
+  endedOnly: false,
+};
+const DURATION_LABELS: Record<DiscoveryDurationLimit, string> = {
+  30: '30 分钟内',
+  60: '1 小时内',
+  120: '2 小时内',
+  0: '不限',
+};
+
 export default function Dashboard({ onClose, records }: DashboardProps) {
   const [range, setRange] = useState<DateRange>('all');
-  const [tonightMinutes, setTonightMinutes] = useState<30 | 60 | 120 | 0>(120);
-  const [recommendationIndex, setRecommendationIndex] = useState(0);
+  const [discoveryFilters, setDiscoveryFilters] = useState<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
+  const [skippedIds, setSkippedIds] = useState<Set<string>>(() => new Set());
+  const [detailRecordId, setDetailRecordId] = useState<string | null>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -55,9 +76,30 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
     return { completed, added, watching, pending, minutes };
   }, [records, rangeStart]);
 
-  const candidates = useMemo(() => records.filter(record => record.status === '未看' && !record.isLocked && (!tonightMinutes || estimatedMinutes(record) <= tonightMinutes))
-    .sort((a, b) => calculateWatchValue(b, records) - calculateWatchValue(a, records)), [records, tonightMinutes]);
-  const recommendation = candidates.length ? candidates[recommendationIndex % candidates.length] : null;
+  const discoveryOptions = useMemo(() => discoveryFilterOptions(records), [records]);
+  const discoveryQueue = useMemo(
+    () => buildDiscoveryQueue(records, discoveryFilters, skippedIds),
+    [discoveryFilters, records, skippedIds],
+  );
+  const recommendation = discoveryQueue.candidates.find(candidate => !seenIds.has(candidate.record.id)) ?? null;
+  const detailRecord = detailRecordId ? records.find(record => record.id === detailRecordId) ?? null : null;
+  const roundExhausted = discoveryQueue.candidates.length > 0 && recommendation === null;
+
+  const updateDiscoveryFilters = (updates: Partial<DiscoveryFilters>) => {
+    setDiscoveryFilters(current => ({ ...current, ...updates }));
+    setSeenIds(new Set());
+  };
+
+  const showNextRecommendation = () => {
+    if (!recommendation) return;
+    setSeenIds(current => new Set(current).add(recommendation.record.id));
+  };
+
+  const skipRecommendation = () => {
+    if (!recommendation) return;
+    setSkippedIds(current => new Set(current).add(recommendation.record.id));
+    setSeenIds(current => new Set(current).add(recommendation.record.id));
+  };
 
   const trend = useMemo(() => {
     const count = range === 'week' ? 7 : range === 'month' ? 5 : 12;
@@ -94,8 +136,105 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
     </header>
     <div className="relative z-10 mt-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-bold ${range === item ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{RANGE_LABELS[item]}</button>)}</div>
     <main className="custom-scrollbar relative z-10 mt-5 flex-1 overflow-y-auto pr-2">
-      <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950 to-slate-900 p-5">
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="text-xs font-bold text-indigo-300">今晚看什么</p><h3 className="mt-1 text-xl font-black text-white">{recommendation?.chineseName || '暂无符合条件的待看作品'}</h3><p className="mt-2 text-sm text-slate-400">{recommendation ? `${mediaTypeOf(recommendation)} · 约 ${formatDuration(estimatedMinutes(recommendation))} · ${recommendation.tmdbStatus === 'Ended' ? '已完结' : '待探索'} · 待看价值 ${calculateWatchValue(recommendation, records)}` : '试试放宽时长限制，或添加新的待看记录。'}</p></div><div className="flex flex-wrap items-center gap-2">{([30,60,120,0] as const).map(minutes => <button key={minutes} onClick={() => { setTonightMinutes(minutes); setRecommendationIndex(0); }} className={`rounded-lg px-3 py-2 text-xs font-bold ${tonightMinutes === minutes ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300'}`}>{minutes || '不限'}</button>)}<button onClick={() => setRecommendationIndex(value => value + 1)} disabled={!recommendation} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-40">换一个</button></div></div>
+      <section aria-label="今晚看什么推荐" className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950 to-slate-900 p-5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-indigo-400/15 pb-4">
+          <span className="mr-1 text-xs font-bold text-indigo-300">今晚看什么</span>
+          {([30, 60, 120, 0] as DiscoveryDurationLimit[]).map(minutes => (
+            <button
+              key={minutes}
+              type="button"
+              onClick={() => updateDiscoveryFilters({ durationLimit: minutes })}
+              className={`rounded-lg px-3 py-2 text-xs font-bold ${discoveryFilters.durationLimit === minutes ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300'}`}
+            >
+              {DURATION_LABELS[minutes]}
+            </button>
+          ))}
+          <select
+            aria-label="推荐媒体类型"
+            value={discoveryFilters.mediaType}
+            onChange={event => updateDiscoveryFilters({ mediaType: event.target.value as DiscoveryMediaFilter })}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-200 outline-none"
+          >
+            <option value="全部">全部类型</option>
+            {discoveryOptions.mediaTypes.map(type => <option key={type} value={type}>{type}</option>)}
+          </select>
+          <select
+            aria-label="推荐平台"
+            value={discoveryFilters.platform ?? ''}
+            onChange={event => updateDiscoveryFilters({ platform: event.target.value || null })}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-200 outline-none"
+          >
+            <option value="">全部平台</option>
+            {discoveryOptions.platforms.map(platform => <option key={platform} value={platform}>{platform}</option>)}
+          </select>
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-slate-300">
+            <input
+              type="checkbox"
+              checked={discoveryFilters.endedOnly}
+              onChange={event => updateDiscoveryFilters({ endedOnly: event.target.checked })}
+              className="accent-indigo-500"
+            />
+            仅已完结
+          </label>
+        </div>
+
+        {recommendation ? (
+          <div className="mt-4 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xl font-black text-white">{recommendation.record.chineseName || recommendation.record.originalName}</h3>
+                {recommendation.record.isLocked && <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">已锁定 · 可查看</span>}
+              </div>
+              <p className="mt-2 text-sm text-slate-300">
+                {mediaTypeOf(recommendation.record)} · {recommendation.viewing.episodic ? '单集' : '整部'}约 {formatDuration(recommendation.viewing.minutes)} · {recommendation.breakdown.completion ? '已完结' : '尚未完结'} · 推荐分 {recommendation.score}
+              </p>
+              <p className="mt-2 text-sm text-indigo-200">推荐理由：{recommendation.reasons.length ? recommendation.reasons.join(' · ') : '符合当前筛选条件'}</p>
+              {(recommendation.viewing.estimated || recommendation.notes.length > 0) && (
+                <p className="mt-1 text-xs text-slate-500">
+                  {[recommendation.viewing.estimated
+                    ? `${recommendation.viewing.episodic ? '单集' : '整部'}时长未知，按 ${recommendation.viewing.minutes} 分钟估算`
+                    : null, ...recommendation.notes].filter(Boolean).join(' · ')}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button type="button" onClick={() => setDetailRecordId(recommendation.record.id)} className="rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20">查看条目</button>
+              <button type="button" onClick={skipRecommendation} className="rounded-lg bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-400/20">本轮跳过</button>
+              <button type="button" onClick={showNextRecommendation} className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">换一个</button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+            <div>
+              <h3 className="text-lg font-black text-white">{roundExhausted ? '本轮候选已看完' : discoveryEmptyMessage(discoveryQueue.emptyReason)}</h3>
+              <p className="mt-1 text-sm text-slate-400">不会自动放宽筛选，也不会加入已看或在看条目。</p>
+            </div>
+            {roundExhausted && (
+              <button type="button" onClick={() => setSeenIds(new Set())} className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">重新浏览</button>
+            )}
+          </div>
+        )}
+
+        {detailRecord && (
+          <div role="region" aria-labelledby="discovery-detail-title" className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/80 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">只读条目摘要</p>
+                <h4 id="discovery-detail-title" className="mt-1 text-lg font-black text-white">{detailRecord.chineseName || detailRecord.originalName}</h4>
+                {detailRecord.originalName && detailRecord.chineseName && <p className="mt-1 text-xs text-slate-500">{detailRecord.originalName}</p>}
+              </div>
+              <button type="button" onClick={() => setDetailRecordId(null)} aria-label="关闭条目摘要" className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white">关闭</button>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
+              <p>类型：{mediaTypeOf(detailRecord)}</p>
+              <p>年份：{detailRecord.releaseYear || '未知'}</p>
+              <p>平台：{detailRecord.platform || '未知'}</p>
+              <p>IMDb：{detailRecord.imdbRating?.toFixed(1) || '未知'}</p>
+              <p className="sm:col-span-2">题材：{detailRecord.genres || '未知'}</p>
+              <p className="sm:col-span-2">备注：{detailRecord.notes || '无'}</p>
+            </div>
+          </div>
+        )}
       </section>
       <section className="mt-5 grid gap-4 md:grid-cols-3"><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">本期完成</p><p className="mt-2 text-3xl font-black text-white">{summary.completed.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">估算观看时长 {formatDuration(summary.minutes)}</p></article><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">待看清单</p><p className="mt-2 text-3xl font-black text-white">{summary.pending.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">全量待看 · 在看 {summary.watching.length} 部</p></article><article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold text-slate-500">本期新增</p><p className="mt-2 text-3xl font-black text-emerald-400">{summary.added.length}<span className="ml-1 text-sm font-medium text-slate-400">部</span></p><p className="mt-2 text-sm text-slate-400">加入清单的影视条目</p></article></section>
       <section className="mt-5 grid gap-5 lg:grid-cols-[1.35fr_0.65fr]"><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><div className="flex items-center justify-between"><h3 className="font-bold text-white">完成趋势</h3><span className="text-xs text-slate-500">{range === 'week' ? '按日' : range === 'month' ? '按周' : range === 'all' ? '近 12 个月 · 按月' : '按月'}</span></div><div className="mt-4 h-52"><ResponsiveContainer width="100%" height="100%"><BarChart data={trend}><XAxis dataKey="name" tickLine={false} axisLine={false} stroke="#64748b" fontSize={11}/><YAxis allowDecimals={false} tickLine={false} axisLine={false} stroke="#64748b" fontSize={11}/><Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '10px' }}/><Bar dataKey="value" fill="#818cf8" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></article><article className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5"><h3 className="font-bold text-white">正在观看</h3><div className="mt-3 space-y-3">{summary.watching.length ? summary.watching.slice(0,3).map(record => <div key={record.id} className="rounded-xl bg-slate-800/70 p-3"><p className="truncate text-sm font-bold text-white">{record.chineseName}</p><p className="mt-1 text-xs text-slate-400">{record.progress || '尚未记录进度'}{record.totalEpisodes ? ` / ${record.totalEpisodes} 集` : ''}</p></div>) : <p className="py-8 text-center text-sm text-slate-500">暂无正在观看的项目</p>}</div></article></section>

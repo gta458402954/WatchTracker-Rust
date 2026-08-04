@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001` 与 `TASK-D-HISTORY-001` 已实现；`TASK-D-DISCOVERY-001` 已完成专项设计，剩余为 1 个 `SPECIFIED` 和 11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001` 与 `TASK-D-DISCOVERY-001` 已实现，剩余为 11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1494,7 +1494,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-SYNC-003` | R0 | 同步隔离 | IMPLEMENTED | R0 WebDAV 目标隔离、安全切换与 V18 迁移已实现 |
 | `TASK-D-SEC-001` | R0 | 凭据安全 | IMPLEMENTED | Windows Credential Manager、逐项迁移和 IPC 收紧已完成 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | IMPLEMENTED | 逐集完成时间、V18 功能迁移与同步 V4 已实现 |
-| `TASK-D-DISCOVERY-001` | R1 | 内容发现 | SPECIFIED | R1 今晚看什么；专项设计已确认，待实施 |
+| `TASK-D-DISCOVERY-001` | R1 | 内容发现 | IMPLEMENTED | R1 今晚看什么；可解释会话队列已实现 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | R1 Trakt |
 | `TASK-D-NET-001` | R1 | 网络安全 | NEEDS-DESIGN | R1 网络/海报安全 |
 | `TASK-D-UX-004` | R1 | 可访问性 | NEEDS-DESIGN | R2 弹窗可访问性，提升为 R1 |
@@ -1661,9 +1661,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-DISCOVERY-001：“今晚看什么”队列
 
-- Phase: DEFERRED
+- Phase: COMPLETED
 - Owner: Codex
-- Status: SPECIFIED
+- Status: IMPLEMENTED
 - Priority: R1
 - Scope: 基于未看状态、兴趣、评分、时长、平台和题材生成可解释候选，支持组合筛选、本轮排除、无重复刷新和只读查看；第一版队列仅存在于当前观看概览会话。
 - Current Basis: 数据字段和待看价值算法已存在，但没有产品化队列规则与验收标准。
@@ -1671,6 +1671,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Scoring Boundary: 新增独立的 100 分可解释 discovery 分数，兴趣等级为最大权重，IMDb、完结、喜爱题材和常看平台为辅助项；不得修改主列表现有 `calculateWatchValue` 排序。
 - Data Boundary: 第一版全部使用 React 会话内状态，不新增 V18 schema/setting，不调用业务写 IPC，不提升 generation 或 outbox，也不改变 WebDAV V4。
 - Acceptance: 已看/在看实时排除、锁定可推荐、单次时长与估算标记、组合筛选、稳定排序、理由分项、本轮跳过/不重复/重置和零写入均需由 Node 与 Playwright 覆盖。
+- Implementation: 新增独立 discovery 纯函数，提供资格分层、电影整部/剧集单集时长、默认估算来源、完结语义、动态选项、四类组合筛选、兴趣主导的 100 分分项、最多三条理由和确定性平局排序。Dashboard 使用会话内 seen/skipped 状态实现换一个、本轮跳过、重新浏览、关闭重置、准确空状态和只读摘要；锁定只展示标记，不影响候选。
+- Acceptance Evidence: Node 78/78、Playwright 61/61、Rust 72/72、typecheck、lint、生产 build、rustfmt 与 Clippy 全部通过。专项浏览器验收确认所有推荐交互零业务写 IPC；测试未读取或写入正式便携数据库或真实 WebDAV。
 
 ### TASK-D-IMPORT-001：Trakt 专项导入导出
 
