@@ -1496,7 +1496,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | IMPLEMENTED | 逐集完成时间、V18 功能迁移与同步 V4 已实现 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | IMPLEMENTED | R1 今晚看什么；可解释会话队列已实现 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | 用户于 2026-08-05 明确暂缓；不进入当前排期 |
-| `TASK-D-NET-001` | R1 | 网络安全 | SPECIFIED | 已确认端点独立限额、原子海报缓存与安全清理方案；待实施 |
+| `TASK-D-NET-001` | R1 | 网络安全 | IMPLEMENTED | 端点独立限额、原子海报缓存、安全清理与界面维护已实现 |
 | `TASK-D-UX-004` | R1 | 可访问性 | NEEDS-DESIGN | R2 弹窗可访问性，提升为 R1 |
 | `TASK-D-UX-001` | R2 | 检索体验 | NEEDS-DESIGN | R2 高级筛选 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | R2 订阅提醒 |
@@ -1688,13 +1688,16 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-NET-001：网络响应与海报缓存安全
 
-- Phase: DESIGN
+- Phase: COMPLETED
 - Owner: Codex
-- Status: SPECIFIED
+- Status: IMPLEMENTED
 - Priority: R1
 - Scope: 响应体/海报大小限制、MIME 校验、临时文件原子重命名、并发限制、缓存容量与孤立文件清理。
 - Current Basis: 海报路径已限制在单文件名和统一目录，但下载仍把完整响应直接写入最终文件。
 - Approved Design: `docs/NETWORK_POSTER_CACHE_SECURITY_DESIGN.md`。TMDB JSON、海报和 WebDAV 响应分开设限；海报采用路径白名单、流式硬上限、MIME＋签名校验、同目录临时文件原子发布、4 路并发和无索引缓存清理。用户已确认自动清理绝不删除仍被条目引用的海报、失败时使用占位图和手动重试、搜索缩略图也统一经过 Rust 并移除 WebView 对 TMDB 图片的直连权限。任务可进入实施。
+- Implementation: Rust 为 TMDB JSON、海报、WebDAV GET/PROPFIND 与 PUT 分别执行 4/10/64/1/64 MiB 上限及独立超时。海报只接受严格 TMDB 文件路径和 JPEG/PNG/WebP 实际签名，使用同目录唯一 `.part`、写入刷新和最终重命名；全局最多 4 路、同文件串行并在锁后复检。`poster://` 同样拒绝超限或无效缓存。
+- Cache/UI Boundary: 启动和下载后执行 500 MiB 软上限、400 MiB 回收目标，只按旧到新删除未引用缓存；当前 records 引用文件及未完成临时下载不自动删除，超过 24 小时的残留 `.part` 才回收。设置页提供统计、未引用清理和二次确认全部清空。海报墙失败后显示占位/手动重试，搜索 `w92_` 与正式 `w342` 缓存隔离；WebView CSP 已移除 TMDB 图片直连。
+- Acceptance Evidence: Rust 75/75、Node 85/85、Playwright 64/64、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过。专项测试确认未引用清理保留条目引用海报、显式缓存维护不调用任何业务记录写命令；全部测试使用临时目录和 mock IPC，未访问真实 TMDB/WebDAV 或修改正式便携数据库。
 
 ### TASK-D-UX-004：完整弹窗可访问性
 

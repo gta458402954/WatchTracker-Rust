@@ -540,6 +540,15 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               requireKeys(command, args, ['id', 'language', 'mediaType', 'proxy']);
               if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return structuredClone(tmdbDetail);
+            case 'download_poster':
+              requireKeys(command, args, ['path', 'proxy', 'size']);
+              return { status: 'downloaded', fileName: `${args.size === 'w92' ? 'w92_' : ''}${String(args.path).replace(/^\//, '')}` };
+            case 'get_poster_cache_stats':
+              requireKeys(command, args, []);
+              return { totalBytes: 0, validCount: 0, referencedCount: 0, orphanCount: 0, invalidCount: 0, temporaryCount: 0, capacityBytes: 524288000, capacityExceeded: false };
+            case 'clean_poster_cache':
+              requireKeys(command, args, ['mode']);
+              return { totalBytes: 0, validCount: 0, referencedCount: 0, orphanCount: 0, invalidCount: 0, temporaryCount: 0, capacityBytes: 524288000, capacityExceeded: false };
             case 'webdav_request':
             case 'probe_webdav_request':
               requireKeys(command, args, ['request']);

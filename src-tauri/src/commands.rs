@@ -544,13 +544,46 @@ pub async fn get_tmdb_detail(
 
 #[tauri::command]
 pub async fn download_poster(
+    state: State<'_, DbState>,
     paths: State<'_, AppPaths>,
+    poster_state: State<'_, crate::poster_cache::PosterDownloadState>,
     path: String,
+    size: Option<String>,
     proxy: Option<String>,
-) -> Result<bool, crate::error::AppError> {
-    net::download_poster(&paths, path, proxy)
+) -> Result<crate::poster_cache::PosterDownloadResult, crate::error::AppError> {
+    let result = net::download_poster(&paths, &poster_state, path, size, proxy)
         .await
-        .map_err(crate::error::AppError::General)
+        .map_err(crate::error::AppError::General)?;
+    match lock_database(&state).and_then(|conn| {
+        let records = db::get_all_records(&conn)?;
+        crate::poster_cache::enforce_capacity(&paths, &records)
+            .map_err(crate::error::AppError::General)
+    }) {
+        Ok(_) => {}
+        Err(error) => log::warn!("Could not enforce poster cache capacity after download: {error}"),
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_poster_cache_stats(
+    state: State<'_, DbState>,
+    paths: State<'_, AppPaths>,
+) -> Result<crate::poster_cache::PosterCacheStats, crate::error::AppError> {
+    let conn = lock_database(&state)?;
+    let records = db::get_all_records(&conn)?;
+    crate::poster_cache::stats(&paths, &records).map_err(crate::error::AppError::General)
+}
+
+#[tauri::command]
+pub fn clean_poster_cache(
+    state: State<'_, DbState>,
+    paths: State<'_, AppPaths>,
+    mode: String,
+) -> Result<crate::poster_cache::PosterCacheStats, crate::error::AppError> {
+    let conn = lock_database(&state)?;
+    let records = db::get_all_records(&conn)?;
+    crate::poster_cache::clean(&paths, &records, &mode).map_err(crate::error::AppError::General)
 }
 
 #[tauri::command]

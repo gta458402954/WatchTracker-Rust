@@ -1,5 +1,6 @@
 import { WatchRecord } from '../../../shared/types';
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
+import SafePosterImage from './SafePosterImage';
 
 interface PosterWallProps {
   filtered: WatchRecord[];
@@ -21,14 +22,9 @@ export default function PosterWall({ filtered, onEdit }: PosterWallProps) {
           }`}
         >
           {record.posterPath ? (
-            <img
-              src={`poster://localhost/${record.posterPath.replace(/^\//, '')}`}
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                if (!target.src.includes('tmdb.org')) {
-                  target.src = `https://image.tmdb.org/t/p/w342${record.posterPath}`;
-                }
-              }}
+            <SafePosterImage
+              key={record.posterPath}
+              posterPath={record.posterPath}
               alt={displayTitle}
               className="w-full h-full object-cover"
             />

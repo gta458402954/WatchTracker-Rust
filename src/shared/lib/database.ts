@@ -233,10 +233,25 @@ export async function openBackupDirectory(): Promise<void> {
   return invoke('open_backup_directory');
 }
 
-export async function downloadPosterAsync(path: string): Promise<boolean> {
-  const proxy = await getSettingAsync('network_proxy');
-  return invoke('download_poster', { path, proxy });
+export interface PosterDownloadResult { status: 'cache_hit' | 'downloaded'; fileName: string; }
+export interface PosterCacheStats {
+  totalBytes: number;
+  validCount: number;
+  referencedCount: number;
+  orphanCount: number;
+  invalidCount: number;
+  temporaryCount: number;
+  capacityBytes: number;
+  capacityExceeded: boolean;
 }
+
+export async function downloadPosterAsync(path: string, size: 'w92' | 'w342' = 'w342'): Promise<PosterDownloadResult> {
+  const proxy = await getSettingAsync('network_proxy');
+  return invoke('download_poster', { path, size, proxy });
+}
+
+export const getPosterCacheStats = (): Promise<PosterCacheStats> => invoke('get_poster_cache_stats');
+export const cleanPosterCache = (mode: 'unreferenced' | 'all'): Promise<PosterCacheStats> => invoke('clean_poster_cache', { mode });
 
 export async function getSettingAsync(key: string): Promise<string | null> {
   return invoke('get_setting', { key });

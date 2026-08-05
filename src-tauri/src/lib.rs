@@ -9,6 +9,7 @@ mod episode_history;
 mod error;
 mod models;
 mod net;
+mod poster_cache;
 mod record_validation;
 mod recovery_points;
 mod secret_store;
@@ -75,23 +76,15 @@ pub fn run() {
                     .unwrap();
             }
 
-            let content = match std::fs::read(&full_path) {
-                Ok(content) => content,
+            let (content, mime_type) = match poster_cache::read_valid(&full_path) {
+                Ok(value) => value,
                 Err(_) => {
                     return tauri::http::Response::builder()
-                        .status(500)
+                        .status(404)
                         .body(Vec::new())
                         .unwrap();
                 }
             };
-            let mime_type = infer::get(&content)
-                .map(|file_type| file_type.mime_type())
-                .unwrap_or_else(|| match full_path.extension().and_then(|extension| extension.to_str()) {
-                    Some("png") | Some("PNG") => "image/png",
-                    Some("webp") | Some("WEBP") => "image/webp",
-                    Some("gif") | Some("GIF") => "image/gif",
-                    _ => "image/jpeg",
-                });
 
             tauri::http::Response::builder()
                 .header("Content-Type", mime_type)
@@ -114,9 +107,20 @@ pub fn run() {
             );
 
             let db_state = db::init(&paths)?;
+            if let Ok(conn) = db_state.conn.lock() {
+                if let Ok(records) = db::get_all_records(&conn) {
+                    if let Err(error) = poster_cache::cleanup_stale_temporary_files(&paths) {
+                        log::warn!("Could not clean stale poster temporary files: {error}");
+                    }
+                    if let Err(error) = poster_cache::enforce_capacity(&paths, &records) {
+                        log::warn!("Could not enforce poster cache capacity: {error}");
+                    }
+                }
+            }
 
             app.manage(paths);
             app.manage(db_state);
+            app.manage(poster_cache::PosterDownloadState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -157,6 +161,8 @@ pub fn run() {
             commands::search_tmdb,
             commands::get_tmdb_detail,
             commands::download_poster,
+            commands::get_poster_cache_stats,
+            commands::clean_poster_cache,
             commands::webdav_request,
             commands::probe_webdav_request,
         ])

@@ -12,6 +12,7 @@ import {
   TmdbSeason,
 } from '../../../shared/lib/classification';
 import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
+import SafePosterImage from './SafePosterImage';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
@@ -506,7 +507,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
                         className="w-full flex items-start gap-3 p-2 hover:bg-indigo-50 rounded-xl transition-colors text-left"
                       >
                         {item.poster_path ? (
-                          <img src={`https://image.tmdb.org/t/p/w92${item.poster_path}`} alt="" className="w-10 h-14 object-cover rounded-md flex-shrink-0" />
+                          <SafePosterImage key={item.poster_path} posterPath={item.poster_path} size="w92" alt="" compact className="w-10 h-14 object-cover rounded-md flex-shrink-0" />
                         ) : (
                           <div className="w-10 h-14 bg-gray-100 rounded-md flex-shrink-0 flex items-center justify-center text-xs text-gray-400">无图</div>
                         )}

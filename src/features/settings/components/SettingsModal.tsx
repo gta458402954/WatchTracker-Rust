@@ -13,6 +13,8 @@ import {
   getSyncTargets,
   getTmdbDetailAsync,
   getTmdbCredentialStatus,
+  getPosterCacheStats,
+  cleanPosterCache,
   listRecoveryPoints,
   openBackupDirectory,
   restoreRecoveryPoint,
@@ -25,6 +27,7 @@ import {
   vacuumDbAsync,
   type RecoveryPoint,
   type RecoveryPointList,
+  type PosterCacheStats,
   type SyncRuntimeState,
   type SyncTargetRegistry,
 } from '../../../shared/lib/database';
@@ -149,6 +152,9 @@ export default function SettingsModal({
   const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPointList | null>(null);
   const [recoveryStatus, setRecoveryStatus] = useState('');
   const [recoveryBusyId, setRecoveryBusyId] = useState<string | null>(null);
+  const [posterCache, setPosterCache] = useState<PosterCacheStats | null>(null);
+  const [posterCacheStatus, setPosterCacheStatus] = useState('');
+  const [posterCacheBusy, setPosterCacheBusy] = useState(false);
 
   // 批量同步状态
   const [batchPhase, setBatchPhase] = useState<BatchPhase>('idle');
@@ -234,9 +240,37 @@ export default function SettingsModal({
     }
   }, [showFailure]);
 
+  const refreshPosterCache = useCallback(async () => {
+    try {
+      setPosterCache(await getPosterCacheStats());
+    } catch (error) {
+      showFailure('Settings.PosterCacheStats', '读取海报缓存', error, setPosterCacheStatus);
+    }
+  }, [showFailure]);
+
   function handleOpenToolsTab() {
     setActiveTab('tools');
     void refreshRecoveryPoints();
+    void refreshPosterCache();
+  }
+
+  async function handleCleanPosterCache(mode: 'unreferenced' | 'all') {
+    const prompt = mode === 'all'
+      ? '确定清空全部海报缓存吗？条目数据不会改变，海报将在需要时重新下载。'
+      : '确定清理临时、无效和未被任何条目引用的海报缓存吗？';
+    if (!confirm(prompt)) return;
+    setPosterCacheBusy(true);
+    try {
+      const next = await cleanPosterCache(mode);
+      setPosterCache(next);
+      const message = mode === 'all' ? '全部海报缓存已清空，条目数据未改变。' : '未引用海报缓存已清理。';
+      setPosterCacheStatus(`✅ ${message}`);
+      showSuccess(message);
+    } catch (error) {
+      showFailure('Settings.CleanPosterCache', '清理海报缓存', error, setPosterCacheStatus);
+    } finally {
+      setPosterCacheBusy(false);
+    }
   }
 
   // 保存 TMDB 密钥
@@ -1456,6 +1490,58 @@ export default function SettingsModal({
                   打开 backups 目录
                 </button>
                 {recoveryStatus && <p className="text-center text-xs font-medium text-indigo-600">{recoveryStatus}</p>}
+              </div>
+
+              {/* Poster Cache */}
+              <div aria-label="海报缓存" className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
+                <div className="flex items-center justify-between gap-3 border-b border-gray-50 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">🖼️</span>
+                    <div>
+                      <h4 className="font-bold text-gray-800">海报缓存</h4>
+                      <p className="text-[11px] text-gray-400">缓存可安全重建；自动清理永不删除仍被条目引用的海报</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void refreshPosterCache()}
+                    disabled={posterCacheBusy}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    刷新
+                  </button>
+                </div>
+                {posterCache && (
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600">
+                    <span>总容量：{formatBytes(posterCache.totalBytes)}</span>
+                    <span>建议上限：{formatBytes(posterCache.capacityBytes)}</span>
+                    <span>条目引用：{posterCache.referencedCount} 张</span>
+                    <span>未引用：{posterCache.orphanCount} 张</span>
+                    <span>有效缓存：{posterCache.validCount} 张</span>
+                    <span>无效/临时：{posterCache.invalidCount + posterCache.temporaryCount} 个</span>
+                  </div>
+                )}
+                {posterCache?.capacityExceeded && (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    缓存超过建议容量。程序只会自动回收未引用文件，不会删除条目仍在使用的海报。
+                  </p>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => void handleCleanPosterCache('unreferenced')}
+                    disabled={posterCacheBusy}
+                    className="flex-1 rounded-xl border border-gray-200 py-2.5 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    清理未引用缓存
+                  </button>
+                  <button
+                    onClick={() => void handleCleanPosterCache('all')}
+                    disabled={posterCacheBusy}
+                    className="flex-1 rounded-xl border border-red-100 py-2.5 text-xs font-bold text-red-500 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    清空全部海报
+                  </button>
+                </div>
+                {posterCacheStatus && <p className="text-center text-xs font-medium text-indigo-600">{posterCacheStatus}</p>}
               </div>
 
               {/* Database Maintenance */}

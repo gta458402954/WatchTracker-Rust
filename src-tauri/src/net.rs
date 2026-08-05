@@ -1,11 +1,77 @@
 use crate::app_paths::AppPaths;
+use crate::poster_cache::{self, PosterDownloadResult, PosterDownloadState};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::time::Duration;
+use uuid::Uuid;
+
+const TMDB_JSON_MAX_BYTES: usize = 4 * 1024 * 1024;
+const WEBDAV_JSON_MAX_BYTES: usize = 64 * 1024 * 1024;
+const WEBDAV_XML_MAX_BYTES: usize = 1024 * 1024;
+
+async fn read_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+    error_code: &str,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(error_code.to_string());
+    }
+    let mut body =
+        Vec::with_capacity(response.content_length().unwrap_or(0).min(limit as u64) as usize);
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "network_body_read_failed".to_string())?
+    {
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(error_code.to_string());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn json_response(
+    response: reqwest::Response,
+    limit: usize,
+    error_code: &str,
+    validate_mime: bool,
+) -> Result<Value, String> {
+    if validate_mime && response.status().is_success() {
+        if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+            let content_type = content_type
+                .to_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if !content_type.contains("json") && !content_type.contains("octet-stream") {
+                return Err("network_content_type_invalid".to_string());
+            }
+        }
+    }
+    let bytes = read_limited(response, limit, error_code).await?;
+    serde_json::from_slice(&bytes).map_err(|_| "network_json_invalid".to_string())
+}
+
+fn client_builder(
+    proxy: Option<String>,
+    timeout: Duration,
+) -> Result<reqwest::ClientBuilder, String> {
+    let mut builder = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(timeout);
+    if let Some(proxy) = proxy.filter(|value| !value.trim().is_empty()) {
+        builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|error| error.to_string())?);
+    }
+    Ok(builder)
+}
 
 pub async fn search_tmdb(
     api_key: String,
@@ -22,12 +88,7 @@ pub async fn search_tmdb(
         log::info!("[TMDB] Multi Searching for: {}", query);
     }
 
-    let mut builder = Client::builder();
-    if let Some(p) = proxy {
-        if !p.trim().is_empty() {
-            builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
-        }
-    }
+    let builder = client_builder(proxy, Duration::from_secs(30))?;
     let client = builder.build().map_err(|e| e.to_string())?;
 
     let is_jwt = api_key.contains('.') || api_key.len() > 40;
@@ -67,11 +128,7 @@ pub async fn search_tmdb(
     })?;
 
     let status = res.status();
-    let json: Value = res.json().await.map_err(|e| {
-        let err = format!("JSON parse error: {}", e);
-        log::error!("[TMDB] {}", err);
-        err
-    })?;
+    let json = json_response(res, TMDB_JSON_MAX_BYTES, "tmdb_response_too_large", true).await?;
 
     // 检查 TMDB API 级别的错误
     if !status.is_success() {
@@ -165,7 +222,8 @@ pub async fn search_tmdb(
             }
             let en_res = en_req.send().await.map_err(|e| e.to_string())?;
             let en_status = en_res.status();
-            let mut en_json: Value = en_res.json().await.map_err(|e| e.to_string())?;
+            let mut en_json =
+                json_response(en_res, TMDB_JSON_MAX_BYTES, "tmdb_response_too_large", true).await?;
             if !en_status.is_success() {
                 let message = en_json
                     .get("status_message")
@@ -241,12 +299,7 @@ pub async fn get_tmdb_detail(
     }
     log::info!("[TMDB] Fetching detail for {} ID: {}", media_type, id);
 
-    let mut builder = Client::builder();
-    if let Some(p) = proxy {
-        if !p.trim().is_empty() {
-            builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
-        }
-    }
+    let builder = client_builder(proxy, Duration::from_secs(30))?;
     let client = builder.build().map_err(|e| e.to_string())?;
 
     let is_jwt = api_key.contains('.') || api_key.len() > 40;
@@ -273,10 +326,7 @@ pub async fn get_tmdb_detail(
         e.to_string()
     })?;
     let status = res.status();
-    let json: Value = res.json().await.map_err(|e| {
-        log::error!("[TMDB] Detail JSON error: {}", e);
-        e.to_string()
-    })?;
+    let json = json_response(res, TMDB_JSON_MAX_BYTES, "tmdb_response_too_large", true).await?;
     if !status.is_success() {
         let message = json
             .get("status_message")
@@ -289,45 +339,110 @@ pub async fn get_tmdb_detail(
 
 pub async fn download_poster(
     paths: &AppPaths,
+    state: &PosterDownloadState,
     poster_path: String,
+    size: Option<String>,
     proxy: Option<String>,
-) -> Result<bool, String> {
-    if poster_path.is_empty() {
-        return Ok(false);
-    }
-
-    let file_name = PathBuf::from(&poster_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("Invalid path")?
-        .to_string();
+) -> Result<PosterDownloadResult, String> {
+    let size = size.unwrap_or_else(|| "w342".to_string());
+    let file_name = poster_cache::normalized_file_name(&poster_path, &size)?;
 
     let local_path = paths.poster_file(&file_name)?;
-    if local_path.exists() {
-        return Ok(true);
+    if poster_cache::read_valid(&local_path).is_ok() {
+        return Ok(PosterDownloadResult {
+            status: "cache_hit".to_string(),
+            file_name,
+        });
     }
 
-    let url = format!("https://image.tmdb.org/t/p/w342{}", poster_path);
-
-    let mut builder = Client::builder();
-    if let Some(p) = proxy {
-        if !p.trim().is_empty() {
-            builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
-        }
+    let file_lock = state.file_lock(&file_name).await;
+    let _file_guard = file_lock.lock().await;
+    if poster_cache::read_valid(&local_path).is_ok() {
+        return Ok(PosterDownloadResult {
+            status: "cache_hit".to_string(),
+            file_name,
+        });
     }
+    let _permit = state
+        .permits
+        .acquire()
+        .await
+        .map_err(|_| "poster_download_unavailable".to_string())?;
+
+    let url = format!("https://image.tmdb.org/t/p/{size}{poster_path}");
+    let builder =
+        client_builder(proxy, Duration::from_secs(45))?.redirect(reqwest::redirect::Policy::none());
     let client = builder.build().map_err(|e| e.to_string())?;
-
-    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let mut res = client.get(url).send().await.map_err(|error| {
+        if error.is_timeout() {
+            "poster_timeout".to_string()
+        } else {
+            "poster_network_failed".to_string()
+        }
+    })?;
 
     if !res.status().is_success() {
-        return Err(format!("Download failed: {}", res.status()));
+        return Err(format!("poster_http_status:{}", res.status().as_u16()));
+    }
+    if res
+        .content_length()
+        .is_some_and(|length| length > poster_cache::POSTER_MAX_BYTES)
+    {
+        return Err("poster_response_too_large".to_string());
+    }
+    if let Some(content_type) = res.headers().get(reqwest::header::CONTENT_TYPE) {
+        let value = content_type
+            .to_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !value.starts_with("image/") && !value.contains("octet-stream") {
+            return Err("poster_content_type_invalid".to_string());
+        }
     }
 
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
-    let mut file = fs::File::create(local_path).map_err(|e| e.to_string())?;
-    file.write_all(&bytes).map_err(|e| e.to_string())?;
-
-    Ok(true)
+    let temp_path = paths
+        .posters()
+        .join(format!(".poster-{}.part", Uuid::new_v4()));
+    let result = async {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|_| "poster_cache_write_failed".to_string())?;
+        let mut written = 0_u64;
+        while let Some(chunk) = res
+            .chunk()
+            .await
+            .map_err(|_| "poster_network_failed".to_string())?
+        {
+            written = written.saturating_add(chunk.len() as u64);
+            if written > poster_cache::POSTER_MAX_BYTES {
+                return Err("poster_response_too_large".to_string());
+            }
+            file.write_all(&chunk)
+                .map_err(|_| "poster_cache_write_failed".to_string())?;
+        }
+        file.flush()
+            .map_err(|_| "poster_cache_write_failed".to_string())?;
+        file.sync_all()
+            .map_err(|_| "poster_cache_write_failed".to_string())?;
+        drop(file);
+        poster_cache::read_valid(&temp_path)?;
+        if local_path.exists() {
+            fs::remove_file(&local_path).map_err(|_| "poster_cache_write_failed".to_string())?;
+        }
+        fs::rename(&temp_path, &local_path).map_err(|_| "poster_cache_write_failed".to_string())?;
+        Ok::<(), String>(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result?;
+    Ok(PosterDownloadResult {
+        status: "downloaded".to_string(),
+        file_name,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -412,12 +527,15 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
         }
     }
 
-    let mut builder = Client::builder();
-    if let Some(p) = request.proxy {
-        if !p.trim().is_empty() {
-            builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| e.to_string())?);
-        }
+    if request.method == "PUT"
+        && request
+            .body
+            .as_ref()
+            .is_some_and(|body| body.len() > WEBDAV_JSON_MAX_BYTES)
+    {
+        return Err("webdav_request_too_large".to_string());
     }
+    let builder = client_builder(request.proxy, Duration::from_secs(120))?;
     let client = builder.build().map_err(|e| e.to_string())?;
 
     let mut req_builder = match request.method.as_str() {
@@ -478,10 +596,13 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
             status.as_u16(),
             etag_shape(etag.as_deref())
         );
-        let json: Value = res.json().await.map_err(|e| {
-            log::error!("[WebDAV] JSON parse error: {}", e);
-            e.to_string()
-        })?;
+        let json = json_response(
+            res,
+            WEBDAV_JSON_MAX_BYTES,
+            "webdav_response_too_large",
+            false,
+        )
+        .await?;
         return Ok(WebDavResponse {
             status: status.as_u16(),
             body: Some(json),
@@ -491,10 +612,8 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
     }
 
     if request.method == "PROPFIND" && status.is_success() {
-        let text = res.text().await.map_err(|error| {
-            log::error!("[WebDAV] PROPFIND response error: {}", error);
-            error.to_string()
-        })?;
+        let bytes = read_limited(res, WEBDAV_XML_MAX_BYTES, "webdav_response_too_large").await?;
+        let text = String::from_utf8(bytes).map_err(|_| "webdav_xml_invalid".to_string())?;
         log::info!(
             "[WebDAV] PROPFIND completed with status {} and response body",
             status.as_u16()
