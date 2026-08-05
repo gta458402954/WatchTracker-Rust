@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001` 与 `TASK-D-DISCOVERY-001` 已实现，剩余为 11 个 `NEEDS-DESIGN`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001` 与 `TASK-D-DISCOVERY-001` 已实现，剩余为 11 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 已由用户明确暂缓并移出当前排期。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1495,7 +1495,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-SEC-001` | R0 | 凭据安全 | IMPLEMENTED | Windows Credential Manager、逐项迁移和 IPC 收紧已完成 |
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | IMPLEMENTED | 逐集完成时间、V18 功能迁移与同步 V4 已实现 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | IMPLEMENTED | R1 今晚看什么；可解释会话队列已实现 |
-| `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | R1 Trakt |
+| `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | 用户于 2026-08-05 明确暂缓；不进入当前排期 |
 | `TASK-D-NET-001` | R1 | 网络安全 | NEEDS-DESIGN | R1 网络/海报安全 |
 | `TASK-D-UX-004` | R1 | 可访问性 | NEEDS-DESIGN | R2 弹窗可访问性，提升为 R1 |
 | `TASK-D-UX-001` | R2 | 检索体验 | NEEDS-DESIGN | R2 高级筛选 |
@@ -1682,6 +1682,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Owner: Unassigned
 - Status: NEEDS-DESIGN
 - Priority: R1
+- Scheduling: USER-PAUSED（2026-08-05）。当前没有实际使用需求，不进行专项设计或实施；只有用户以后明确恢复时才重新进入排期。
 - Scope: Trakt schema 映射、电影/剧集/季身份匹配、重复与冲突策略、预览、部分失败报告和往返测试。
 - Current Basis: 已有通用 JSON 导入导出与清洗；不能把通用导入直接视为 Trakt 兼容。
 
