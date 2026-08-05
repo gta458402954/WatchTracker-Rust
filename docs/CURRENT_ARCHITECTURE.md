@@ -108,7 +108,7 @@ WebDAV URL＋保留大小写的用户名经规范化后生成 SHA-256 target ID�
 
 `TASK-D-SEC-001` 已实现：WebDAV/TMDB 秘密本体保存在当前 Windows 用户的 Credential Manager，SQLite 仅保留固定 `wincred:v1` 引用；旧格式按首次使用逐项安全迁移，日常网络命令在 Rust 内部取密钥，已保存秘密不再往返 React。数据库继续使用 V18，便携目录换机后需要重新输入凭据。
 
-`TASK-D-HISTORY-001` 已实现：V18 通过独立 `episode_history_schema_version=1` 功能迁移增加 `episodeTrackingEnabled`、`nextEpisode` 与 `episode_completions`；启用、跳集、完结和后退由 Rust 原子命令处理，旧 `progress` 不自动转换。已看条目只读展示逐集状态，不提供普通启用或回退入口；仅当已有历史的条目增加总集数时允许“继续追更”，既有历史与原完结日期不变。完成历史进入本地 V2 备份和 WebDAV V4；V3 可读，首次 V4 发布需确认，不同非空完成时间由用户选择。`TASK-D-DISCOVERY-001`“今晚看什么”也已实现：只推荐未看，锁定可参与，电影按整部、分集内容按单集，提供四类筛选、稳定可解释评分和会话内无重复/跳过/只读查看，全程零业务写入。展示层会为中国大陆分集内容隐藏冗余的首季后缀，但保留数据库原始标题作为季匹配与同步身份；看板“正在观看”会从电影专用时间字段显示已观看/总时长与百分比，剧集则显示下一集或旧进度。`TASK-D-IMPORT-001` 已由用户暂缓，下一项改为 `TASK-D-NET-001` 网络响应与海报缓存安全专项设计；正式发布的数据格式防护由 `TASK-D-RELEASE-001` 跟踪，多观看会话由路线图最后一项 `TASK-D-HISTORY-002` 跟踪。完整清单和状态以 `.agent-work/TASKS.md` 为准。
+`TASK-D-HISTORY-001` 已实现：V18 通过独立 `episode_history_schema_version=1` 功能迁移增加 `episodeTrackingEnabled`、`nextEpisode` 与 `episode_completions`；启用、跳集、完结和后退由 Rust 原子命令处理，旧 `progress` 不自动转换。已看条目只读展示逐集状态，不提供普通启用或回退入口；仅当已有历史的条目增加总集数时允许“继续追更”，既有历史与原完结日期不变。完成历史进入本地 V2 备份和 WebDAV V4；V3 可读，首次 V4 发布需确认，不同非空完成时间由用户选择。`TASK-D-DISCOVERY-001`“今晚看什么”也已实现：只推荐未看，锁定可参与，电影按整部、分集内容按单集，提供四类筛选、稳定可解释评分和会话内无重复/跳过/只读查看，全程零业务写入。展示层会为中国大陆分集内容隐藏冗余的首季后缀，但保留数据库原始标题作为季匹配与同步身份；看板“正在观看”会从电影专用时间字段显示已观看/总时长与百分比，剧集则显示下一集或旧进度。`TASK-D-IMPORT-001` 已由用户暂缓；`TASK-D-NET-001` 网络响应与海报缓存安全已完成专项设计并可进入实施，保持 V18 与 WebDAV V4。正式发布的数据格式防护由 `TASK-D-RELEASE-001` 跟踪，多观看会话由路线图最后一项 `TASK-D-HISTORY-002` 跟踪。完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 

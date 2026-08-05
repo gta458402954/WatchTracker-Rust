@@ -1496,7 +1496,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | IMPLEMENTED | 逐集完成时间、V18 功能迁移与同步 V4 已实现 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | IMPLEMENTED | R1 今晚看什么；可解释会话队列已实现 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | 用户于 2026-08-05 明确暂缓；不进入当前排期 |
-| `TASK-D-NET-001` | R1 | 网络安全 | NEEDS-DESIGN | R1 网络/海报安全 |
+| `TASK-D-NET-001` | R1 | 网络安全 | SPECIFIED | 已确认端点独立限额、原子海报缓存与安全清理方案；待实施 |
 | `TASK-D-UX-004` | R1 | 可访问性 | NEEDS-DESIGN | R2 弹窗可访问性，提升为 R1 |
 | `TASK-D-UX-001` | R2 | 检索体验 | NEEDS-DESIGN | R2 高级筛选 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | R2 订阅提醒 |
@@ -1688,12 +1688,13 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-NET-001：网络响应与海报缓存安全
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: DESIGN
+- Owner: Codex
+- Status: SPECIFIED
 - Priority: R1
 - Scope: 响应体/海报大小限制、MIME 校验、临时文件原子重命名、并发限制、缓存容量与孤立文件清理。
 - Current Basis: 海报路径已限制在单文件名和统一目录，但下载仍把完整响应直接写入最终文件。
+- Approved Design: `docs/NETWORK_POSTER_CACHE_SECURITY_DESIGN.md`。TMDB JSON、海报和 WebDAV 响应分开设限；海报采用路径白名单、流式硬上限、MIME＋签名校验、同目录临时文件原子发布、4 路并发和无索引缓存清理。用户已确认自动清理绝不删除仍被条目引用的海报、失败时使用占位图和手动重试、搜索缩略图也统一经过 Rust 并移除 WebView 对 TMDB 图片的直连权限。任务可进入实施。
 
 ### TASK-D-UX-004：完整弹窗可访问性
 
