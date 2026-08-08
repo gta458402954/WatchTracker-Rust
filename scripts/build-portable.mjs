@@ -11,8 +11,9 @@ if (status) {
   process.exit(1);
 }
 
-const commit = git('rev-parse', '--short=8', 'HEAD');
-console.log(`正在从 Git 提交 ${commit} 构建便携版。`);
+const commit = git('rev-parse', 'HEAD');
+const commitTime = git('show', '-s', '--format=%cI', 'HEAD');
+console.log(`正在从 Git 提交 ${commit.slice(0, 8)}（提交时间 ${commitTime}）构建便携版。`);
 
 const npmCli = process.env.npm_execpath;
 if (!npmCli) {
@@ -22,7 +23,11 @@ if (!npmCli) {
 
 const result = spawnSync(process.execPath, [npmCli, 'run', 'tauri', 'build'], {
   stdio: 'inherit',
-  env: { ...process.env, WATCHTRACKER_GIT_COMMIT: commit },
+  env: {
+    ...process.env,
+    WATCHTRACKER_GIT_COMMIT: commit,
+    WATCHTRACKER_GIT_COMMIT_TIME: commitTime,
+  },
 });
 
 if (result.error) {

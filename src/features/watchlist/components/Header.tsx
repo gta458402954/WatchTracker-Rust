@@ -1,4 +1,6 @@
 
+import { BUILD_INFO } from '../../../shared/lib/buildInfo';
+
 interface HeaderProps {
   searchText: string;
   onSearchChange: (value: string) => void;
@@ -40,8 +42,6 @@ export default function Header({
   onShowSettings,
   onShowForm
 }: HeaderProps) {
-  const gitCommit = import.meta.env.VITE_GIT_COMMIT || 'unknown';
-
   return (
     <header className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-sm">
       <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
@@ -50,10 +50,10 @@ export default function Header({
           <span className="text-2xl">🎬</span>
           <span
             data-testid="build-commit"
-            title={`Git 提交 ${gitCommit}`}
+            title={`Git 提交 ${BUILD_INFO.gitCommit}`}
             className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500"
           >
-            git {gitCommit}
+            git {BUILD_INFO.shortCommit}
           </span>
           <h1 className="text-lg font-bold text-gray-900 hidden sm:block">影视追踪</h1>
         </div>

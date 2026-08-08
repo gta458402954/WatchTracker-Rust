@@ -54,6 +54,8 @@ import {
 import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
 import { formatWebDavTargetUrl } from '../../../shared/lib/webdavDisplay';
+import { BUILD_INFO } from '../../../shared/lib/buildInfo';
+import { formatGitCommitTime } from '../../../shared/lib/buildInfoCore';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -125,7 +127,7 @@ export default function SettingsModal({
   onClose, records, onImport, onSync, onUpdateRecord, onDatabaseRestored,
   syncInterval, onSyncIntervalChange, pullIntervalMinutes, onPullIntervalChange, syncRuntime, onNotify
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools'>('basic');
+  const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools' | 'about'>('basic');
 
   // WebDAV 状态
   const [username, setUsername] = useState('');
@@ -156,6 +158,7 @@ export default function SettingsModal({
   const [posterCache, setPosterCache] = useState<PosterCacheStats | null>(null);
   const [posterCacheStatus, setPosterCacheStatus] = useState('');
   const [posterCacheBusy, setPosterCacheBusy] = useState(false);
+  const [commitCopied, setCommitCopied] = useState(false);
 
   // 批量同步状态
   const [batchPhase, setBatchPhase] = useState<BatchPhase>('idle');
@@ -913,6 +916,17 @@ export default function SettingsModal({
     setBatchStatus('');
   }
 
+  async function handleCopyCommit() {
+    if (BUILD_INFO.gitCommit === 'unknown') return;
+    try {
+      await navigator.clipboard.writeText(BUILD_INFO.gitCommit);
+      setCommitCopied(true);
+      setTimeout(() => setCommitCopied(false), 1800);
+    } catch (error) {
+      showFailure('Settings.CopyBuildCommit', '复制 Git 提交编码', error);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex bg-gray-50 text-gray-800 font-sans overflow-hidden animate-fade-in animate-duration-200">
       {/* 左侧导航栏 */}
@@ -967,6 +981,16 @@ export default function SettingsModal({
               }`}
             >
               <span className="text-lg">🛠️</span> 系统工具
+            </button>
+            <button
+              onClick={() => setActiveTab('about')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
+                activeTab === 'about'
+                  ? 'bg-indigo-50 text-indigo-700 font-bold'
+                  : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+              }`}
+            >
+              <span className="text-lg">ℹ️</span> 关于
             </button>
           </nav>
         </div>
@@ -1725,6 +1749,68 @@ export default function SettingsModal({
                     </button>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 5: 关于 */}
+          {activeTab === 'about' && (
+            <div className="space-y-6 animate-fade-in animate-duration-200" data-testid="about-settings">
+              <div>
+                <h3 className="text-2xl font-black text-gray-900">ℹ️ 关于</h3>
+                <p className="mt-1 text-xs text-gray-400">查看当前程序包对应的产品与源代码版本</p>
+              </div>
+
+              <div className="min-w-0 space-y-6 rounded-3xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex min-w-0 items-center gap-4 border-b border-gray-100 pb-5">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-3xl">🎬</div>
+                  <div className="min-w-0">
+                    <p className="truncate text-xl font-black text-gray-900">WatchTracker</p>
+                    <p className="text-sm font-semibold text-indigo-600">影视追踪</p>
+                  </div>
+                </div>
+
+                <dl className="space-y-4 text-sm">
+                  <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center sm:gap-4">
+                    <dt className="font-semibold text-gray-500">产品版本</dt>
+                    <dd className="min-w-0 font-mono font-bold text-gray-800" data-testid="about-product-version">v{BUILD_INFO.productVersion}</dd>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center sm:gap-4">
+                    <dt className="font-semibold text-gray-500">Git commit</dt>
+                    <dd className="flex min-w-0 flex-wrap items-center gap-2">
+                      <code
+                        className="max-w-full truncate rounded-lg bg-gray-100 px-2.5 py-1 font-mono text-xs text-gray-700"
+                        data-testid="about-git-commit"
+                        title={BUILD_INFO.gitCommit}
+                      >
+                        {BUILD_INFO.shortCommit}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyCommit()}
+                        disabled={BUILD_INFO.gitCommit === 'unknown'}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-bold text-gray-500 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {commitCopied ? '已复制' : '复制完整编码'}
+                      </button>
+                    </dd>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center sm:gap-4">
+                    <dt className="font-semibold text-gray-500">提交时间</dt>
+                    <dd className="min-w-0 break-words text-gray-700" data-testid="about-commit-time">
+                      {formatGitCommitTime(BUILD_INFO.gitCommitTime)}
+                    </dd>
+                  </div>
+                </dl>
+
+                {BUILD_INFO.fallback && (
+                  <p className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs leading-relaxed text-amber-700">
+                    当前为开发环境，未能读取完整 Git 构建信息；正式构建会写入实际提交编码和提交时间。
+                  </p>
+                )}
+                <p className="text-xs leading-relaxed text-gray-400">
+                  此处时间来自 Git 提交记录，并按当前系统时区显示，不代表程序的构建或安装时间。
+                </p>
               </div>
             </div>
           )}

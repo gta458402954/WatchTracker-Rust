@@ -1,27 +1,40 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url))
+const packageManifest = JSON.parse(readFileSync(path.join(projectRoot, 'package.json'), 'utf8')) as { version?: string }
 
-function resolveGitCommit(): string {
+function resolveGitMetadata() {
   const injectedCommit = process.env.WATCHTRACKER_GIT_COMMIT?.trim()
-  if (injectedCommit) return injectedCommit
+  const injectedCommitTime = process.env.WATCHTRACKER_GIT_COMMIT_TIME?.trim()
+  if (injectedCommit && injectedCommitTime) {
+    return { gitCommit: injectedCommit, gitCommitTime: injectedCommitTime }
+  }
 
   try {
-    return execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], {
+    const git = (...args: string[]) => execFileSync('git', args, {
       cwd: projectRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim()
+    return {
+      gitCommit: git('rev-parse', 'HEAD'),
+      gitCommitTime: git('show', '-s', '--format=%cI', 'HEAD'),
+    }
   } catch {
-    return 'unknown'
+    return { gitCommit: 'unknown', gitCommitTime: null }
   }
 }
 
-const gitCommit = resolveGitCommit()
+const gitMetadata = resolveGitMetadata()
+const buildInfo = {
+  productVersion: packageManifest.version ?? '0.0.0-dev',
+  ...gitMetadata,
+}
 
 export default defineConfig({
   plugins: [
@@ -43,7 +56,7 @@ export default defineConfig({
   // 环境变量前缀
   envPrefix: ['VITE_', 'TAURI_'],
   define: {
-    'import.meta.env.VITE_GIT_COMMIT': JSON.stringify(gitCommit),
+    __WATCHTRACKER_BUILD_INFO__: JSON.stringify(buildInfo),
   },
   build: {
     outDir: path.join(projectRoot, 'dist'),

@@ -13,6 +13,26 @@ test('ready empty data renders the normal empty state', async ({ page }) => {
   )).toBe('影视追踪');
 });
 
+test('about settings shows one consistent responsive build identity', async ({ page }) => {
+  await setupMockIpc(page);
+  await page.setViewportSize({ width: 760, height: 760 });
+  await page.goto('/');
+  const headerCommit = (await page.getByTestId('build-commit').textContent())?.replace(/^git /, '');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: /关于/ }).click();
+
+  const about = page.getByTestId('about-settings');
+  await expect(about.getByText('WatchTracker')).toBeVisible();
+  await expect(about.getByText('影视追踪')).toBeVisible();
+  await expect(page.getByTestId('about-product-version')).toHaveText(/^v\d+\.\d+\.\d+/);
+  await expect(page.getByTestId('about-git-commit')).toHaveText(headerCommit || 'unknown');
+  await expect(page.getByTestId('about-commit-time')).not.toBeEmpty();
+  await expect(about.getByText(/构建或安装时间/)).toBeVisible();
+
+  const horizontalOverflow = await page.locator('body').evaluate(element => element.scrollWidth > element.clientWidth);
+  expect(horizontalOverflow).toBe(false);
+});
+
 test('initialization failure shows an error, not empty data, and retry recovers', async ({ page }) => {
   await setupMockIpc(page, { failRecordLoads: true });
   await page.goto('/');
