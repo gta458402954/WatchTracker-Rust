@@ -53,6 +53,7 @@ import {
 } from '../../../shared/lib/batchMetadata';
 import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
+import { formatWebDavTargetUrl } from '../../../shared/lib/webdavDisplay';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -168,6 +169,9 @@ export default function SettingsModal({
   const batchCancelRef = useRef(false);
   const recordsRef = useRef(records);
   const batchSyncing = batchPhase === 'planning' || batchPhase === 'applying';
+  const activeTarget = targetRegistry?.targets.find(target => target.id === targetRegistry.activeTargetId);
+  const activeTargetDisplay = formatWebDavTargetUrl(activeTarget?.normalizedUrl ?? webdavUrl);
+  const automaticSyncPaused = syncRuntime?.scheduler.paused ?? false;
 
   useEffect(() => {
     recordsRef.current = records;
@@ -1106,14 +1110,20 @@ export default function SettingsModal({
                 {targetRegistry && targetRegistry.targets.length > 0 && (
                   <div className="rounded-2xl border border-gray-100 bg-gray-50 p-3 space-y-2">
                     <p className="text-[11px] font-bold text-gray-500">已保存目标（共用本地影视库，远端状态相互隔离）</p>
-                    {targetRegistry.targets.map(target => (
-                      <div key={target.id} className="flex items-center justify-between text-xs text-gray-600">
-                        <span className="truncate">{target.username} · {target.normalizedUrl}</span>
-                        <span className={`ml-2 shrink-0 rounded-full px-2 py-0.5 ${target.id === targetRegistry.activeTargetId ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                          {target.id === targetRegistry.activeTargetId ? '当前' : target.id.slice(0, 8)}
-                        </span>
-                      </div>
-                    ))}
+                    {targetRegistry.targets.map(target => {
+                      const display = formatWebDavTargetUrl(target.normalizedUrl);
+                      return (
+                        <div key={target.id} className="flex min-w-0 items-start justify-between gap-3 rounded-xl bg-white/70 px-3 py-2 text-xs text-gray-600">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold text-gray-700" title={target.username}>{target.username}</p>
+                            <p className="break-words text-gray-500" title={display.safeUrl}>{display.summary}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 ${target.id === targetRegistry.activeTargetId ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                            {target.id === targetRegistry.activeTargetId ? '当前' : target.id.slice(0, 8)}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1160,21 +1170,30 @@ export default function SettingsModal({
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between bg-gray-50 rounded-2xl p-4">
-                      <div className="flex items-center gap-2">
-                        <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="min-w-0 space-y-4 rounded-2xl bg-gray-50 p-4">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <svg className="mt-0.5 h-5 w-5 shrink-0 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        <span className="text-sm text-gray-700 font-medium">已配置 WebDAV ({webdavUrl})，数据变动后会自动同步</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-gray-800">WebDAV 已连接</p>
+                          <p className="mt-1 break-words text-xs text-gray-500" title={activeTargetDisplay.safeUrl}>
+                            当前目标：{activeTarget?.username ?? username} · {activeTargetDisplay.summary}
+                          </p>
+                          <p className={`mt-1 text-xs font-medium ${automaticSyncPaused ? 'text-amber-600' : 'text-green-600'}`}>
+                            自动同步：{automaticSyncPaused ? '已暂停' : '已开启'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="shrink-0">
-                        <button onClick={() => setEditingTarget(true)} className="mr-4 text-xs text-indigo-600 hover:underline font-bold transition-all">
-                          切换 / 更新凭据
+                      <div className="flex flex-wrap gap-2 border-t border-gray-200 pt-3">
+                        <button onClick={() => setEditingTarget(true)} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50">
+                          切换或更新凭据
                         </button>
-                        <button onClick={handleClear} className="text-xs text-red-500 hover:underline font-bold transition-all">
-                          断开并保留状态
+                        <button onClick={handleClear} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-500 transition-colors hover:bg-red-50">
+                          断开连接
                         </button>
                       </div>
+                      <p className="text-[11px] leading-relaxed text-gray-400">断开只移除当前连接，已保存的远端状态和未处理冲突仍会保留。</p>
                     </div>
                     <div className="flex gap-3">
                       <button

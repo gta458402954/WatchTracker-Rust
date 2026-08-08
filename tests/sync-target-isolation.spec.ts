@@ -11,8 +11,32 @@ async function openSyncSettings(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: '设置' }).click();
   await page.getByRole('button', { name: /云端同步/ }).click();
   await expect(page.getByText(/已保存目标/)).toBeVisible();
-  await page.getByRole('button', { name: '切换 / 更新凭据' }).click();
+  await page.getByRole('button', { name: '切换或更新凭据' }).click();
 }
+
+test('@sync-target-display shows a friendly safe address without overflowing actions', async ({ page }) => {
+  await setupMockIpc(page, {
+    settings: {
+      webdav_creds: 'encrypted:gtazhuce@qq.com:password',
+      webdav_url: 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/?token=hidden',
+    },
+  });
+  await page.setViewportSize({ width: 760, height: 760 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: /云端同步/ }).click();
+
+  await expect(page.getByText('WebDAV 已连接')).toBeVisible();
+  await expect(page.getByText(/坚果云 · \/影视追踪/).first()).toBeVisible();
+  await expect(page.getByText('自动同步：已开启')).toBeVisible();
+  await expect(page.getByRole('button', { name: '切换或更新凭据' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '断开连接' })).toBeVisible();
+  await expect(page.getByText(/断开只移除当前连接/)).toBeVisible();
+  await expect(page.getByText(/token=hidden/)).toHaveCount(0);
+
+  const horizontalOverflow = await page.locator('body').evaluate(element => element.scrollWidth > element.clientWidth);
+  expect(horizontalOverflow).toBe(false);
+});
 
 test('@sync-target-isolation cancelling a read-only probe never activates or writes the new target', async ({ page }) => {
   await setupMockIpc(page, { settings });
