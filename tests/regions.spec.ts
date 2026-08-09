@@ -78,7 +78,7 @@ test('renders dynamic counts in stable order and filters by code, including alia
   }
 });
 
-test('media/status scope drives options while search does not, and invalid selection clears without revival', async ({ page }) => {
+test('media/status scope drives options while search does not, and unavailable saved conditions stay explicit', async ({ page }) => {
   const records = [
     record('CN 未看电影', 'CN', { isLocked: true }),
     record('FR 已看电影', 'FR', { status: '已看' }),
@@ -104,11 +104,13 @@ test('media/status scope drives options while search does not, and invalid selec
   await (await regionButton(page, '法国')).click();
   await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
   await page.getByRole('button', { name: /^未看 1$/ }).click();
-  await expect(page.getByText('CN 未看电影', { exact: true })).toBeVisible();
+  await expect(page.getByText('CN 未看电影', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('当前筛选没有匹配记录')).toBeVisible();
+  await expect(page.getByLabel('当前筛选条件')).toContainText('地区：法国');
   await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^法国 / })).toHaveCount(0);
 
   await page.getByRole('button', { name: /^全部 3$/ }).last().click();
-  await expect(await regionButton(page, '法国')).toHaveAttribute('aria-pressed', 'false');
+  await expect(await regionButton(page, '法国')).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByRole('button', { name: /^剧集 1$/ }).click();
   await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(['中国大陆 1']);

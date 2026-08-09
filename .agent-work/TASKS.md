@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001` 与 `TASK-D-UX-004` 已实现。剩余 9 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已由用户明确暂缓并移出当前排期，因此当前实际待排期为 7 项；下一项为 `TASK-D-UX-001`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001` 与 `TASK-D-UX-004` 已实现。剩余 8 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已由用户明确暂缓，因此当前实际待设计排期为 6 项；下一项为 `TASK-D-UX-003`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1498,7 +1498,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | 用户于 2026-08-05 明确暂缓；不进入当前排期 |
 | `TASK-D-NET-001` | R1 | 网络安全 | IMPLEMENTED | 端点独立限额、原子海报缓存、安全清理、跨平台协议 URL 与界面维护已实现 |
 | `TASK-D-UX-004` | R1 | 可访问性 | IMPLEMENTED | 三个主弹窗已统一语义、焦点管理、Escape、焦点恢复和滚动锁定 |
-| `TASK-D-UX-001` | R2 | 检索体验 | NEEDS-DESIGN | R2 高级筛选 |
+| `TASK-D-UX-001` | R2 | 检索体验 | IMPLEMENTED | 统一高级查询与本机保存视图已实现并通过完整回归 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | NEEDS-DESIGN | R2 收藏集 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
@@ -1714,12 +1714,18 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-UX-001：高级筛选与保存视图
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
 - Priority: R2
+- Scheduling: 2026-08-09 已完成设计、实施与验收。
 - Scope: 多条件筛选表达式、命名视图、持久化、失效字段迁移和与现有顶部筛选的组合语义。
 - Current Basis: 已有搜索、媒体类型、状态、地区和锁定筛选。
+- Approved Design: `docs/ADVANCED_FILTER_SAVED_VIEWS_DESIGN.md`。使用同字段 OR、跨字段 AND 的统一查询模型，保留顶部快捷单选，新增结构化高级筛选面板；保存视图包含搜索、查询、排序和显示模式，写入本机 settings，不修改 V18、不进入 WebDAV。
+- Confirmed Decisions: 第一版不加入日期、时长、缺失字段和 NOT；视图仅本机；默认启动“全部记录”，允许明确指定一个启动视图；不自动恢复临时筛选。
+- Implementation: 已实现统一 `WatchlistQueryV1`、结构化高级面板、顶部快捷筛选、活动条件摘要、准确空状态和本机保存视图。视图支持另存为、显式更新、dirty 状态、删除后保留临时条件、20 个上限及明确启动视图；无效动态条件保持可见且不放宽查询。
+- Data Boundary: 仅复用现有 settings 键 `watchlist_saved_views_v1` 与 `watchlist_startup_view_id_v1`；不升级 V18、不修改 records、不同步 WebDAV、不产生 outbox。V20 或 V19 转换失败时兼容检查优先，零 setting 读取。
+- Acceptance Evidence: Node 100/100、Playwright 72/72、Rust 75/75、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；新增回归覆盖组合查询、第一国家、未知地区、范围、保存/更新/启动、写入失败、未来 schema、安全边界、焦点与 360 px 无横向溢出。
 
 ### TASK-D-UX-002：订阅与播出提醒
 

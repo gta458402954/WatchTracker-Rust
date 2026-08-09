@@ -7,9 +7,8 @@ import RecordForm from '../features/watchlist/components/RecordForm';
 import SettingsModal from '../features/settings/components/SettingsModal';
 import { hasCreds, syncFailureMessage } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
-import { mediaTypeOf } from '../shared/lib/classification';
+import { aggregateRegions, mediaTypeOf } from '../shared/lib/classification';
 import type { RegionFilter } from '../shared/lib/countryNames';
-import { effectiveRegionOf, filterRecords, regionOptionsForScope } from '../shared/lib/filtering';
 import { initializeApp } from './initialization';
 import NotificationRegion, { useNotifications } from '../shared/components/NotificationRegion';
 import { notifyOperationFailure, publicFailureMessage, reportOperationFailure } from '../shared/lib/feedback';
@@ -18,8 +17,25 @@ import { notifyOperationFailure, publicFailureMessage, reportOperationFailure } 
 import Header from '../features/watchlist/components/Header';
 import ListView from '../features/watchlist/components/ListView';
 import PosterWall from '../features/watchlist/components/PosterWall';
+import AdvancedFilterPanel from '../features/watchlist/components/AdvancedFilterPanel';
+import SavedViewBar from '../features/watchlist/components/SavedViewBar';
+import ActiveFilterSummary from '../features/watchlist/components/ActiveFilterSummary';
+import { useSavedWatchlistViews } from '../features/watchlist/hooks/useSavedWatchlistViews';
+import {
+  EMPTY_WATCHLIST_QUERY,
+  activeQueryDimensionCount,
+  filterRecordsByQuery,
+  normalizeWatchlistQuery,
+  querySummaryItems,
+  watchlistFilterOptions,
+  watchlistQueriesEqual,
+  type SortBy,
+  type ViewMode,
+  type WatchlistQueryV1,
+  type QueryDimension,
+} from '../shared/lib/watchlistQuery';
+import type { SavedWatchlistViewV1 } from '../shared/lib/savedViews';
 
-type FilterStatus = Status | 'all';
 type InitializationState = 'loading' | 'ready' | 'error';
 
 interface DatabaseCompatibilityIssue {
@@ -35,6 +51,13 @@ function localDateString(date = new Date()): string {
   return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
 }
 
+function savedViewErrorMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : '';
+  return /^(请输入视图名称|视图名称不能超过|已存在同名视图|最多保存|保存视图已不存在|无法将不存在的视图)/.test(message)
+    ? message
+    : fallback;
+}
+
 export default function App() {
   const [syncInterval, setSyncInterval] = useState(30);
   const [pullIntervalMinutes, setPullIntervalMinutes] = useState(15);
@@ -47,24 +70,41 @@ export default function App() {
     syncRuntime, isSyncPaused, toggleSyncPause, notifySyncConfigurationChanged, reloadAndSchedule,
   } = useWatchList(syncInterval, pullIntervalMinutes, handleBackgroundError);
 
-  const [activeMediaType, setActiveMediaType] = useState<MediaType | 'all'>('all');
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
-  const [activeRegion, setActiveRegion] = useState<RegionFilter>('all');
-  const [searchText, setSearchText] = useState('');
+  const [query, setQuery] = useState<WatchlistQueryV1>(() => normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY));
   const [showForm, setShowForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<WatchRecord | null>(null);
-  const [sortBy, setSortBy] = useState<'createdAt' | 'endDate' | 'rating' | 'releaseYear' | 'watchValue'>('createdAt');
+  const [sortBy, setSortBy] = useState<SortBy>('createdAt');
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
-  const [lockFilter, setLockFilter] = useState<'all' | 'locked' | 'unlocked'>('all');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string>('');
   const [initializationState, setInitializationState] = useState<InitializationState>('loading');
   const [databaseCompatibilityIssue, setDatabaseCompatibilityIssue] = useState<DatabaseCompatibilityIssue | null>(null);
   const migrationNoticeShownRef = useRef(false);
-  const [viewMode, setViewMode] = useState<'list' | 'poster'>('list');
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const startupViewAppliedRef = useRef(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [hasWebDAVCreds, setHasWebDAVCreds] = useState(false);
+  const handleSavedViewError = useCallback((message: string) => notify('warning', message), [notify]);
+  const savedViews = useSavedWatchlistViews(initializationState === 'ready', handleSavedViewError);
+
+  const applySavedView = useCallback((view: SavedWatchlistViewV1) => {
+    setQuery(normalizeWatchlistQuery(view.query));
+    setSortBy(view.sortBy);
+    setViewMode(view.viewMode);
+    setActiveViewId(view.id);
+  }, []);
+
+  useEffect(() => {
+    if (!savedViews.loaded || startupViewAppliedRef.current) return;
+    startupViewAppliedRef.current = true;
+    const startup = savedViews.views.find(view => view.id === savedViews.startupViewId);
+    // The saved startup view is external persisted state and is applied once after loading.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (startup) applySavedView(startup);
+  }, [applySavedView, savedViews.loaded, savedViews.startupViewId, savedViews.views]);
 
   const loadInitialState = useCallback(async () => {
     try {
@@ -152,28 +192,15 @@ export default function App() {
     }
   }
 
-  const regionOptions = useMemo(
-    () => regionOptionsForScope(records, activeMediaType, filterStatus),
-    [records, activeMediaType, filterStatus],
-  );
-  const effectiveRegion = effectiveRegionOf(activeRegion, regionOptions);
-
-  useEffect(() => {
-    if (activeRegion !== effectiveRegion) {
-      // effectiveRegion already makes this render safe; persist the cleanup after render.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveRegion(effectiveRegion);
-    }
-  }, [activeRegion, effectiveRegion]);
+  const regionOptions = useMemo(() => aggregateRegions(records.filter(record =>
+    (query.mediaTypes.length === 0 || query.mediaTypes.includes(mediaTypeOf(record)))
+    && (query.statuses.length === 0 || query.statuses.includes(record.status)),
+  )), [query.mediaTypes, query.statuses, records]);
+  const advancedOptions = useMemo(() => watchlistFilterOptions(records), [records]);
+  const filterSummary = useMemo(() => querySummaryItems(query), [query]);
 
   const filtered = useMemo(() => {
-    return filterRecords(records, {
-      mediaType: activeMediaType,
-      status: filterStatus,
-      region: effectiveRegion,
-      searchText,
-      lock: lockFilter,
-    })
+    return filterRecordsByQuery(records, query)
       .sort((a, b) => {
         if (sortBy === 'rating') {
           return (b.rating ?? -1) - (a.rating ?? -1);
@@ -194,7 +221,69 @@ export default function App() {
         }
         return (b.createdAt || '').localeCompare(a.createdAt || '');
       });
-  }, [records, activeMediaType, filterStatus, effectiveRegion, searchText, sortBy, lockFilter]);
+  }, [records, query, sortBy]);
+
+  const activeView = savedViews.views.find(view => view.id === activeViewId) ?? null;
+  const viewDirty = activeView
+    ? !watchlistQueriesEqual(query, activeView.query) || sortBy !== activeView.sortBy || viewMode !== activeView.viewMode
+    : activeQueryDimensionCount(query) > 0 || sortBy !== 'createdAt' || viewMode !== 'list';
+
+  const viewSnapshot = useCallback(() => ({ query: normalizeWatchlistQuery(query), sortBy, viewMode }), [query, sortBy, viewMode]);
+
+  function resetToAllRecords() {
+    setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY));
+    setSortBy('createdAt');
+    setViewMode('list');
+    setActiveViewId(null);
+  }
+
+  function clearQueryDimension(dimension: QueryDimension) {
+    const empty = normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY);
+    setQuery(current => normalizeWatchlistQuery({ ...current, [dimension]: empty[dimension] }));
+  }
+
+  async function createSavedView(name: string) {
+    try {
+      const created = await savedViews.createView(name, viewSnapshot());
+      setActiveViewId(created.id);
+      notify('success', `已保存视图“${created.name}”。`);
+    } catch (error) {
+      notify('error', savedViewErrorMessage(error, '保存视图失败，请稍后重试。'));
+      throw error;
+    }
+  }
+
+  async function updateSavedView() {
+    if (!activeViewId) return;
+    try {
+      await savedViews.updateView(activeViewId, viewSnapshot());
+      notify('success', '保存视图已更新。');
+    } catch (error) {
+      notify('error', savedViewErrorMessage(error, '更新视图失败，请稍后重试。'));
+    }
+  }
+
+  async function deleteSavedView() {
+    if (!activeView || !confirm(`确定删除视图“${activeView.name}”吗？当前筛选条件会保留。`)) return;
+    try {
+      await savedViews.deleteView(activeView.id);
+      setActiveViewId(null);
+      notify('success', '保存视图已删除，当前条件作为临时筛选保留。');
+    } catch (error) {
+      notify('error', savedViewErrorMessage(error, '删除视图失败，请稍后重试。'));
+    }
+  }
+
+  async function toggleStartupView() {
+    if (!activeView) return;
+    try {
+      const next = savedViews.startupViewId === activeView.id ? null : activeView.id;
+      await savedViews.setStartupViewId(next);
+      notify('success', next ? `“${activeView.name}”已设为启动视图。` : '已取消启动视图。');
+    } catch (error) {
+      notify('error', savedViewErrorMessage(error, '更新启动视图失败，请稍后重试。'));
+    }
+  }
 
 
   function handleEdit(record: WatchRecord) {
@@ -324,12 +413,12 @@ export default function App() {
       <NotificationRegion notices={notices} onDismiss={dismiss} />
       {/* Top Header Bar */}
       <Header
-        searchText={searchText}
-        onSearchChange={setSearchText}
+        searchText={query.searchText}
+        onSearchChange={searchText => setQuery(current => ({ ...current, searchText }))}
         sortBy={sortBy}
         onSortByChange={setSortBy}
-        lockFilter={lockFilter}
-        onLockFilterChange={setLockFilter}
+        lockFilter={query.lock}
+        onLockFilterChange={lock => setQuery(current => ({ ...current, lock }))}
         hasWebDAVCreds={hasWebDAVCreds}
         syncing={syncing}
         syncMsg={syncMsg}
@@ -345,20 +434,47 @@ export default function App() {
         onShowDashboard={() => setShowDashboard(true)}
         onShowSettings={() => setShowSettings(true)}
         onShowForm={() => setShowForm(true)}
+        activeFilterCount={activeQueryDimensionCount(query)}
+        onShowAdvancedFilters={() => setShowAdvancedFilters(true)}
+      />
+
+      <SavedViewBar
+        views={savedViews.views}
+        activeViewId={activeViewId}
+        startupViewId={savedViews.startupViewId}
+        dirty={viewDirty}
+        onSelectAll={resetToAllRecords}
+        onSelect={applySavedView}
+        onCreate={createSavedView}
+        onUpdate={updateSavedView}
+        onDelete={deleteSavedView}
+        onToggleStartup={toggleStartupView}
       />
 
       {/* Stats and media type tabs */}
       <StatsBar
         records={records}
         regionOptions={regionOptions}
-        activeMediaType={activeMediaType}
-        onMediaTypeChange={setActiveMediaType}
-        filterStatus={filterStatus}
-        onFilterStatusChange={setFilterStatus}
-        activeRegion={effectiveRegion}
-        onRegionChange={setActiveRegion}
+        activeMediaTypes={query.mediaTypes}
+        onMediaTypeChange={(mediaType: MediaType | 'all') => setQuery(current => ({
+          ...current,
+          mediaTypes: mediaType === 'all' || (current.mediaTypes.length === 1 && current.mediaTypes[0] === mediaType) ? [] : [mediaType],
+        }))}
+        filterStatuses={query.statuses}
+        onFilterStatusChange={(status: Status | 'all') => setQuery(current => ({
+          ...current,
+          statuses: status === 'all' || (current.statuses.length === 1 && current.statuses[0] === status) ? [] : [status],
+        }))}
+        activeRegions={query.regions}
+        onRegionChange={(region: RegionFilter) => setQuery(current => ({ ...current, regions: region === 'all' ? [] : [region] }))}
         lastSync={lastSync}
         isSyncing={syncing}
+      />
+
+      <ActiveFilterSummary
+        items={filterSummary}
+        onRemove={clearQueryDimension}
+        onClear={() => setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY))}
       />
 
       {/* Content Main Area */}
@@ -401,9 +517,14 @@ export default function App() {
           <div className="flex flex-col items-center justify-center py-24 text-gray-400">
             <span className="text-5xl mb-4">🎭</span>
             <p className="text-base font-medium">
-              {searchText ? '没有找到匹配的记录' : '还没有记录，快去添加吧！'}
+              {records.length ? '当前筛选没有匹配记录' : '还没有记录，快去添加吧！'}
             </p>
-            {!searchText && (
+            {records.length ? (
+              <div className="mt-4 flex gap-3">
+                <button onClick={() => setShowAdvancedFilters(true)} className="rounded-xl border border-gray-200 px-5 py-2 text-sm font-semibold text-gray-600">修改筛选</button>
+                <button onClick={() => setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY))} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white">清除全部条件</button>
+              </div>
+            ) : (
               <button
                 onClick={() => setShowForm(true)}
                 className="mt-4 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors"
@@ -471,6 +592,16 @@ export default function App() {
             onClose={() => setShowDashboard(false)}
           />
         </Suspense>
+      )}
+
+      {showAdvancedFilters && (
+        <AdvancedFilterPanel
+          query={query}
+          options={advancedOptions}
+          onChange={next => setQuery(normalizeWatchlistQuery(next))}
+          onClear={() => setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY))}
+          onClose={() => setShowAdvancedFilters(false)}
+        />
       )}
     </div>
   );

@@ -30,6 +30,7 @@ export interface MockIpcOptions {
     supportedVersion: number;
   } | null;
   recoveryPoints?: RecoveryPoint[];
+  failSettingWrites?: boolean;
 }
 
 export interface MockSnapshot {
@@ -54,7 +55,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, episodeCompletions: initialEpisodeCompletions, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -522,6 +523,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return { version: 1, activeTargetId, targetEpoch, targets: [] };
             case 'set_setting':
               requireKeys(command, args, ['key', 'value']);
+              if (failSettingWrites) throw new Error('Injected setting write failure');
               snapshot.settings[args.key as string] = args.value as string;
               return true;
             case 'get_tmdb_credential_status':
@@ -627,6 +629,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       webdavFailureCount: options.webdavFailureCount ?? 0,
       databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,
       recoveryPoints: options.recoveryPoints ?? [],
+      failSettingWrites: options.failSettingWrites ?? false,
     },
   );
 }

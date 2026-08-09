@@ -20,6 +20,8 @@ interface HeaderProps {
   onShowDashboard: () => void;
   onShowSettings: () => void;
   onShowForm: () => void;
+  activeFilterCount: number;
+  onShowAdvancedFilters: () => void;
 }
 
 export default function Header({
@@ -40,11 +42,13 @@ export default function Header({
   onViewModeChange,
   onShowDashboard,
   onShowSettings,
-  onShowForm
+  onShowForm,
+  activeFilterCount,
+  onShowAdvancedFilters,
 }: HeaderProps) {
   return (
     <header className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-sm">
-      <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+      <div className="scrollbar-none mx-auto flex max-w-5xl items-center gap-3 overflow-x-auto px-4 py-3">
         {/* Title */}
         <div className="flex items-center gap-2">
           <span className="text-2xl">🎬</span>
@@ -57,6 +61,14 @@ export default function Header({
           </span>
           <h1 className="text-lg font-bold text-gray-900 hidden sm:block">影视追踪</h1>
         </div>
+
+        <button
+          type="button"
+          onClick={onShowAdvancedFilters}
+          className={`h-9 shrink-0 rounded-xl border px-3 text-sm font-semibold ${activeFilterCount ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}
+        </button>
 
         {/* Search */}
         <div className="flex-1 relative">
