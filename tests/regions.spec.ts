@@ -106,14 +106,14 @@ test('media/status scope drives options while search does not, and unavailable s
   await page.getByRole('button', { name: /^未看 1$/ }).click();
   await expect(page.getByText('CN 未看电影', { exact: true })).toHaveCount(0);
   await expect(page.getByText('当前筛选没有匹配记录')).toBeVisible();
-  await expect(page.getByLabel('当前筛选条件')).toContainText('地区：法国');
-  await expect(page.getByLabel('地区筛选').getByRole('button', { name: /^法国 / })).toHaveCount(0);
+  await expect(page.getByLabel('当前高级筛选条件')).toHaveCount(0);
+  await expect(page.getByLabel('地区筛选').getByRole('button', { name: '法国 0' })).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByRole('button', { name: /^全部 3$/ }).last().click();
   await expect(await regionButton(page, '法国')).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByRole('button', { name: /^剧集 1$/ }).click();
-  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(['中国大陆 1']);
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(['中国大陆 1', '法国 0']);
 });
 
 test('dynamic options react to add, edit, delete, and controlled record replacement', async ({ page }) => {

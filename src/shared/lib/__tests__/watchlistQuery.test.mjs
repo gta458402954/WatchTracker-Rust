@@ -4,6 +4,9 @@ import { describe, test } from 'node:test';
 import {
   EMPTY_WATCHLIST_QUERY,
   activeQueryDimensionCount,
+  activeAdvancedQueryDimensionCount,
+  advancedQuerySummaryItems,
+  clearAdvancedQuery,
   filterRecordsByQuery,
   normalizeWatchlistQuery,
   querySummaryItems,
@@ -65,6 +68,21 @@ describe('advanced watchlist query', () => {
     const query = normalizeWatchlistQuery({ ...EMPTY_WATCHLIST_QUERY, platforms: ['Netflix'], imdbRating: { min: 8, max: null } });
     assert.equal(activeQueryDimensionCount(query), 2);
     assert.deepEqual(querySummaryItems(query).map(item => item.label), ['平台：Netflix', 'IMDb 评分 ≥ 8']);
+  });
+
+  test('counts, summarizes, and clears only advanced dimensions', () => {
+    const query = normalizeWatchlistQuery({
+      ...EMPTY_WATCHLIST_QUERY,
+      searchText: '悬疑', mediaTypes: ['剧集'], statuses: ['在看'], regions: ['CN'], lock: 'locked',
+      platforms: ['腾讯视频'], rating: { min: 8, max: null },
+    });
+    assert.equal(activeQueryDimensionCount(query), 7);
+    assert.equal(activeAdvancedQueryDimensionCount(query), 2);
+    assert.deepEqual(advancedQuerySummaryItems(query).map(item => item.label), ['平台：腾讯视频', '个人评分 ≥ 8']);
+    assert.deepEqual(clearAdvancedQuery(query), normalizeWatchlistQuery({
+      ...EMPTY_WATCHLIST_QUERY,
+      searchText: '悬疑', mediaTypes: ['剧集'], statuses: ['在看'], regions: ['CN'], lock: 'locked',
+    }));
   });
 });
 

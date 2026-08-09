@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001` 与 `TASK-D-UX-004` 已实现。剩余 8 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已由用户明确暂缓，因此当前实际待设计排期为 6 项；下一项为 `TASK-D-UX-003`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 2 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1` 与 `TASK-D-UX-004` 已实现。剩余 8 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停，实际待设计排期为 6 项；下一项为 `TASK-D-UX-003`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1499,6 +1499,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-NET-001` | R1 | 网络安全 | IMPLEMENTED | 端点独立限额、原子海报缓存、安全清理、跨平台协议 URL 与界面维护已实现 |
 | `TASK-D-UX-004` | R1 | 可访问性 | IMPLEMENTED | 三个主弹窗已统一语义、焦点管理、Escape、焦点恢复和滚动锁定 |
 | `TASK-D-UX-001` | R2 | 检索体验 | IMPLEMENTED | 统一高级查询与本机保存视图已实现并通过完整回归 |
+| `TASK-D-UX-001-R1` | R2 | 检索体验 | IMPLEMENTED | 保存视图下拉化，高级面板、计数和摘要去重完成 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | NEEDS-DESIGN | R2 收藏集 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
@@ -1726,6 +1727,19 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Implementation: 已实现统一 `WatchlistQueryV1`、结构化高级面板、顶部快捷筛选、活动条件摘要、准确空状态和本机保存视图。视图支持另存为、显式更新、dirty 状态、删除后保留临时条件、20 个上限及明确启动视图；无效动态条件保持可见且不放宽查询。
 - Data Boundary: 仅复用现有 settings 键 `watchlist_saved_views_v1` 与 `watchlist_startup_view_id_v1`；不升级 V18、不修改 records、不同步 WebDAV、不产生 outbox。V20 或 V19 转换失败时兼容检查优先，零 setting 读取。
 - Acceptance Evidence: Node 100/100、Playwright 72/72、Rust 75/75、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；新增回归覆盖组合查询、第一国家、未知地区、范围、保存/更新/启动、写入失败、未来 schema、安全边界、焦点与 360 px 无横向溢出。
+
+### TASK-D-UX-001-R1：高级筛选界面去重修订
+
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
+- Priority: R2
+- Scheduling: COMPLETED（2026-08-09）。下一项为 `TASK-D-UX-003`。
+- Scope: 删除永久保存视图栏，将保存视图收进顶部下拉框；高级面板只保留平台、题材、内容标签、上映年份、个人评分和 IMDb 评分，顶部快捷筛选继续作为媒体类型、状态、地区和锁定的唯一编辑入口。
+- Approved Plan: `docs/ADVANCED_FILTER_UI_REFINEMENT_PLAN.md`。高级计数与摘要只覆盖六类低频条件；保存视图继续捕获完整查询、搜索、排序和显示模式；不改变 `WatchlistQueryV1` 或持久化格式。
+- Data Boundary: 纯 UI/派生状态修订，不升级 V18、不修改 records/settings schema、不进入 WebDAV/outbox。
+- Implementation: 已删除永久保存视图栏并新增顶部 Portal 弹出面板；高级面板、计数、摘要和选择性清除只处理六类低频条件。无结果重置只清查询并保留排序和显示模式。
+- Acceptance Evidence: Node 101/101、Playwright 72/72、Rust 75/75、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；回归覆盖界面去重、保存视图、360 px、零匹配地区可见性与 records/outbox 数据边界。
 
 ### TASK-D-UX-002：订阅与播出提醒
 

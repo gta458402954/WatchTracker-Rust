@@ -1,9 +1,6 @@
 import { useMemo, useRef } from 'react';
-import { MEDIA_TYPES } from '../../../shared/lib/classification';
-import { countryLabelOf } from '../../../shared/lib/countryNames';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import {
-  WATCH_STATUSES,
   type FilterOption,
   type NumberRange,
   type WatchlistFilterOptions,
@@ -81,8 +78,6 @@ export default function AdvancedFilterPanel({ query, options, onChange, onClear,
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useAccessibleDialog<HTMLDivElement>({ onEscape: onClose, initialFocusRef: closeRef });
   const update = <K extends keyof WatchlistQueryV1>(key: K, value: WatchlistQueryV1[K]) => onChange({ ...query, [key]: value });
-  const mediaOptions = MEDIA_TYPES.map(value => options.mediaTypes.find(option => option.value === value) ?? { value, label: value, count: 0 });
-  const statusOptions = WATCH_STATUSES.map(value => options.statuses.find(option => option.value === value) ?? { value, label: value, count: 0 });
 
   return <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/30 p-0 sm:p-6" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="advanced-filter-title" tabIndex={-1} className="custom-scrollbar h-full w-full overflow-y-auto bg-white p-5 shadow-2xl outline-none sm:h-auto sm:max-h-[calc(100vh-3rem)] sm:max-w-3xl sm:rounded-3xl">
@@ -90,10 +85,8 @@ export default function AdvancedFilterPanel({ query, options, onChange, onClear,
         <div><h2 id="advanced-filter-title" className="text-lg font-black text-gray-900">高级筛选</h2><p className="text-xs text-gray-400">同一字段满足任一项，不同字段需要同时满足</p></div>
         <button ref={closeRef} type="button" aria-label="关闭高级筛选" onClick={onClose} className="rounded-xl px-3 py-2 text-gray-500 hover:bg-gray-100">✕</button>
       </div>
+      <p className="mb-5 rounded-2xl bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-500">媒体类型、观看状态、地区和锁定条件请使用顶部快捷筛选。</p>
       <div className="space-y-5">
-        <MultiOptions label="媒体类型" selected={query.mediaTypes} options={mediaOptions} onChange={values => update('mediaTypes', values as WatchlistQueryV1['mediaTypes'])} />
-        <MultiOptions label="观看状态" selected={query.statuses} options={statusOptions} onChange={values => update('statuses', values as WatchlistQueryV1['statuses'])} />
-        <MultiOptions label="地区（只使用条目第一个国家）" selected={query.regions} options={options.regions.map(option => ({ ...option, label: countryLabelOf(option.value) }))} onChange={values => update('regions', values)} />
         <MultiOptions label="平台" selected={query.platforms} options={options.platforms} onChange={values => update('platforms', values)} />
         <MultiOptions label="题材" selected={query.genres} options={options.genres} onChange={values => update('genres', values)} />
         <MultiOptions label="内容标签" selected={query.contentTags} options={options.contentTags} onChange={values => update('contentTags', values)} />
@@ -102,13 +95,9 @@ export default function AdvancedFilterPanel({ query, options, onChange, onClear,
           <RangeInputs label="个人评分" value={query.rating} min={0} max={10} step={0.1} onChange={value => update('rating', value)} />
           <RangeInputs label="IMDb 评分" value={query.imdbRating} min={0} max={10} step={0.1} onChange={value => update('imdbRating', value)} />
         </div>
-        <fieldset>
-          <legend className="mb-2 text-xs font-bold text-gray-600">锁定状态</legend>
-          <div className="flex gap-2">{(['all', 'locked', 'unlocked'] as const).map(value => <button key={value} type="button" aria-pressed={query.lock === value} onClick={() => update('lock', value)} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${query.lock === value ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500'}`}>{value === 'all' ? '全部' : value === 'locked' ? '已锁定' : '未锁定'}</button>)}</div>
-        </fieldset>
       </div>
       <div className="sticky bottom-0 mt-6 flex justify-end gap-3 border-t border-gray-100 bg-white pt-4">
-        <button type="button" onClick={onClear} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500">清除筛选</button>
+        <button type="button" onClick={onClear} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500">清除高级条件</button>
         <button type="button" onClick={onClose} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white">完成</button>
       </div>
     </div>

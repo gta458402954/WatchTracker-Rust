@@ -1,4 +1,5 @@
 
+import type { ReactNode } from 'react';
 import { BUILD_INFO } from '../../../shared/lib/buildInfo';
 
 interface HeaderProps {
@@ -22,6 +23,7 @@ interface HeaderProps {
   onShowForm: () => void;
   activeFilterCount: number;
   onShowAdvancedFilters: () => void;
+  savedViewControl: ReactNode;
 }
 
 export default function Header({
@@ -45,6 +47,7 @@ export default function Header({
   onShowForm,
   activeFilterCount,
   onShowAdvancedFilters,
+  savedViewControl,
 }: HeaderProps) {
   return (
     <header className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-sm">
@@ -62,13 +65,7 @@ export default function Header({
           <h1 className="text-lg font-bold text-gray-900 hidden sm:block">影视追踪</h1>
         </div>
 
-        <button
-          type="button"
-          onClick={onShowAdvancedFilters}
-          className={`h-9 shrink-0 rounded-xl border px-3 text-sm font-semibold ${activeFilterCount ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
-        >
-          筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}
-        </button>
+        {savedViewControl}
 
         {/* Search */}
         <div className="flex-1 relative">
@@ -83,6 +80,14 @@ export default function Header({
             className="w-full pl-9 pr-3 h-9 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition bg-gray-50"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={onShowAdvancedFilters}
+          className={`h-9 shrink-0 rounded-xl border px-3 text-sm font-semibold ${activeFilterCount ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          高级筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}
+        </button>
 
         {/* Sort */}
         <select

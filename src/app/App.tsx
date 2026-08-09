@@ -8,7 +8,7 @@ import SettingsModal from '../features/settings/components/SettingsModal';
 import { hasCreds, syncFailureMessage } from '../shared/lib/webdav';
 import { calculateWatchValue } from '../shared/lib/analytics';
 import { aggregateRegions, mediaTypeOf } from '../shared/lib/classification';
-import type { RegionFilter } from '../shared/lib/countryNames';
+import { countryLabelOf, type RegionFilter } from '../shared/lib/countryNames';
 import { initializeApp } from './initialization';
 import NotificationRegion, { useNotifications } from '../shared/components/NotificationRegion';
 import { notifyOperationFailure, publicFailureMessage, reportOperationFailure } from '../shared/lib/feedback';
@@ -18,15 +18,17 @@ import Header from '../features/watchlist/components/Header';
 import ListView from '../features/watchlist/components/ListView';
 import PosterWall from '../features/watchlist/components/PosterWall';
 import AdvancedFilterPanel from '../features/watchlist/components/AdvancedFilterPanel';
-import SavedViewBar from '../features/watchlist/components/SavedViewBar';
+import SavedViewMenu from '../features/watchlist/components/SavedViewMenu';
 import ActiveFilterSummary from '../features/watchlist/components/ActiveFilterSummary';
 import { useSavedWatchlistViews } from '../features/watchlist/hooks/useSavedWatchlistViews';
 import {
   EMPTY_WATCHLIST_QUERY,
   activeQueryDimensionCount,
+  activeAdvancedQueryDimensionCount,
+  advancedQuerySummaryItems,
+  clearAdvancedQuery,
   filterRecordsByQuery,
   normalizeWatchlistQuery,
-  querySummaryItems,
   watchlistFilterOptions,
   watchlistQueriesEqual,
   type SortBy,
@@ -192,12 +194,19 @@ export default function App() {
     }
   }
 
-  const regionOptions = useMemo(() => aggregateRegions(records.filter(record =>
-    (query.mediaTypes.length === 0 || query.mediaTypes.includes(mediaTypeOf(record)))
-    && (query.statuses.length === 0 || query.statuses.includes(record.status)),
-  )), [query.mediaTypes, query.statuses, records]);
+  const regionOptions = useMemo(() => {
+    const options = aggregateRegions(records.filter(record =>
+      (query.mediaTypes.length === 0 || query.mediaTypes.includes(mediaTypeOf(record)))
+      && (query.statuses.length === 0 || query.statuses.includes(record.status)),
+    ));
+    const visible = new Set(options.map(option => option.code));
+    return [
+      ...options,
+      ...query.regions.filter(code => !visible.has(code)).map(code => ({ code, label: countryLabelOf(code), count: 0 })),
+    ];
+  }, [query.mediaTypes, query.regions, query.statuses, records]);
   const advancedOptions = useMemo(() => watchlistFilterOptions(records), [records]);
-  const filterSummary = useMemo(() => querySummaryItems(query), [query]);
+  const filterSummary = useMemo(() => advancedQuerySummaryItems(query), [query]);
 
   const filtered = useMemo(() => {
     return filterRecordsByQuery(records, query)
@@ -234,6 +243,11 @@ export default function App() {
     setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY));
     setSortBy('createdAt');
     setViewMode('list');
+    setActiveViewId(null);
+  }
+
+  function resetQueryConditions() {
+    setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY));
     setActiveViewId(null);
   }
 
@@ -434,21 +448,20 @@ export default function App() {
         onShowDashboard={() => setShowDashboard(true)}
         onShowSettings={() => setShowSettings(true)}
         onShowForm={() => setShowForm(true)}
-        activeFilterCount={activeQueryDimensionCount(query)}
+        activeFilterCount={activeAdvancedQueryDimensionCount(query)}
         onShowAdvancedFilters={() => setShowAdvancedFilters(true)}
-      />
-
-      <SavedViewBar
-        views={savedViews.views}
-        activeViewId={activeViewId}
-        startupViewId={savedViews.startupViewId}
-        dirty={viewDirty}
-        onSelectAll={resetToAllRecords}
-        onSelect={applySavedView}
-        onCreate={createSavedView}
-        onUpdate={updateSavedView}
-        onDelete={deleteSavedView}
-        onToggleStartup={toggleStartupView}
+        savedViewControl={<SavedViewMenu
+          views={savedViews.views}
+          activeViewId={activeViewId}
+          startupViewId={savedViews.startupViewId}
+          dirty={viewDirty}
+          onSelectAll={resetToAllRecords}
+          onSelect={applySavedView}
+          onCreate={createSavedView}
+          onUpdate={updateSavedView}
+          onDelete={deleteSavedView}
+          onToggleStartup={toggleStartupView}
+        />}
       />
 
       {/* Stats and media type tabs */}
@@ -474,7 +487,7 @@ export default function App() {
       <ActiveFilterSummary
         items={filterSummary}
         onRemove={clearQueryDimension}
-        onClear={() => setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY))}
+        onClear={() => setQuery(current => clearAdvancedQuery(current))}
       />
 
       {/* Content Main Area */}
@@ -521,8 +534,8 @@ export default function App() {
             </p>
             {records.length ? (
               <div className="mt-4 flex gap-3">
-                <button onClick={() => setShowAdvancedFilters(true)} className="rounded-xl border border-gray-200 px-5 py-2 text-sm font-semibold text-gray-600">修改筛选</button>
-                <button onClick={() => setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY))} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white">清除全部条件</button>
+                <button onClick={() => setShowAdvancedFilters(true)} className="rounded-xl border border-gray-200 px-5 py-2 text-sm font-semibold text-gray-600">修改高级筛选</button>
+                <button onClick={resetQueryConditions} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white">重置全部条件</button>
               </div>
             ) : (
               <button
@@ -599,7 +612,7 @@ export default function App() {
           query={query}
           options={advancedOptions}
           onChange={next => setQuery(normalizeWatchlistQuery(next))}
-          onClear={() => setQuery(normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY))}
+          onClear={() => setQuery(current => clearAdvancedQuery(current))}
           onClose={() => setShowAdvancedFilters(false)}
         />
       )}

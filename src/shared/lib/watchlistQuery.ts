@@ -46,6 +46,11 @@ export interface WatchlistFilterOptions {
 export type QueryDimension = Exclude<keyof WatchlistQueryV1, 'schemaVersion'>;
 export interface QuerySummaryItem { dimension: QueryDimension; label: string }
 
+export const ADVANCED_QUERY_DIMENSIONS = [
+  'platforms', 'genres', 'contentTags', 'releaseYear', 'rating', 'imdbRating',
+] as const satisfies readonly QueryDimension[];
+export type AdvancedQueryDimension = (typeof ADVANCED_QUERY_DIMENSIONS)[number];
+
 export const EMPTY_WATCHLIST_QUERY: WatchlistQueryV1 = Object.freeze({
   schemaVersion: 1,
   searchText: '',
@@ -135,6 +140,31 @@ export function activeQueryDimensionCount(query: WatchlistQueryV1): number {
   ].filter(Boolean).length;
 }
 
+export function activeAdvancedQueryDimensionCount(query: WatchlistQueryV1): number {
+  const normalized = normalizeWatchlistQuery(query);
+  return [
+    normalized.platforms.length,
+    normalized.genres.length,
+    normalized.contentTags.length,
+    normalized.releaseYear.min !== null || normalized.releaseYear.max !== null,
+    normalized.rating.min !== null || normalized.rating.max !== null,
+    normalized.imdbRating.min !== null || normalized.imdbRating.max !== null,
+  ].filter(Boolean).length;
+}
+
+export function clearAdvancedQuery(query: WatchlistQueryV1): WatchlistQueryV1 {
+  const empty = EMPTY_WATCHLIST_QUERY;
+  return normalizeWatchlistQuery({
+    ...query,
+    platforms: empty.platforms,
+    genres: empty.genres,
+    contentTags: empty.contentTags,
+    releaseYear: empty.releaseYear,
+    rating: empty.rating,
+    imdbRating: empty.imdbRating,
+  });
+}
+
 function rangeLabel(label: string, range: NumberRange): string | null {
   if (range.min !== null && range.max !== null) return `${label} ${range.min}–${range.max}`;
   if (range.min !== null) return `${label} ≥ ${range.min}`;
@@ -158,6 +188,11 @@ export function querySummaryItems(query: WatchlistQueryV1): QuerySummaryItem[] {
     rangeLabel('IMDb 评分', value.imdbRating) ? { dimension: 'imdbRating', label: rangeLabel('IMDb 评分', value.imdbRating)! } : null,
   ];
   return items.filter((item): item is QuerySummaryItem => item !== null);
+}
+
+export function advancedQuerySummaryItems(query: WatchlistQueryV1): QuerySummaryItem[] {
+  const advanced = new Set<QueryDimension>(ADVANCED_QUERY_DIMENSIONS);
+  return querySummaryItems(query).filter(item => advanced.has(item.dimension));
 }
 
 function tags(value: string | null | undefined): string[] {

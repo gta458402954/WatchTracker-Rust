@@ -21,13 +21,16 @@ const records = [
 test('@advanced-filter combines fields, summarizes them, and never writes records', async ({ page }) => {
   await setupMockIpc(page, { records });
   await page.goto('/');
-  await page.getByRole('button', { name: '筛选' }).click();
+  await page.getByRole('button', { name: /^剧集 1$/ }).click();
+  await page.getByRole('button', { name: /^在看 1$/ }).click();
+  await page.getByRole('button', { name: /^中国大陆 1$/ }).click();
+  await page.getByRole('button', { name: '高级筛选' }).click();
   const dialog = page.getByRole('dialog', { name: '高级筛选' });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: /^剧集 / }).click();
-  await dialog.getByRole('button', { name: /^综艺 / }).click();
-  await dialog.getByRole('button', { name: /^在看 / }).click();
-  await dialog.getByRole('button', { name: /^中国大陆 / }).click();
+  await expect(dialog.getByRole('group', { name: '媒体类型' })).toHaveCount(0);
+  await expect(dialog.getByRole('group', { name: '观看状态' })).toHaveCount(0);
+  await expect(dialog.getByRole('group', { name: /地区/ })).toHaveCount(0);
+  await expect(dialog.getByRole('group', { name: '锁定状态' })).toHaveCount(0);
   await dialog.getByRole('button', { name: /^腾讯视频 / }).click();
   await dialog.getByLabel('个人评分最小值').fill('8');
   await dialog.getByRole('button', { name: '完成' }).click();
@@ -35,9 +38,13 @@ test('@advanced-filter combines fields, summarizes them, and never writes record
   await expect(page.getByText('国产悬疑剧', { exact: true })).toBeVisible();
   await expect(page.getByText('国产综艺', { exact: true })).toHaveCount(0);
   await expect(page.getByText('英国电影', { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('当前筛选条件')).toContainText('剧集 或 综艺');
-  await expect(page.getByLabel('当前筛选条件')).toContainText('个人评分 ≥ 8');
-  await expect(page.getByRole('button', { name: '筛选 5' })).toBeVisible();
+  const summary = page.getByLabel('当前高级筛选条件');
+  await expect(summary).toContainText('平台：腾讯视频');
+  await expect(summary).toContainText('个人评分 ≥ 8');
+  await expect(summary).not.toContainText('剧集');
+  await expect(summary).not.toContainText('在看');
+  await expect(summary).not.toContainText('中国大陆');
+  await expect(page.getByRole('button', { name: '高级筛选 2' })).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
   expect(snapshot.calls.some(call => ['insert_record', 'update_record', 'delete_record'].includes(call.command))).toBe(false);
@@ -48,16 +55,16 @@ test('@saved-views saves locally, marks changes dirty, updates, and configures s
   await setupMockIpc(page, { records });
   await page.goto('/');
   await page.getByRole('button', { name: /^剧集 1$/ }).click();
-  await page.getByRole('button', { name: '另存为' }).click();
+  await page.getByRole('button', { name: '视图：临时筛选' }).click();
+  await page.getByRole('button', { name: '另存当前条件为视图' }).click();
   await page.getByLabel('视图名称').fill('正在追的剧');
   await page.getByRole('button', { name: '保存', exact: true }).click();
 
-  const savedButton = page.getByRole('button', { name: '正在追的剧' });
-  await expect(savedButton).toBeVisible();
+  await expect(page.getByRole('button', { name: '视图：正在追的剧' })).toBeVisible();
   await page.getByRole('button', { name: /^电影 1$/ }).click();
-  await expect(page.getByRole('button', { name: '正在追的剧 · 已修改' })).toBeVisible();
-  await page.getByRole('button', { name: '更新', exact: true }).click();
-  await page.getByRole('button', { name: '设为启动' }).click();
+  await page.getByRole('button', { name: '视图：正在追的剧 · 已修改' }).click();
+  await page.getByRole('button', { name: '更新当前视图' }).click();
+  await page.getByRole('button', { name: '设为启动视图' }).click();
   await expect(page.getByRole('button', { name: '★ 正在追的剧' })).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
@@ -85,6 +92,8 @@ test('@saved-views applies only an explicit valid startup view', async ({ page }
     watchlist_startup_view_id_v1: view.id,
   } });
   await page.goto('/');
+  await expect(page.getByRole('button', { name: '视图：英国已看' })).toBeVisible();
+  await page.getByRole('button', { name: '视图：英国已看' }).click();
   await expect(page.getByRole('button', { name: '★ 英国已看' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText('英国电影', { exact: true })).toBeVisible();
   await expect(page.getByText('国产悬疑剧', { exact: true })).toHaveCount(0);
@@ -95,13 +104,16 @@ test('@saved-views keeps a failed save visible and the advanced dialog accessibl
   await setupMockIpc(page, { records, failSettingWrites: true });
   await page.setViewportSize({ width: 360, height: 720 });
   await page.goto('/');
-  await page.getByRole('button', { name: '另存为' }).click();
+  await page.getByRole('button', { name: '视图：全部记录' }).click();
+  await expect(page.getByRole('dialog', { name: '保存视图' }).getByRole('button', { name: '全部记录' })).toBeFocused();
+  await page.getByRole('button', { name: '另存当前条件为视图' }).click();
   await page.getByLabel('视图名称').fill('不会保存');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.getByLabel('视图名称')).toBeVisible();
   await expect(page.getByText('Injected setting write failure')).toHaveCount(0);
 
-  await page.getByRole('button', { name: '筛选' }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '高级筛选' }).click();
   const dialog = page.getByRole('dialog', { name: '高级筛选' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: '关闭高级筛选' })).toBeFocused();
@@ -109,6 +121,6 @@ test('@saved-views keeps a failed save visible and the advanced dialog accessibl
   expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '筛选' })).toBeFocused();
+  await expect(page.getByRole('button', { name: '高级筛选' })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
