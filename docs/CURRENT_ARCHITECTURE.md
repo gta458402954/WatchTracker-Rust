@@ -1,6 +1,6 @@
 # WatchTracker 当前架构
 
-> 更新时间：2026-08-02（Australia/Perth）
+> 更新时间：2026-08-09（Australia/Perth）
 > 权威源码：本仓库 `main`；正式便携版的精确构建提交号显示在应用顶部栏
 > 本文描述当前可构建实现，不把历史故障快照或路线图能力写成现有功能。
 
@@ -9,7 +9,8 @@
 - 前端使用 React Hook `useWatchList` 管理记录状态；当前没有 Zustand 依赖或 `src/store/useWatchListStore.ts`。
 - SQLite schema 当前为 V18，records 表使用 `createdAt`、`originalName`、`revActor` 等 camelCase 列名。
 - 本地新增、更新、删除和全量替换由 Rust/SQLite 事务实现，并在同一事务中维护 Tombstone 与 `records_generation`。
-- WebDAV 当前使用独立 schema v3、ETag 条件写入、三方字段合并、原子 `SyncCommit`、持久 outbox 和主动拉取。
+- WebDAV 当前使用独立 payload schema V5（文件名仍为 `records-v3.json`）、ETag 条件写入、三方字段合并、原子 `SyncCommit`、持久 outbox 和主动拉取。
+- 系列/收藏集使用 V18 功能迁移保存为独立多对多实体；删除集合不删除影视记录，并进入本地备份与跨设备同步。
 - 数据根目录由单一 `AppPaths` 解析，数据库、日志、海报和备份共享同一个结果。
 - 前端初始化明确区分 `loading | ready | error`；读取失败不会伪装成空列表，并提供重试入口。
 
@@ -53,13 +54,16 @@ React UI
 | `src/app/initialization.ts` | 可重试初始化及同步间隔解析 |
 | `src/features/watchlist/hooks/useWatchList.ts` | 当前记录状态层、CRUD 与同步调度 |
 | `src/shared/lib/database.ts` | TypeScript 到 Tauri 的类型化 IPC |
-| `src/shared/lib/webdav.ts` | schema v3 条件同步、v2 首次迁移、Tombstone 和 WebDAV 传输 |
+| `src/features/collections/` | 收藏集状态、收藏集中心、TMDB 归组建议和记录归属操作 |
+| `src/shared/lib/webdav.ts` | payload V5 条件同步、旧格式迁移、Tombstone 和 WebDAV 传输 |
 | `src/shared/lib/syncMerge.ts` | 基于共同 baseline 的纯函数三方合并与冲突冻结 |
+| `src/shared/lib/collectionSync.ts` | 收藏集和成员关系的三方合并、删除与顺序冲突选择 |
 | `src/shared/lib/syncScheduling.ts` | 主动拉取到期、失败分类和持久退避纯函数 |
 | `src/shared/lib/classification.ts` | 媒体类型和地区规范化 |
 | `src/shared/lib/filtering.ts` | 地区选项、组合筛选及失效选择处理 |
 | `src-tauri/src/app_paths.rs` | 统一数据根目录、可写性和子目录验证 |
 | `src-tauri/src/db.rs` | V18 schema、migration 和基础 records/settings 访问 |
+| `src-tauri/src/collections.rs` | V18 收藏集功能迁移、原子 CRUD、成员排序与关系 Tombstone |
 | `src-tauri/src/db_atomic_crud.rs` | 原子新增、删除和全量替换 |
 | `src-tauri/src/db_atomic_update.rs` | 强类型原子部分更新 |
 | `src-tauri/src/db_atomic_helpers.rs` | generation 与 Tombstone helper |
@@ -78,25 +82,27 @@ React UI
 
 数据库写入边界统一保留 V18：records 使用明确的 `ON CONFLICT(id) DO UPDATE`，不再依靠删除再插入语义。本地新增严格校验至少一个名称、固定媒体类型和数值范围，并由 Rust 写入 `updatedAt`、`rev`、`revActor`；部分更新只验证被修改字段，因此旧脏行仍可逐步修复。导入和同步全量替换采用兼容模式规范化空文本、旧媒体类型和无效旧数值，重复 ID 会在删除现有记录前使整批失败，锁定记录仍保留本地版本。
 
+收藏集不提升数据库主版本，而由 `collections_schema_version=1` 幂等功能迁移增加 `collections`、`collection_members` 及两类 tombstone 表。成员 ID 由 collection ID 与 record ID 确定性生成；增删、排序、删除记录时的关系清理均与 generation、staging 和 outbox 同事务。迁移前创建 `collections-migration` 恢复点，恢复校验同时执行 SQLite `integrity_check` 与 `foreign_key_check`。
+
 ## 5. 当前同步边界
 
 已经实现：
 
-- 独立 `records-v3.json`、ETag 条件写入和 412 重拉：GET 返回规范强 ETag 时使用 HTTP `If-Match`；弱、缺失或未加引号的验证器先以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，再使用 WebDAV `If`；首次创建使用 `If-None-Match: *`，仍无合法验证器才禁止上传；连续三次 412 只有在验证器指纹确实变化时才报告 `remote_busy`，固定指纹被拒绝则停止自动重试并保留本地数据；
+- 独立 `records-v3.json` 与 payload V5、ETag 条件写入和 412 重拉：GET 返回规范强 ETag 时使用 HTTP `If-Match`；弱、缺失或未加引号的验证器先以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，再使用 WebDAV `If`；首次创建使用 `If-None-Match: *`，仍无合法验证器才禁止上传；连续三次 412 只有在验证器指纹确实变化时才报告 `remote_busy`，固定指纹被拒绝则停止自动重试并保留本地数据；
 - 共同 baseline 三方字段合并、删除 Tombstone、锁定保护和持久冲突中心；
 - `get_sync_snapshot`、`commit_sync_result(expectedGeneration)`、恢复点和本地原子落盘；
 - 旧数组/schema v2 首次迁移、旧客户端后续写入检测和显式冲突导入；
 - 网络失败与本地 SQLite 状态隔离。
 - generation 高水位持久 outbox，所有本地业务写事务原子入队；
-- 按记录 ID 合并的 V18 `sync_staging_v1` 版本暂存，以及 PUT 前持久化的 `sync_publish_intent_v1`；远端已写而本地确认失败时可按 commitId 与 payload 指纹恢复，不重复上传；
+- 按实体类型和 ID 合并的 V18 staging V2 版本暂存，以及 PUT 前持久化的 `sync_publish_intent_v1`；远端已写而本地确认失败时可按 commitId 与 payload 指纹恢复，不重复上传；
 - 启动、聚焦/可见、网络恢复和独立周期主动拉取，暂停/退避跨重启保留；
 - 每轮固定先拉取再合并，clean pull 不创建恢复点或递增 records generation；
 - SyncCommit 按记录 ID 计算 upsert/delete，数组顺序变化不会触发全量记录重写；严格同设备证据成立时可迁移旧 `base = null` 伪冲突。
 
 尚未实现：
 
-- Zustand 状态主链路；
-- WebDAV 账号/URL 切换时的同步元数据隔离。
+- Zustand 状态主链路（仍不是当前必要依赖）；
+- 正式发布的数据格式 epoch、审计、签名和分阶段放量。
 
 这些能力保留在路线图中，应从已验证不变量和测试逐项重新实现，不应整体复制历史故障快照。
 
@@ -108,20 +114,20 @@ WebDAV URL＋保留大小写的用户名经规范化后生成 SHA-256 target ID�
 
 `TASK-D-SEC-001` 已实现：WebDAV/TMDB 秘密本体保存在当前 Windows 用户的 Credential Manager，SQLite 仅保留固定 `wincred:v1` 引用；旧格式按首次使用逐项安全迁移，日常网络命令在 Rust 内部取密钥，已保存秘密不再往返 React。数据库继续使用 V18，便携目录换机后需要重新输入凭据。
 
-`TASK-D-HISTORY-001` 已实现：V18 通过独立 `episode_history_schema_version=1` 功能迁移增加 `episodeTrackingEnabled`、`nextEpisode` 与 `episode_completions`；启用、跳集、完结和后退由 Rust 原子命令处理，旧 `progress` 不自动转换。已看条目只读展示逐集状态，不提供普通启用或回退入口；仅当已有历史的条目增加总集数时允许“继续追更”，既有历史与原完结日期不变。完成历史进入本地 V2 备份和 WebDAV V4；V3 可读，首次 V4 发布需确认，不同非空完成时间由用户选择。`TASK-D-DISCOVERY-001`“今晚看什么”也已实现：只推荐未看，锁定可参与，电影按整部、分集内容按单集，提供四类筛选、稳定可解释评分和会话内无重复/跳过/只读查看，全程零业务写入。展示层会为中国大陆分集内容隐藏冗余的首季后缀，但保留数据库原始标题作为季匹配与同步身份；看板“正在观看”会从电影专用时间字段显示已观看/总时长与百分比，剧集则显示下一集或旧进度。`TASK-D-NET-001` 也已实现：TMDB、海报和 WebDAV 使用独立有界响应，海报经 Rust 校验、原子缓存、4 路并发和安全容量回收，WebView 不再直连 TMDB 图片；数据库保持 V18，WebDAV 保持 V4。`TASK-D-IMPORT-001` 仍由用户暂缓。正式发布的数据格式防护由 `TASK-D-RELEASE-001` 跟踪，多观看会话由路线图最后一项 `TASK-D-HISTORY-002` 跟踪。完整清单和状态以 `.agent-work/TASKS.md` 为准。
+`TASK-D-HISTORY-001` 已实现：V18 通过独立 `episode_history_schema_version=1` 功能迁移增加 `episodeTrackingEnabled`、`nextEpisode` 与 `episode_completions`；启用、跳集、完结和后退由 Rust 原子命令处理，旧 `progress` 不自动转换。已看条目只读展示逐集状态，不提供普通启用或回退入口；仅当已有历史的条目增加总集数时允许“继续追更”，既有历史与原完结日期不变。完成历史进入本地 V2 备份和 WebDAV V4；V3 可读，首次 V4 发布需确认，不同非空完成时间由用户选择。`TASK-D-DISCOVERY-001`“今晚看什么”也已实现：只推荐未看，锁定可参与，电影按整部、分集内容按单集，提供四类筛选、稳定可解释评分和会话内无重复/跳过/只读查看，全程零业务写入。展示层会为中国大陆分集内容隐藏冗余的首季后缀，但保留数据库原始标题作为季匹配与同步身份；看板“正在观看”会从电影专用时间字段显示已观看/总时长与百分比，剧集则显示下一集或旧进度。`TASK-D-NET-001` 也已实现：TMDB、海报和 WebDAV 使用独立有界响应，海报经 Rust 校验、原子缓存、4 路并发和安全容量回收，WebView 不再直连 TMDB 图片。`TASK-D-UX-003` 已实现扁平多对多收藏集、TMDB 稳定归组建议、本地备份 V3 与 WebDAV V5；数据库继续保持 V18。`TASK-D-IMPORT-001` 仍由用户暂缓。正式发布的数据格式防护由 `TASK-D-RELEASE-001` 跟踪，多观看会话由路线图最后一项 `TASK-D-HISTORY-002` 跟踪。完整清单和状态以 `.agent-work/TASKS.md` 为准。
 
 ## 6. 当前验证状态
 
-2026-08-02 对当前工作区执行：
+2026-08-09 对当前工作区执行：
 
 ```text
 npm run typecheck  PASS
 npm run lint       PASS
-npm run test       PASS（68/68）
-npx playwright test PASS（50/50）
+npm run test       PASS（108/108）
+npx playwright test 全部 78 项执行；修订后的失败专项均 PASS，runner 报告后 Vite 子进程仍不会自动退出
 npm run build      PASS
 cargo fmt/clippy   PASS
-cargo test --locked PASS（59/59）
+cargo test         PASS（78/78）
 ```
 
 便携版发布仍须从干净 Git 提交运行 Windows Tauri 构建，并在替换前后只读校验真实数据库。

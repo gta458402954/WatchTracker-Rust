@@ -132,6 +132,98 @@ pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::err
 }
 
 #[tauri::command]
+pub fn get_collections(
+    state: State<DbState>,
+) -> Result<Vec<crate::collections::Collection>, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    crate::collections::all(&conn)
+}
+
+#[tauri::command]
+pub fn get_collection_members(
+    state: State<DbState>,
+) -> Result<Vec<crate::collections::CollectionMember>, crate::error::AppError> {
+    let conn = lock_database(state.inner())?;
+    crate::collections::all_members(&conn)
+}
+
+#[tauri::command]
+pub fn create_collection(
+    state: State<DbState>,
+    input: crate::collections::CreateCollectionInput,
+) -> Result<crate::collections::Collection, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::create(&mut conn, input, &actor)
+}
+
+#[tauri::command]
+pub fn update_collection(
+    state: State<DbState>,
+    id: String,
+    input: crate::collections::UpdateCollectionInput,
+) -> Result<crate::collections::Collection, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::update(&mut conn, &id, input, &actor)
+}
+
+#[tauri::command]
+pub fn delete_collection(
+    state: State<DbState>,
+    id: String,
+    expected_rev: i64,
+) -> Result<(), crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::delete(&mut conn, &id, expected_rev, &actor)
+}
+
+#[tauri::command]
+pub fn add_collection_members(
+    state: State<DbState>,
+    collection_id: String,
+    record_ids: Vec<String>,
+    source_kind: String,
+    expected_rev: i64,
+) -> Result<Vec<crate::collections::CollectionMember>, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::add_members(
+        &mut conn,
+        &collection_id,
+        record_ids,
+        &source_kind,
+        expected_rev,
+        &actor,
+    )
+}
+
+#[tauri::command]
+pub fn remove_collection_member(
+    state: State<DbState>,
+    collection_id: String,
+    record_id: String,
+    expected_rev: i64,
+) -> Result<(), crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::remove_member(&mut conn, &collection_id, &record_id, expected_rev, &actor)
+}
+
+#[tauri::command]
+pub fn reorder_collection_members(
+    state: State<DbState>,
+    collection_id: String,
+    record_ids: Vec<String>,
+    expected_rev: i64,
+) -> Result<Vec<crate::collections::CollectionMember>, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::reorder(&mut conn, &collection_id, record_ids, expected_rev, &actor)
+}
+
+#[tauri::command]
 pub fn get_episode_tracking(
     state: State<DbState>,
     record_id: String,
@@ -158,6 +250,26 @@ pub fn replace_library(
     let mut conn = lock_database(state.inner())?;
     recovery_points::create(&conn, paths.inner(), "import")?;
     crate::episode_history::replace_library_atomic(&mut conn, records, episode_completions)
+}
+
+#[tauri::command]
+pub fn replace_library_v3(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    records: Vec<WatchRecord>,
+    episode_completions: Vec<crate::episode_history::EpisodeCompletion>,
+    collections: Vec<crate::collections::Collection>,
+    collection_members: Vec<crate::collections::CollectionMember>,
+) -> Result<(), crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    recovery_points::create(&conn, paths.inner(), "import")?;
+    crate::collections::replace_library_atomic(
+        &mut conn,
+        records,
+        episode_completions,
+        collections,
+        collection_members,
+    )
 }
 
 #[tauri::command]

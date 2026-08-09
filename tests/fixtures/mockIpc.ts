@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import type { WatchRecord } from '../../src/shared/types';
-import type { EpisodeCompletion } from '../../src/shared/types';
+import type { CollectionMember, CollectionMemberTombstone, CollectionTombstone, EpisodeCompletion, WatchCollection } from '../../src/shared/types';
 import type { TmdbMedia } from '../../src/shared/lib/classification';
 import type { RecoveryPoint, SyncOutboxState, SyncSchedulerState } from '../../src/shared/lib/database';
 import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from '../../src/shared/lib/syncMerge';
@@ -8,6 +8,8 @@ import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from '../../src/s
 export interface MockIpcOptions {
   records?: WatchRecord[];
   episodeCompletions?: EpisodeCompletion[];
+  collections?: WatchCollection[];
+  collectionMembers?: CollectionMember[];
   failRecordLoads?: boolean;
   settings?: Record<string, string | null>;
   tmdbSearchResults?: TmdbMedia[];
@@ -41,6 +43,8 @@ export interface MockSnapshot {
   recoveryPoints: RecoveryPoint[];
   webdavV3Remote: SyncPayloadV3 | null;
   episodeCompletions: EpisodeCompletion[];
+  collections: WatchCollection[];
+  collectionMembers: CollectionMember[];
 }
 
 declare global {
@@ -55,7 +59,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, episodeCompletions: initialEpisodeCompletions, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -69,6 +73,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
         recoveryPoints: structuredClone(recoveryPoints),
         webdavV3Remote: structuredClone(webdavV3Remote),
         episodeCompletions: structuredClone(initialEpisodeCompletions),
+        collections: structuredClone(initialCollections),
+        collectionMembers: structuredClone(initialCollectionMembers),
       };
       window.__WATCHTRACKER_TEST__ = snapshot;
       const remainingUpdateFailures = structuredClone(updateFailureCounts);
@@ -98,6 +104,23 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
         try { return JSON.parse(snapshot.settings.sync_tombstones || '[]'); } catch { return []; }
       })();
       let episodeCompletions: EpisodeCompletion[] = snapshot.episodeCompletions;
+      let collections: WatchCollection[] = snapshot.collections;
+      let collectionMembers: CollectionMember[] = snapshot.collectionMembers;
+      let collectionTombstones: CollectionTombstone[] = [];
+      let collectionMemberTombstones: CollectionMemberTombstone[] = [];
+
+      const bumpCollection = (collectionId: string) => {
+        const index = collections.findIndex(item => item.id === collectionId);
+        if (index < 0) throw new Error('collection_missing');
+        collections[index] = {
+          ...collections[index],
+          updatedAt: new Date().toISOString(),
+          rev: collections[index].rev + 1,
+          revActor: 'mock-device',
+        };
+        snapshot.collections = collections;
+        return collections[index];
+      };
 
       const persistRuntime = () => {
         snapshot.settings.sync_outbox_v1 = JSON.stringify(outbox);
@@ -175,6 +198,128 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 throw new Error('injected database load failure');
               }
               return structuredClone(snapshot.records);
+            case 'get_collections':
+              requireKeys(command, args, []);
+              return structuredClone(collections);
+            case 'get_collection_members':
+              requireKeys(command, args, []);
+              return structuredClone(collectionMembers);
+            case 'create_collection': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null };
+              const now = new Date().toISOString();
+              const collection: WatchCollection = {
+                id: `collection-${collections.length + 1}`,
+                name: input.name.trim(),
+                normalizedName: input.name.trim().toLocaleLowerCase(),
+                description: input.description,
+                sourceKind: input.sourceKind ?? 'manual',
+                sourceKey: input.sourceKey ?? null,
+                createdAt: now,
+                updatedAt: now,
+                rev: 1,
+                revActor: 'mock-device',
+              };
+              if (collections.some(item => item.normalizedName === collection.normalizedName)) throw new Error('collection_name_exists');
+              collections = [...collections, collection];
+              snapshot.collections = collections;
+              recordsGeneration += 1; queueOutbox('collection-create');
+              return structuredClone(collection);
+            }
+            case 'update_collection': {
+              requireKeys(command, args, ['id', 'input']);
+              const input = args.input as { name: string; description: string | null; expectedRev: number };
+              const index = collections.findIndex(item => item.id === args.id);
+              if (index < 0) throw new Error('collection_missing');
+              if (collections[index].rev !== input.expectedRev) throw new Error('stale_collection');
+              collections[index] = {
+                ...collections[index],
+                name: input.name.trim(),
+                normalizedName: input.name.trim().toLocaleLowerCase(),
+                description: input.description,
+                updatedAt: new Date().toISOString(),
+                rev: input.expectedRev + 1,
+                revActor: 'mock-device',
+              };
+              snapshot.collections = collections;
+              recordsGeneration += 1; queueOutbox('collection-update');
+              return structuredClone(collections[index]);
+            }
+            case 'delete_collection': {
+              requireKeys(command, args, ['expectedRev', 'id']);
+              const collection = collections.find(item => item.id === args.id);
+              if (!collection) throw new Error('collection_missing');
+              if (collection.rev !== args.expectedRev) throw new Error('stale_collection');
+              const now = new Date().toISOString();
+              collectionTombstones.push({ id: collection.id, deletedAt: now, rev: collection.rev + 1, revActor: 'mock-device' });
+              for (const member of collectionMembers.filter(item => item.collectionId === collection.id)) {
+                collectionMemberTombstones.push({ id: member.id, collectionId: member.collectionId, recordId: member.recordId, deletedAt: now, rev: member.rev + 1, revActor: 'mock-device' });
+              }
+              collections = collections.filter(item => item.id !== collection.id);
+              collectionMembers = collectionMembers.filter(item => item.collectionId !== collection.id);
+              snapshot.collections = collections;
+              snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('collection-delete');
+              return null;
+            }
+            case 'add_collection_members': {
+              requireKeys(command, args, ['collectionId', 'expectedRev', 'recordIds', 'sourceKind']);
+              const collection = collections.find(item => item.id === args.collectionId);
+              if (!collection) throw new Error('collection_missing');
+              if (collection.rev !== args.expectedRev) throw new Error('stale_collection');
+              let position = collectionMembers.filter(item => item.collectionId === collection.id).length;
+              const now = new Date().toISOString();
+              for (const recordId of args.recordIds as string[]) {
+                if (collectionMembers.some(item => item.collectionId === collection.id && item.recordId === recordId)) continue;
+                const member: CollectionMember = {
+                  id: `member-${collection.id}-${recordId}`,
+                  collectionId: collection.id,
+                  recordId,
+                  position: position++,
+                  sourceKind: args.sourceKind as 'manual' | 'tmdb',
+                  createdAt: now,
+                  updatedAt: now,
+                  rev: 1,
+                  revActor: 'mock-device',
+                };
+                collectionMembers.push(member);
+              }
+              bumpCollection(collection.id);
+              snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('collection-member-add');
+              return structuredClone(collectionMembers.filter(item => item.collectionId === collection.id));
+            }
+            case 'remove_collection_member': {
+              requireKeys(command, args, ['collectionId', 'expectedRev', 'recordId']);
+              const collection = collections.find(item => item.id === args.collectionId);
+              if (!collection) throw new Error('collection_missing');
+              const member = collectionMembers.find(item => item.collectionId === collection.id && item.recordId === args.recordId);
+              if (!member) throw new Error('collection_member_not_found');
+              if (member.rev !== args.expectedRev) throw new Error('stale_collection_member');
+              if (member) {
+                collectionMemberTombstones.push({ id: member.id, collectionId: member.collectionId, recordId: member.recordId, deletedAt: new Date().toISOString(), rev: member.rev + 1, revActor: 'mock-device' });
+                collectionMembers = collectionMembers.filter(item => item.id !== member.id);
+              }
+              collectionMembers.filter(item => item.collectionId === collection.id).sort((a, b) => a.position - b.position).forEach((item, index) => { item.position = index; });
+              bumpCollection(collection.id);
+              snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('collection-member-remove');
+              return null;
+            }
+            case 'reorder_collection_members': {
+              requireKeys(command, args, ['collectionId', 'expectedRev', 'recordIds']);
+              const collection = collections.find(item => item.id === args.collectionId);
+              if (!collection) throw new Error('collection_missing');
+              if (collection.rev !== args.expectedRev) throw new Error('stale_collection');
+              (args.recordIds as string[]).forEach((recordId, position) => {
+                const member = collectionMembers.find(item => item.collectionId === collection.id && item.recordId === recordId);
+                if (member) { member.position = position; member.updatedAt = new Date().toISOString(); member.rev += 1; }
+              });
+              bumpCollection(collection.id);
+              snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('collection-member-reorder');
+              return structuredClone(collectionMembers.filter(item => item.collectionId === collection.id).sort((a, b) => a.position - b.position));
+            }
             case 'insert_record': {
               requireKeys(command, args, ['r']);
               const record = structuredClone(args.r as WatchRecord);
@@ -222,6 +367,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               snapshot.records = snapshot.records.filter((record) => record.id !== args.id);
               episodeCompletions = episodeCompletions.filter(item => item.recordId !== args.id);
               snapshot.episodeCompletions = episodeCompletions;
+              collectionMembers = collectionMembers.filter(item => item.recordId !== args.id);
+              snapshot.collectionMembers = collectionMembers;
               tombstones = tombstones.filter(item => item.id !== args.id);
               tombstones.push({ id: args.id as string, deletedAt: new Date().toISOString(), rev: 0, revActor: 'mock-device' });
               recordsGeneration += 1;
@@ -241,6 +388,19 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               makeRecoveryPoint('import');
               snapshot.records = structuredClone(args.records as WatchRecord[]);
               episodeCompletions = structuredClone(args.episodeCompletions as EpisodeCompletion[]);
+              recordsGeneration += 1; queueOutbox('library-import');
+              return null;
+            }
+            case 'replace_library_v3': {
+              requireKeys(command, args, ['collectionMembers', 'collections', 'episodeCompletions', 'records']);
+              makeRecoveryPoint('import');
+              snapshot.records = structuredClone(args.records as WatchRecord[]);
+              episodeCompletions = structuredClone(args.episodeCompletions as EpisodeCompletion[]);
+              collections = structuredClone(args.collections as WatchCollection[]);
+              collectionMembers = structuredClone(args.collectionMembers as CollectionMember[]);
+              snapshot.episodeCompletions = episodeCompletions;
+              snapshot.collections = collections;
+              snapshot.collectionMembers = collectionMembers;
               recordsGeneration += 1; queueOutbox('library-import');
               return null;
             }
@@ -307,6 +467,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 records: structuredClone(snapshot.records),
                 tombstones: structuredClone(tombstones),
                 episodeCompletions: structuredClone(episodeCompletions),
+                collections: structuredClone(collections),
+                collectionMembers: structuredClone(collectionMembers),
+                collectionTombstones: structuredClone(collectionTombstones),
+                collectionMemberTombstones: structuredClone(collectionMemberTombstones),
                 recordsGeneration,
                 baseline: parse('sync_v3_baseline'),
                 deviceId: snapshot.settings.sync_device_id_v1 || 'mock-device',
@@ -316,7 +480,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 v2SourceFingerprint: snapshot.settings.sync_v2_source_fingerprint || null,
                 outbox: structuredClone(outbox),
                 scheduler: structuredClone(scheduler),
-                staging: parse('sync_staging_v1') || { version: 1, entries: [] },
+                staging: parse('sync_staging_v1') || { version: 2, entries: [] },
                 publishIntent: parse('sync_publish_intent_v1'),
               };
             }
@@ -389,6 +553,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 records: WatchRecord[];
                 tombstones: SyncTombstoneV3[];
                 episodeCompletions: EpisodeCompletion[];
+                collections: WatchCollection[];
+                collectionMembers: CollectionMember[];
+                collectionTombstones: CollectionTombstone[];
+                collectionMemberTombstones: CollectionMemberTombstone[];
                 baseline: SyncPayloadV3;
                 conflicts: SyncConflictV3[];
                 remoteEtag: string;
@@ -400,12 +568,22 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               if (input.expectedGeneration !== recordsGeneration) throw new Error('stale_local_snapshot');
               const businessStateChanged = JSON.stringify(snapshot.records) !== JSON.stringify(input.records)
                 || JSON.stringify(tombstones) !== JSON.stringify(input.tombstones)
-                || JSON.stringify(episodeCompletions) !== JSON.stringify(input.episodeCompletions);
+                || JSON.stringify(episodeCompletions) !== JSON.stringify(input.episodeCompletions)
+                || JSON.stringify(collections) !== JSON.stringify(input.collections)
+                || JSON.stringify(collectionMembers) !== JSON.stringify(input.collectionMembers)
+                || JSON.stringify(collectionTombstones) !== JSON.stringify(input.collectionTombstones)
+                || JSON.stringify(collectionMemberTombstones) !== JSON.stringify(input.collectionMemberTombstones);
               if (businessStateChanged) makeRecoveryPoint('sync');
               snapshot.records = structuredClone(input.records);
               tombstones = structuredClone(input.tombstones);
               episodeCompletions = structuredClone(input.episodeCompletions);
+              collections = structuredClone(input.collections);
+              collectionMembers = structuredClone(input.collectionMembers);
+              collectionTombstones = structuredClone(input.collectionTombstones);
+              collectionMemberTombstones = structuredClone(input.collectionMemberTombstones);
               snapshot.episodeCompletions = episodeCompletions;
+              snapshot.collections = collections;
+              snapshot.collectionMembers = collectionMembers;
               snapshot.settings.sync_tombstones = JSON.stringify(tombstones);
               snapshot.settings.sync_v3_baseline = JSON.stringify(input.baseline);
               snapshot.settings.sync_v3_conflicts = JSON.stringify(input.conflicts);
@@ -611,6 +789,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
     {
       records: options.records ?? [],
       episodeCompletions: options.episodeCompletions ?? [],
+      collections: options.collections ?? [],
+      collectionMembers: options.collectionMembers ?? [],
       failRecordLoads: options.failRecordLoads ?? false,
       settings: options.settings ?? {},
       tmdbSearchResults: options.tmdbSearchResults ?? [],

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { type EpisodeCompletion, UpdateWatchRecord, WatchRecord } from '../types';
+import { type CollectionMember, type CollectionMemberTombstone, type CollectionTombstone, type EpisodeCompletion, type WatchCollection, UpdateWatchRecord, WatchRecord } from '../types';
 import { errorMessage, TmdbMedia, TmdbSearchResponse } from './classification';
 import { assertValidUpdateNumbers } from './updateValidation';
 import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from './syncMerge';
@@ -21,6 +21,21 @@ export async function deleteRecord(id: string): Promise<void> {
   await invoke('delete_record', { id });
 }
 
+export const getCollections = (): Promise<WatchCollection[]> => invoke('get_collections');
+export const getCollectionMembers = (): Promise<CollectionMember[]> => invoke('get_collection_members');
+export const createCollection = (input: { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null }): Promise<WatchCollection> =>
+  invoke('create_collection', { input });
+export const updateCollection = (id: string, input: { name: string; description: string | null; expectedRev: number }): Promise<WatchCollection> =>
+  invoke('update_collection', { id, input });
+export const deleteCollection = (id: string, expectedRev: number): Promise<void> =>
+  invoke('delete_collection', { id, expectedRev });
+export const addCollectionMembers = (collectionId: string, recordIds: string[], expectedRev: number, sourceKind: 'manual' | 'tmdb' = 'manual'): Promise<CollectionMember[]> =>
+  invoke('add_collection_members', { collectionId, recordIds, sourceKind, expectedRev });
+export const removeCollectionMember = (collectionId: string, recordId: string, expectedRev: number): Promise<void> =>
+  invoke('remove_collection_member', { collectionId, recordId, expectedRev });
+export const reorderCollectionMembers = (collectionId: string, recordIds: string[], expectedRev: number): Promise<CollectionMember[]> =>
+  invoke('reorder_collection_members', { collectionId, recordIds, expectedRev });
+
 export interface EpisodeTracking {
   record: WatchRecord;
   completions: EpisodeCompletion[];
@@ -38,8 +53,10 @@ export const setNextEpisode = (recordId: string, nextEpisode: number | null, exp
   invoke('set_next_episode', { recordId, nextEpisode, expectedRev });
 export const replaceLibrary = (records: WatchRecord[], episodeCompletions: EpisodeCompletion[]): Promise<void> =>
   invoke('replace_library', { records, episodeCompletions });
+export const replaceLibraryV3 = (records: WatchRecord[], episodeCompletions: EpisodeCompletion[], collections: WatchCollection[], collectionMembers: CollectionMember[]): Promise<void> =>
+  invoke('replace_library_v3', { records, episodeCompletions, collections, collectionMembers });
 
-export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'episode-history-migration' | 'pre-restore';
+export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'episode-history-migration' | 'collections-migration' | 'pre-restore';
 
 export interface RecoveryPoint {
   id: string;
@@ -75,6 +92,10 @@ export interface SyncSnapshot {
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
   episodeCompletions: EpisodeCompletion[];
+  collections: WatchCollection[];
+  collectionMembers: CollectionMember[];
+  collectionTombstones: CollectionTombstone[];
+  collectionMemberTombstones: CollectionMemberTombstone[];
   recordsGeneration: number;
   baseline: SyncPayloadV3 | null;
   deviceId: string;
@@ -89,6 +110,7 @@ export interface SyncSnapshot {
 }
 
 export interface StagedRecordState {
+  entityKind?: 'record' | 'collection' | 'collection-member';
   id: string;
   operation: 'upsert' | 'delete';
   base: WatchRecord | null;
@@ -98,7 +120,7 @@ export interface StagedRecordState {
 }
 
 export interface SyncStagingState {
-  version: 1;
+  version: 1 | 2;
   entries: StagedRecordState[];
 }
 
@@ -107,7 +129,7 @@ export interface SyncPublishIntent {
   commitId: string;
   previousCommitId: string | null;
   expectedGeneration: number;
-  includedEntries: Array<{ id: string; lastGeneration: number }>;
+  includedEntries: Array<{ entityKind?: 'record' | 'collection' | 'collection-member'; id: string; lastGeneration: number }>;
   payloadFingerprint: string;
   createdAt: string;
 }
@@ -150,6 +172,10 @@ export interface SyncCommitInput {
   records: WatchRecord[];
   tombstones: SyncTombstoneV3[];
   episodeCompletions: EpisodeCompletion[];
+  collections: WatchCollection[];
+  collectionMembers: CollectionMember[];
+  collectionTombstones: CollectionTombstone[];
+  collectionMemberTombstones: CollectionMemberTombstone[];
   baseline: SyncPayloadV3;
   conflicts: SyncConflictV3[];
   remoteEtag: string;

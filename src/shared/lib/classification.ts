@@ -59,6 +59,7 @@ export interface TmdbMedia {
   origin_country?: string[];
   production_countries?: TmdbProductionCountry[];
   seasons?: TmdbSeason[];
+  belongs_to_collection?: { id?: number; name?: string; poster_path?: string | null; backdrop_path?: string | null } | null;
 }
 
 export interface TmdbSearchResponse {

@@ -78,6 +78,10 @@ pub struct SyncSnapshot {
     pub records: Vec<WatchRecord>,
     pub tombstones: Vec<Tombstone>,
     pub episode_completions: Vec<crate::episode_history::EpisodeCompletion>,
+    pub collections: Vec<crate::collections::Collection>,
+    pub collection_members: Vec<crate::collections::CollectionMember>,
+    pub collection_tombstones: Vec<crate::collections::CollectionTombstone>,
+    pub collection_member_tombstones: Vec<crate::collections::CollectionMemberTombstone>,
     pub records_generation: i64,
     pub baseline: Option<Value>,
     pub device_id: String,
@@ -103,6 +107,14 @@ pub struct SyncCommitInput {
     pub tombstones: Vec<Tombstone>,
     #[serde(default)]
     pub episode_completions: Vec<crate::episode_history::EpisodeCompletion>,
+    #[serde(default)]
+    pub collections: Vec<crate::collections::Collection>,
+    #[serde(default)]
+    pub collection_members: Vec<crate::collections::CollectionMember>,
+    #[serde(default)]
+    pub collection_tombstones: Vec<crate::collections::CollectionTombstone>,
+    #[serde(default)]
+    pub collection_member_tombstones: Vec<crate::collections::CollectionMemberTombstone>,
     pub baseline: Value,
     #[serde(default)]
     pub conflicts: Vec<Value>,
@@ -183,12 +195,20 @@ fn state_without_conflicts(value: &Value, conflicts: &[Value]) -> Value {
     Value::Array(items)
 }
 
+struct InitialSyncBusinessState<'a> {
+    records: &'a [WatchRecord],
+    tombstones: &'a [Tombstone],
+    episode_completions: &'a [crate::episode_history::EpisodeCompletion],
+    collections: &'a [crate::collections::Collection],
+    collection_members: &'a [crate::collections::CollectionMember],
+    collection_tombstones: &'a [crate::collections::CollectionTombstone],
+    collection_member_tombstones: &'a [crate::collections::CollectionMemberTombstone],
+}
+
 fn initialize_outbox(
     conn: &Connection,
     generation: i64,
-    records: &[WatchRecord],
-    tombstones: &[Tombstone],
-    episode_completions: &[crate::episode_history::EpisodeCompletion],
+    state: InitialSyncBusinessState<'_>,
     baseline: Option<&Value>,
     conflicts: &[Value],
 ) -> Result<SyncOutbox, AppError> {
@@ -201,13 +221,13 @@ fn initialize_outbox(
     let mut outbox = SyncOutbox::clean(generation);
     if let Some(baseline) = baseline {
         let local_records = state_without_conflicts(
-            &serde_json::to_value(records).map_err(|error| {
+            &serde_json::to_value(state.records).map_err(|error| {
                 AppError::General(format!("Could not serialize local sync records: {error}"))
             })?,
             conflicts,
         );
         let local_tombstones = state_without_conflicts(
-            &serde_json::to_value(tombstones).map_err(|error| {
+            &serde_json::to_value(state.tombstones).map_err(|error| {
                 AppError::General(format!("Could not serialize local tombstones: {error}"))
             })?,
             conflicts,
@@ -222,18 +242,50 @@ fn initialize_outbox(
                 .unwrap_or(&Value::Array(Vec::new())),
             conflicts,
         );
-        let local_completions = serde_json::to_value(episode_completions).map_err(|error| {
-            AppError::General(format!(
-                "Could not serialize local episode completions: {error}"
-            ))
-        })?;
+        let local_completions =
+            serde_json::to_value(state.episode_completions).map_err(|error| {
+                AppError::General(format!(
+                    "Could not serialize local episode completions: {error}"
+                ))
+            })?;
         let remote_completions = baseline
             .get("episodeCompletions")
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()));
+        let collection_state_changed = [
+            (
+                "collections",
+                serde_json::to_value(state.collections)
+                    .unwrap_or_else(|_| Value::Array(Vec::new())),
+            ),
+            (
+                "collectionMembers",
+                serde_json::to_value(state.collection_members)
+                    .unwrap_or_else(|_| Value::Array(Vec::new())),
+            ),
+            (
+                "collectionTombstones",
+                serde_json::to_value(state.collection_tombstones)
+                    .unwrap_or_else(|_| Value::Array(Vec::new())),
+            ),
+            (
+                "collectionMemberTombstones",
+                serde_json::to_value(state.collection_member_tombstones)
+                    .unwrap_or_else(|_| Value::Array(Vec::new())),
+            ),
+        ]
+        .into_iter()
+        .any(|(field, local)| {
+            local
+                != baseline
+                    .get(field)
+                    .cloned()
+                    .unwrap_or_else(|| Value::Array(Vec::new()))
+        });
         if local_records != remote_records
             || local_tombstones != remote_tombstones
             || local_completions != remote_completions
+            || collection_state_changed
         {
             let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
             outbox.pending = true;
@@ -274,14 +326,24 @@ pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
     let records = db::get_all_records(conn)?;
     let tombstones = get_tombstones_tx(conn)?;
     let episode_completions = crate::episode_history::all_completions(conn)?;
+    let collections = crate::collections::all(conn)?;
+    let collection_members = crate::collections::all_members(conn)?;
+    let collection_tombstones = crate::collections::collection_tombstones(conn)?;
+    let collection_member_tombstones = crate::collections::member_tombstones(conn)?;
     let records_generation = get_records_generation(conn)?;
     let baseline = parse_optional_json(get_setting_tx(conn, &baseline_key)?, &baseline_key)?;
     let outbox = initialize_outbox(
         conn,
         records_generation,
-        &records,
-        &tombstones,
-        &episode_completions,
+        InitialSyncBusinessState {
+            records: &records,
+            tombstones: &tombstones,
+            episode_completions: &episode_completions,
+            collections: &collections,
+            collection_members: &collection_members,
+            collection_tombstones: &collection_tombstones,
+            collection_member_tombstones: &collection_member_tombstones,
+        },
         baseline.as_ref(),
         &conflicts,
     )?;
@@ -291,6 +353,10 @@ pub fn snapshot(conn: &Connection) -> Result<SyncSnapshot, AppError> {
         records,
         tombstones,
         episode_completions,
+        collections,
+        collection_members,
+        collection_tombstones,
+        collection_member_tombstones,
         records_generation,
         baseline,
         device_id: device_id(conn)?,
@@ -415,6 +481,10 @@ pub fn commit(
     let existing_records = db::get_all_records(conn)?;
     let existing_tombstones = get_tombstones_tx(conn)?;
     let existing_completions = crate::episode_history::all_completions(conn)?;
+    let existing_collections = crate::collections::all(conn)?;
+    let existing_collection_members = crate::collections::all_members(conn)?;
+    let existing_collection_tombstones = crate::collections::collection_tombstones(conn)?;
+    let existing_collection_member_tombstones = crate::collections::member_tombstones(conn)?;
     let existing_by_id: BTreeMap<_, _> = existing_records
         .iter()
         .map(|record| (record.id.clone(), record))
@@ -459,8 +529,25 @@ pub fn commit(
         tombstone_values(&existing_tombstones) != tombstone_values(&input.tombstones);
     let completions_changed = serde_json::to_value(&existing_completions).ok()
         != serde_json::to_value(&input.episode_completions).ok();
-    let business_state_changed =
-        !upserts.is_empty() || !deletes.is_empty() || tombstones_changed || completions_changed;
+    let collections_changed = serde_json::to_value((
+        &existing_collections,
+        &existing_collection_members,
+        &existing_collection_tombstones,
+        &existing_collection_member_tombstones,
+    ))
+    .ok()
+        != serde_json::to_value((
+            &input.collections,
+            &input.collection_members,
+            &input.collection_tombstones,
+            &input.collection_member_tombstones,
+        ))
+        .ok();
+    let business_state_changed = !upserts.is_empty()
+        || !deletes.is_empty()
+        || tombstones_changed
+        || completions_changed
+        || collections_changed;
     let upsert_count = upserts.len();
     let delete_count = deletes.len();
     let unchanged_count = incoming_by_id.len().saturating_sub(upsert_count);
@@ -509,6 +596,15 @@ pub fn commit(
                 &transaction,
                 &input.episode_completions,
                 &locked_ids,
+            )?;
+        }
+        if collections_changed {
+            crate::collections::replace_all_tx(
+                &transaction,
+                &input.collections,
+                &input.collection_members,
+                &input.collection_tombstones,
+                &input.collection_member_tombstones,
             )?;
         }
         log::info!(
@@ -711,6 +807,10 @@ mod tests {
                 expected_generation,
                 records: vec![Self::record("synced")],
                 episode_completions: Vec::new(),
+                collections: Vec::new(),
+                collection_members: Vec::new(),
+                collection_tombstones: Vec::new(),
+                collection_member_tombstones: Vec::new(),
                 tombstones: vec![Tombstone {
                     id: "deleted".into(),
                     deleted_at: "2026-08-02T00:00:00Z".into(),

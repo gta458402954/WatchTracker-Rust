@@ -75,7 +75,7 @@ export default function StatsBar({ records, regionOptions, activeMediaTypes, onM
         className={`ml-auto flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 text-xs font-semibold transition-colors ${lockFilter !== 'all' ? 'border-indigo-300 bg-indigo-100 text-indigo-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
       >
         <span aria-hidden="true">{lockFilter === 'locked' ? '🔒' : lockFilter === 'unlocked' ? '🔓' : '◉'}</span>
-        <span>{lockFilter === 'locked' ? '已锁定' : lockFilter === 'unlocked' ? '未锁定' : '全部锁定'}</span>
+        <span>{lockFilter === 'locked' ? '已锁定' : lockFilter === 'unlocked' ? '未锁定' : '全部'}</span>
       </button>
     </div>
   </div>;

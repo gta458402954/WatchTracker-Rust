@@ -47,6 +47,35 @@ export interface EpisodeCompletion {
   revActor: string;
 }
 
+export type CollectionSourceKind = 'manual' | 'tmdb-movie-collection' | 'tmdb-tv-show';
+export interface WatchCollection {
+  id: string;
+  name: string;
+  normalizedName: string;
+  description: string | null;
+  sourceKind: CollectionSourceKind;
+  sourceKey: string | null;
+  createdAt: string;
+  updatedAt: string;
+  rev: number;
+  revActor: string;
+}
+
+export interface CollectionMember {
+  id: string;
+  collectionId: string;
+  recordId: string;
+  position: number;
+  sourceKind: 'manual' | 'tmdb';
+  createdAt: string;
+  updatedAt: string;
+  rev: number;
+  revActor: string;
+}
+
+export interface CollectionTombstone { id: string; deletedAt: string; rev: number; revActor: string }
+export interface CollectionMemberTombstone extends CollectionTombstone { collectionId: string; recordId: string }
+
 export type UpdateWatchRecord = Partial<Pick<WatchRecord,
   | 'originalName'
   | 'chineseName'

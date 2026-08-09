@@ -60,6 +60,8 @@ pub fn delete_record_atomic(
         [id],
         |row| row.get::<_, i64>(0),
     )?;
+    let (removed_collection_members, changed_collections) =
+        crate::collections::detach_record_tx(&transaction, id, actor_id)?;
     transaction.execute("DELETE FROM episode_completions WHERE recordId = ?1", [id])?;
     if transaction.execute("DELETE FROM records WHERE id = ?1", [id])? == 0 {
         return Err(AppError::General(format!("Record not found: {id}")));
@@ -78,6 +80,25 @@ pub fn delete_record_atomic(
     set_tombstones_tx(&transaction, &tombstones)?;
     let generation = mark_local_records_mutated(&transaction, "record-delete")?;
     crate::sync_staging::stage_delete(&transaction, id, generation)?;
+    for member_id in removed_collection_members {
+        crate::sync_staging::stage_entity_delete(
+            &transaction,
+            "collection-member",
+            &member_id,
+            generation,
+        )?;
+    }
+    for collection in changed_collections {
+        let collection_id = collection.id.clone();
+        crate::sync_staging::stage_entity_upsert(
+            &transaction,
+            "collection",
+            &collection_id,
+            serde_json::to_value(collection)
+                .map_err(|error| AppError::General(error.to_string()))?,
+            generation,
+        )?;
+    }
     transaction.commit()?;
     Ok(())
 }
@@ -87,6 +108,8 @@ pub fn replace_all_records_atomic(
     records: Vec<WatchRecord>,
 ) -> Result<(), AppError> {
     let transaction = conn.transaction()?;
+    let previous_collection_members = crate::collections::all_members(&transaction)?;
+    let actor = crate::sync_state::device_id(&transaction)?;
     let previous_completions = crate::episode_history::all_completions(&transaction)?;
     let existing_tracking = db::get_all_records(&transaction)?
         .into_iter()
@@ -117,6 +140,11 @@ pub fn replace_all_records_atomic(
         }
     }
     db::replace_all_records_tx(&transaction, records)?;
+    crate::collections::reconcile_after_record_replace_tx(
+        &transaction,
+        &previous_collection_members,
+        &actor,
+    )?;
     let retained_ids = db::get_all_records(&transaction)?
         .into_iter()
         .map(|record| record.id)

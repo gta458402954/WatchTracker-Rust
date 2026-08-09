@@ -5,10 +5,11 @@ interface MoreActionsMenuProps {
   viewMode: 'list' | 'poster';
   onViewModeChange: (value: 'list' | 'poster') => void;
   onShowDashboard: () => void;
+  onShowCollections: () => void;
   onShowForm: () => void;
 }
 
-export default function MoreActionsMenu({ viewMode, onViewModeChange, onShowDashboard, onShowForm }: MoreActionsMenuProps) {
+export default function MoreActionsMenu({ viewMode, onViewModeChange, onShowDashboard, onShowCollections, onShowForm }: MoreActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, right: 8 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -82,6 +83,7 @@ export default function MoreActionsMenu({ viewMode, onViewModeChange, onShowDash
       >
         <button role="menuitem" type="button" onClick={() => run(onShowForm)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-indigo-50 hover:text-indigo-700"><span aria-hidden="true">＋</span><span>添加记录</span><kbd className="ml-auto text-[10px] font-normal text-gray-400">Ctrl+N</kbd></button>
         <button role="menuitem" type="button" onClick={() => run(() => onViewModeChange(viewMode === 'list' ? 'poster' : 'list'))} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><span aria-hidden="true">{viewMode === 'list' ? '▦' : '☷'}</span><span>{viewMode === 'list' ? '切换至海报墙' : '切换至列表'}</span></button>
+        <button role="menuitem" type="button" onClick={() => run(onShowCollections)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><span aria-hidden="true">🎞️</span><span>系列与收藏集</span></button>
         <button role="menuitem" type="button" onClick={() => run(onShowDashboard)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><span aria-hidden="true">📈</span><span>数据看板</span></button>
       </div>,
       document.body,

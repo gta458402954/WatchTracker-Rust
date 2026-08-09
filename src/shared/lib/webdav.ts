@@ -22,6 +22,7 @@ import {
   type SyncPayloadV3,
   type SyncTombstoneV3,
 } from './syncMerge';
+import { emptyCollectionState, mergeCollectionStates, type CollectionSyncState } from './collectionSync';
 
 const DEFAULT_WEBDAV_BASE_URL = 'https://dav.jianguoyun.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/';
 const V3_RESOURCE = 'records-v3.json';
@@ -73,6 +74,8 @@ export function syncFailureMessage(error?: string): string | null {
       return '逐集历史尚未获准升级云端同步格式；本地数据已保留。';
     case 'episode_completion_conflict':
       return '两端为同一集记录了不同完成时间，已停止上传以避免覆盖。';
+    case 'collections_sync_upgrade_required':
+      return '收藏集尚未获准升级云端同步格式；本地数据已保留。';
     default:
       return null;
   }
@@ -114,6 +117,15 @@ function legacyPayload(data: unknown): LegacyPayload {
 
 function sideOfPayload(payload: Pick<SyncPayloadV3, 'records' | 'tombstones'>): SyncMergeSide {
   return { records: payload.records, tombstones: payload.tombstones };
+}
+
+function collectionSideOfPayload(payload: SyncPayloadV3): CollectionSyncState {
+  return {
+    collections: payload.collections ?? [],
+    collectionMembers: payload.collectionMembers ?? [],
+    collectionTombstones: payload.collectionTombstones ?? [],
+    collectionMemberTombstones: payload.collectionMemberTombstones ?? [],
+  };
 }
 
 function sideOfLegacy(payload: LegacyPayload): SyncMergeSide {
@@ -247,13 +259,17 @@ function payloadForCommit(
   current: SyncPayloadV3,
   remote: SyncMergeSide,
   episodeCompletions: import('../types').EpisodeCompletion[],
+  collectionState: CollectionSyncState,
   deviceId: string,
   now: string,
 ): SyncPayloadV3 {
+  const useV5 = current.schemaVersion === 5 || collectionState.collections.length > 0
+    || collectionState.collectionMembers.length > 0 || collectionState.collectionTombstones.length > 0
+    || collectionState.collectionMemberTombstones.length > 0;
   const useV4 = current.schemaVersion === 4 || episodeCompletions.length > 0
     || remote.records.some(record => record.episodeTrackingEnabled);
   return {
-    schemaVersion: useV4 ? 4 : 3,
+    schemaVersion: useV5 ? 5 : useV4 ? 4 : 3,
     documentId: current.documentId,
     revision: current.revision + 1,
     commitId: crypto.randomUUID(),
@@ -262,7 +278,8 @@ function payloadForCommit(
     committedAt: now,
     records: remote.records,
     tombstones: remote.tombstones,
-    ...(useV4 ? { episodeCompletions } : {}),
+    ...(useV4 || useV5 ? { episodeCompletions } : {}),
+    ...(useV5 ? collectionState : {}),
   };
 }
 
@@ -278,6 +295,7 @@ function syncError(error: unknown): SyncResult {
   if (message.includes('legacy_remote_changed')) return { ok: false, error: 'legacy_remote_changed' };
   if (message.includes('episode_completion_conflict')) return { ok: false, error: 'episode_completion_conflict' };
   if (message.includes('episode_sync_upgrade_required')) return { ok: false, error: 'episode_sync_upgrade_required' };
+  if (message.includes('collections_sync_upgrade_required')) return { ok: false, error: 'collections_sync_upgrade_required' };
   return { ok: false, error: message };
 }
 
@@ -295,6 +313,12 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       throw new Error('stale_sync_target');
     }
     const localSide: SyncMergeSide = { records: snapshot.records, tombstones: snapshot.tombstones };
+    const localCollectionState: CollectionSyncState = {
+      collections: snapshot.collections,
+      collectionMembers: snapshot.collectionMembers,
+      collectionTombstones: snapshot.collectionTombstones,
+      collectionMemberTombstones: snapshot.collectionMemberTombstones,
+    };
     const rejectedValidatorFingerprints: string[] = [];
 
     for (let attempt = 0; attempt < MAX_PRECONDITION_RETRIES; attempt++) {
@@ -302,6 +326,8 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       let remotePayload: SyncPayloadV3;
       let baseSide: SyncMergeSide;
       let remoteSide: SyncMergeSide;
+      let baseCollectionState: CollectionSyncState;
+      let remoteCollectionState: CollectionSyncState;
       let validator: ConditionalValidator | null = null;
       let creating = false;
       let legacyImported = false;
@@ -311,12 +337,16 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
         validator = await conditionalValidatorForResource(v3Response, creds, proxy, V3_RESOURCE);
         remotePayload = parseSyncPayloadV3(v3Response.body);
         remoteSide = sideOfPayload(remotePayload);
+        remoteCollectionState = collectionSideOfPayload(remotePayload);
         const recoverablePublishedIntent = snapshot.publishIntent?.commitId === remotePayload.commitId
           && snapshot.publishIntent.payloadFingerprint === await contentFingerprint(remotePayload);
         const sameDeviceBootstrap = !snapshot.baseline && remotePayload.writerId === snapshot.deviceId;
         baseSide = snapshot.baseline
           ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline))
           : (recoverablePublishedIntent || sameDeviceBootstrap ? remoteSide : { records: [], tombstones: [] });
+        baseCollectionState = snapshot.baseline
+          ? collectionSideOfPayload(parseSyncPayloadV3(snapshot.baseline))
+          : (recoverablePublishedIntent || sameDeviceBootstrap ? remoteCollectionState : emptyCollectionState());
         const legacyResponse = await webdavRequest('GET', creds, proxy, LEGACY_RESOURCE);
         if (legacyResponse.status === 200) {
           const currentFingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
@@ -336,11 +366,15 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
           const legacy = legacyPayload(legacyResponse.body);
           remoteSide = sideOfLegacy(legacy);
           baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : remoteSide;
+          remoteCollectionState = emptyCollectionState();
+          baseCollectionState = snapshot.baseline ? collectionSideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : remoteCollectionState;
           legacyFingerprint = legacyResponse.etag || await contentFingerprint(legacyResponse.body);
           legacyImported = true;
         } else if (legacyResponse.status === 404) {
           remoteSide = { records: [], tombstones: [] };
           baseSide = snapshot.baseline ? sideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : remoteSide;
+          remoteCollectionState = emptyCollectionState();
+          baseCollectionState = snapshot.baseline ? collectionSideOfPayload(parseSyncPayloadV3(snapshot.baseline)) : remoteCollectionState;
           legacyFingerprint = 'missing';
         } else {
           throw new Error(`HTTP Error: ${legacyResponse.status}`);
@@ -361,6 +395,15 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       const merged = mergeSyncStates(
         baseSide, localSide, remoteSide, snapshot.deviceId, now, activeConflicts,
       );
+      const mergedCollections = mergeCollectionStates(
+        baseCollectionState, localCollectionState, remoteCollectionState,
+        (kind, id, local, remote) => {
+          const label = kind === 'collection'
+            ? ((local as import('../types').WatchCollection | null)?.name || (remote as import('../types').WatchCollection | null)?.name || id)
+            : id;
+          return window.confirm(`收藏集数据“${label}”在本机和云端同时发生变化。\n\n确定：采用本机；取消：采用云端。`) ? 'local' : 'remote';
+        },
+      );
       const baselinePayload = snapshot.baseline ? parseSyncPayloadV3(snapshot.baseline) : null;
       const mergedCompletions = mergeEpisodeCompletions(
         baselinePayload?.episodeCompletions ?? [],
@@ -380,21 +423,31 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
       );
       const localRecordIds = new Set(merged.local.records.map(record => record.id));
       const remoteRecordIds = new Set(merged.remote.records.map(record => record.id));
+      const localCollections = { ...mergedCollections, collectionMembers: mergedCollections.collectionMembers.filter(item => localRecordIds.has(item.recordId)) };
+      const remoteCollections = { ...mergedCollections, collectionMembers: mergedCollections.collectionMembers.filter(item => remoteRecordIds.has(item.recordId)) };
       const localCompletions = mergedCompletions.filter(item => localRecordIds.has(item.recordId));
       const remoteCompletions = mergedCompletions.filter(item => remoteRecordIds.has(item.recordId));
       const remoteChanged = !syncValuesEqual(merged.remote, remoteSide)
-        || !syncValuesEqual(remoteCompletions, remotePayload.episodeCompletions ?? []);
+        || !syncValuesEqual(remoteCompletions, remotePayload.episodeCompletions ?? [])
+        || !syncValuesEqual(remoteCollections, remoteCollectionState);
       let confirmedPayload = remotePayload;
       let confirmedEtag = validator?.etag ?? null;
 
       if (creating || remoteChanged) {
-        const nextPayload = payloadForCommit(remotePayload, merged.remote, remoteCompletions, snapshot.deviceId, now);
+        const nextPayload = payloadForCommit(remotePayload, merged.remote, remoteCompletions, remoteCollections, snapshot.deviceId, now);
         if (remotePayload.schemaVersion === 3 && nextPayload.schemaVersion === 4
           && await getSettingAsync('sync_v4_upgrade_confirmed') !== '1') {
           if (!window.confirm('逐集历史需要把云端同步格式升级到 V4。旧版程序将安全停止同步，所有设备都需要更新到支持 V4 的版本。是否继续？')) {
             throw new Error('episode_sync_upgrade_required');
           }
           await setSettingAsync('sync_v4_upgrade_confirmed', '1');
+        }
+        if (remotePayload.schemaVersion < 5 && nextPayload.schemaVersion === 5
+          && await getSettingAsync('sync_v5_upgrade_confirmed') !== '1') {
+          if (!window.confirm('收藏集需要把云端同步格式升级到 V5。旧版程序将安全停止同步，所有设备都需要更新到支持 V5 的版本。是否继续？')) {
+            throw new Error('collections_sync_upgrade_required');
+          }
+          await setSettingAsync('sync_v5_upgrade_confirmed', '1');
         }
         await prepareSyncPublishIntent({
           targetId: snapshot.targetId,
@@ -438,6 +491,10 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
         records: merged.local.records,
         tombstones: merged.local.tombstones,
         episodeCompletions: localCompletions,
+        collections: localCollections.collections,
+        collectionMembers: localCollections.collectionMembers,
+        collectionTombstones: localCollections.collectionTombstones,
+        collectionMemberTombstones: localCollections.collectionMemberTombstones,
         baseline: confirmedPayload,
         conflicts: merged.conflicts,
         remoteEtag: confirmedEtag,
@@ -548,6 +605,10 @@ export async function importLegacyChangesToConflictCenter(): Promise<SyncResult>
       records: snapshot.records,
       tombstones: snapshot.tombstones,
       episodeCompletions: snapshot.episodeCompletions,
+      collections: snapshot.collections,
+      collectionMembers: snapshot.collectionMembers,
+      collectionTombstones: snapshot.collectionTombstones,
+      collectionMemberTombstones: snapshot.collectionMemberTombstones,
       baseline: v3,
       conflicts,
       remoteEtag: v3Etag,

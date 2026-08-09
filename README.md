@@ -7,6 +7,7 @@ WatchTracker 是一款基于 React、TypeScript、Rust 和 Tauri 2 的 Windows �
 - 电影、剧集、纪录片、综艺和动画记录管理。
 - 状态、地区、评分、搜索、锁定和排序筛选。
 - JSON 导入导出与本地 SQLite 持久化。
+- 扁平多对多系列/收藏集、手工排序、记录归属与经确认的 TMDB 稳定归组建议。
 - 可选 TMDB 元数据、海报下载和 WebDAV 同步。
 - 安全的批量元数据补全：检查 TMDB 可提供的全部字段，只写仍缺失的值；多个匹配结果由用户选择，并持久记忆 TMDB 无数据的字段，避免重复请求。
 - 可选择的便携模式，以及统一的数据库、日志、海报和备份目录。
@@ -17,9 +18,10 @@ WatchTracker 是一款基于 React、TypeScript、Rust 和 Tauri 2 的 Windows �
 - 前端记录状态使用 `src/features/watchlist/hooks/useWatchList.ts`；当前没有引入 Zustand。
 - SQLite schema 为 V18，records 表使用 camelCase 列名。
 - 已知 V19 数据库会先在 `backups/` 创建并校验快照，再事务化转换回 V18；V20 及更高未知版本会明确拒绝且不修改数据库。
-- WebDAV 使用 schema v2、时间戳合并和简单 Tombstone；ETag、`expectedGeneration`、原子 `SyncCommit`、持久化 outbox 和主动拉取仍属于路线图。
+- WebDAV 使用 payload V5、ETag 条件写入、三方合并、`expectedGeneration` 原子 `SyncCommit`、持久化 outbox、主动拉取和目标隔离；远端文件名继续为 `records-v3.json`。
 - 本地 CRUD/全量替换已通过 Rust/SQLite 事务维护记录、Tombstone 和 `records_generation`。
 - 新增、更新、JSON 导入和 WebDAV 替换共用 Rust 领域边界；records 使用明确 UPSERT，本地写入严格校验，旧导入数据采用兼容规范化。
+- 收藏集通过 `collections_schema_version=1` 功能迁移保留在 V18，进入本地 JSON V3 备份和 WebDAV V5；删除收藏集永不删除影视记录。
 
 完整架构和已实现/未实现边界见 [docs/CURRENT_ARCHITECTURE.md](docs/CURRENT_ARCHITECTURE.md)。
 

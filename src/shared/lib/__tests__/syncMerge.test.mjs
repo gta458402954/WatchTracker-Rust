@@ -60,7 +60,7 @@ describe('TASK-D-SYNC-001 three-way merge', () => {
   });
 
   test('unknown future schema is rejected instead of parsed as empty data', () => {
-    assert.throws(() => parseSyncPayloadV3({ schemaVersion: 5, records: [], tombstones: [] }), /unsupported_remote_schema/);
+    assert.throws(() => parseSyncPayloadV3({ schemaVersion: 6, records: [], tombstones: [] }), /unsupported_remote_schema/);
   });
 
   test('malformed v3 metadata and tombstones are rejected before merge', () => {

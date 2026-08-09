@@ -19,6 +19,8 @@ fn key(conn: &Connection, legacy: &str, suffix: &str) -> Result<String, AppError
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StagedRecord {
+    #[serde(default = "record_entity_kind")]
+    pub entity_kind: String,
     pub id: String,
     pub operation: String,
     pub base: Option<Value>,
@@ -38,7 +40,7 @@ pub struct SyncStaging {
 impl Default for SyncStaging {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             entries: Vec::new(),
         }
     }
@@ -47,8 +49,18 @@ impl Default for SyncStaging {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublishIntentEntry {
+    #[serde(default = "record_entity_kind")]
+    pub entity_kind: String,
     pub id: String,
     pub last_generation: i64,
+}
+
+fn record_entity_kind() -> String {
+    "record".to_string()
+}
+
+fn valid_entity_kind(value: &str) -> bool {
+    matches!(value, "record" | "collection" | "collection-member")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,15 +89,24 @@ pub struct PreparePublishIntentInput {
     pub payload_fingerprint: String,
 }
 
-fn baseline_records(conn: &Connection) -> Result<BTreeMap<String, Value>, AppError> {
+fn baseline_entities(
+    conn: &Connection,
+    entity_kind: &str,
+) -> Result<BTreeMap<String, Value>, AppError> {
     let baseline_key = key(conn, BASELINE_KEY, "baseline_v3")?;
     let Some(raw) = get_setting_tx(conn, &baseline_key)? else {
         return Ok(BTreeMap::new());
     };
     let value: Value = serde_json::from_str(&raw)
         .map_err(|error| AppError::General(format!("Invalid {BASELINE_KEY}: {error}")))?;
+    let field = match entity_kind {
+        "record" => "records",
+        "collection" => "collections",
+        "collection-member" => "collectionMembers",
+        _ => return Err(AppError::General("Invalid staging entity kind".into())),
+    };
     let records = value
-        .get("records")
+        .get(field)
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
@@ -108,9 +129,10 @@ fn get_staging_for_key(conn: &Connection, staging_key: &str) -> Result<SyncStagi
     };
     let mut staging: SyncStaging = serde_json::from_str(&raw)
         .map_err(|error| AppError::General(format!("Invalid {STAGING_KEY}: {error}")))?;
-    if staging.version != 1
+    if !matches!(staging.version, 1 | 2)
         || staging.entries.iter().any(|entry| {
-            entry.id.trim().is_empty()
+            !valid_entity_kind(&entry.entity_kind)
+                || entry.id.trim().is_empty()
                 || entry.first_generation < 0
                 || entry.last_generation < entry.first_generation
                 || !matches!(entry.operation.as_str(), "upsert" | "delete")
@@ -118,9 +140,10 @@ fn get_staging_for_key(conn: &Connection, staging_key: &str) -> Result<SyncStagi
     {
         return Err(AppError::General(format!("Invalid {STAGING_KEY} state")));
     }
+    staging.version = 2;
     staging
         .entries
-        .sort_by(|left, right| left.id.cmp(&right.id));
+        .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
     Ok(staging)
 }
 
@@ -134,19 +157,26 @@ pub fn set_staging(conn: &Connection, staging: &SyncStaging) -> Result<(), AppEr
 
 fn stage_value(
     conn: &Connection,
+    entity_kind: &str,
     id: &str,
     local: Option<Value>,
     generation: i64,
 ) -> Result<(), AppError> {
+    if !valid_entity_kind(entity_kind) {
+        return Err(AppError::General("Invalid staging entity kind".into()));
+    }
     if crate::sync_targets::registry_exists_without_active_target(conn)? {
         return Ok(());
     }
     let mut staging = get_staging(conn)?;
-    let existing = staging.entries.iter().position(|entry| entry.id == id);
+    let existing = staging
+        .entries
+        .iter()
+        .position(|entry| entry.entity_kind == entity_kind && entry.id == id);
     let base = if let Some(position) = existing {
         staging.entries[position].base.clone()
     } else {
-        baseline_records(conn)?.remove(id)
+        baseline_entities(conn, entity_kind)?.remove(id)
     };
     if base.is_none() && local.is_none() {
         if let Some(position) = existing {
@@ -155,6 +185,7 @@ fn stage_value(
         return set_staging(conn, &staging);
     }
     let entry = StagedRecord {
+        entity_kind: entity_kind.to_string(),
         id: id.to_string(),
         operation: if local.is_some() { "upsert" } else { "delete" }.to_string(),
         base,
@@ -171,7 +202,7 @@ fn stage_value(
     }
     staging
         .entries
-        .sort_by(|left, right| left.id.cmp(&right.id));
+        .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
     set_staging(conn, &staging)
 }
 
@@ -182,15 +213,100 @@ pub fn stage_upsert(
 ) -> Result<(), AppError> {
     let value = serde_json::to_value(record)
         .map_err(|error| AppError::General(format!("Could not stage record: {error}")))?;
-    stage_value(conn, &record.id, Some(value), generation)
+    stage_value(conn, "record", &record.id, Some(value), generation)
 }
 
 pub fn stage_delete(conn: &Connection, id: &str, generation: i64) -> Result<(), AppError> {
-    stage_value(conn, id, None, generation)
+    stage_value(conn, "record", id, None, generation)
+}
+
+pub fn stage_entity_upsert(
+    conn: &Connection,
+    entity_kind: &str,
+    id: &str,
+    value: Value,
+    generation: i64,
+) -> Result<(), AppError> {
+    stage_value(conn, entity_kind, id, Some(value), generation)
+}
+
+pub fn stage_entity_delete(
+    conn: &Connection,
+    entity_kind: &str,
+    id: &str,
+    generation: i64,
+) -> Result<(), AppError> {
+    stage_value(conn, entity_kind, id, None, generation)
+}
+
+fn append_entity_diff(
+    entity_kind: &str,
+    baseline: BTreeMap<String, Value>,
+    current: BTreeMap<String, Value>,
+    generation: i64,
+    entries: &mut Vec<StagedRecord>,
+) {
+    let ids: HashSet<_> = baseline.keys().chain(current.keys()).cloned().collect();
+    for id in ids {
+        let base = baseline.get(&id);
+        let local = current.get(&id);
+        if base == local {
+            continue;
+        }
+        entries.push(StagedRecord {
+            entity_kind: entity_kind.to_string(),
+            id,
+            operation: if local.is_some() { "upsert" } else { "delete" }.into(),
+            base: base.cloned(),
+            local: local.cloned(),
+            first_generation: generation,
+            last_generation: generation,
+        });
+    }
+}
+
+fn append_collection_entries(
+    conn: &Connection,
+    generation: i64,
+    entries: &mut Vec<StagedRecord>,
+) -> Result<(), AppError> {
+    let collections = crate::collections::all(conn)?
+        .into_iter()
+        .map(|item| {
+            let id = item.id.clone();
+            serde_json::to_value(item)
+                .map(|value| (id, value))
+                .map_err(|error| AppError::General(error.to_string()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let members = crate::collections::all_members(conn)?
+        .into_iter()
+        .map(|item| {
+            let id = item.id.clone();
+            serde_json::to_value(item)
+                .map(|value| (id, value))
+                .map_err(|error| AppError::General(error.to_string()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    append_entity_diff(
+        "collection",
+        baseline_entities(conn, "collection")?,
+        collections,
+        generation,
+        entries,
+    );
+    append_entity_diff(
+        "collection-member",
+        baseline_entities(conn, "collection-member")?,
+        members,
+        generation,
+        entries,
+    );
+    Ok(())
 }
 
 pub fn rebuild_from_current(conn: &Connection, generation: i64) -> Result<SyncStaging, AppError> {
-    let baseline = baseline_records(conn)?;
+    let baseline = baseline_entities(conn, "record")?;
     let current: BTreeMap<String, Value> = db::get_all_records(conn)?
         .into_iter()
         .map(|record| {
@@ -209,6 +325,7 @@ pub fn rebuild_from_current(conn: &Connection, generation: i64) -> Result<SyncSt
             continue;
         }
         entries.push(StagedRecord {
+            entity_kind: "record".into(),
             id,
             operation: if local.is_some() { "upsert" } else { "delete" }.to_string(),
             base: base.cloned(),
@@ -217,9 +334,11 @@ pub fn rebuild_from_current(conn: &Connection, generation: i64) -> Result<SyncSt
             last_generation: generation,
         });
     }
-    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    append_collection_entries(conn, generation, &mut entries)?;
+    entries
+        .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
     let staging = SyncStaging {
-        version: 1,
+        version: 2,
         entries,
     };
     set_staging(conn, &staging)?;
@@ -232,19 +351,21 @@ pub fn rebuild_from_current_for_target(
     target_id: &str,
 ) -> Result<SyncStaging, AppError> {
     let baseline_key = crate::sync_targets::scoped_key(target_id, "baseline_v3");
-    let baseline = match get_setting_tx(conn, &baseline_key)? {
-        Some(raw) => {
-            let value: Value = serde_json::from_str(&raw)
-                .map_err(|error| AppError::General(format!("Invalid {baseline_key}: {error}")))?;
-            value
-                .get("records")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|record| Some((record.get("id")?.as_str()?.to_string(), record)))
-                .collect()
-        }
+    let baseline_value = get_setting_tx(conn, &baseline_key)?
+        .map(|raw| {
+            serde_json::from_str::<Value>(&raw)
+                .map_err(|error| AppError::General(format!("Invalid {baseline_key}: {error}")))
+        })
+        .transpose()?;
+    let baseline = match baseline_value.as_ref() {
+        Some(value) => value
+            .get("records")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|record| Some((record.get("id")?.as_str()?.to_string(), record)))
+            .collect(),
         None => BTreeMap::new(),
     };
     let current: BTreeMap<String, Value> = db::get_all_records(conn)?
@@ -265,6 +386,7 @@ pub fn rebuild_from_current_for_target(
             continue;
         }
         entries.push(StagedRecord {
+            entity_kind: "record".into(),
             id,
             operation: if local.is_some() { "upsert" } else { "delete" }.into(),
             base: base.cloned(),
@@ -273,9 +395,53 @@ pub fn rebuild_from_current_for_target(
             last_generation: generation,
         });
     }
-    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    let baseline_map = |field: &str| -> BTreeMap<String, Value> {
+        baseline_value
+            .as_ref()
+            .and_then(|value| value.get(field))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| Some((item.get("id")?.as_str()?.to_string(), item)))
+            .collect()
+    };
+    let current_collections = crate::collections::all(conn)?
+        .into_iter()
+        .map(|item| {
+            let id = item.id.clone();
+            serde_json::to_value(item)
+                .map(|value| (id, value))
+                .map_err(|error| AppError::General(error.to_string()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let current_members = crate::collections::all_members(conn)?
+        .into_iter()
+        .map(|item| {
+            let id = item.id.clone();
+            serde_json::to_value(item)
+                .map(|value| (id, value))
+                .map_err(|error| AppError::General(error.to_string()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    append_entity_diff(
+        "collection",
+        baseline_map("collections"),
+        current_collections,
+        generation,
+        &mut entries,
+    );
+    append_entity_diff(
+        "collection-member",
+        baseline_map("collectionMembers"),
+        current_members,
+        generation,
+        &mut entries,
+    );
+    entries
+        .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
     let staging = SyncStaging {
-        version: 1,
+        version: 2,
         entries,
     };
     let raw =
@@ -323,6 +489,7 @@ pub fn prepare_publish_intent(
         .into_iter()
         .filter(|entry| entry.last_generation <= input.expected_generation)
         .map(|entry| PublishIntentEntry {
+            entity_kind: entry.entity_kind,
             id: entry.id,
             last_generation: entry.last_generation,
         })
@@ -359,11 +526,11 @@ pub fn finish_publish(
             let included: BTreeMap<_, _> = intent
                 .included_entries
                 .into_iter()
-                .map(|entry| (entry.id, entry.last_generation))
+                .map(|entry| ((entry.entity_kind, entry.id), entry.last_generation))
                 .collect();
             staging.entries.retain(|entry| {
                 included
-                    .get(&entry.id)
+                    .get(&(entry.entity_kind.clone(), entry.id.clone()))
                     .map_or(true, |generation| entry.last_generation > *generation)
             });
         } else {

@@ -37,6 +37,8 @@ import {
   type QueryDimension,
 } from '../shared/lib/watchlistQuery';
 import type { SavedWatchlistViewV1 } from '../shared/lib/savedViews';
+import { useCollections } from '../features/collections/hooks/useCollections';
+import CollectionCenter from '../features/collections/components/CollectionCenter';
 
 type InitializationState = 'loading' | 'ready' | 'error';
 
@@ -91,6 +93,9 @@ export default function App() {
   const [hasWebDAVCreds, setHasWebDAVCreds] = useState(false);
   const handleSavedViewError = useCallback((message: string) => notify('warning', message), [notify]);
   const savedViews = useSavedWatchlistViews(initializationState === 'ready', handleSavedViewError);
+  const collectionState = useCollections();
+  const refreshCollections = collectionState.refresh;
+  const [showCollections, setShowCollections] = useState(false);
 
   const applySavedView = useCallback((view: SavedWatchlistViewV1) => {
     setQuery(normalizeWatchlistQuery(view.query));
@@ -126,6 +131,7 @@ export default function App() {
       setHasWebDAVCreds(result.hasWebDAVCredentials);
       setSyncInterval(result.syncInterval);
       setPullIntervalMinutes(result.pullIntervalMinutes);
+      await refreshCollections();
       setInitializationState('ready');
       try {
         const migrationNotice = await invoke<string | null>('get_setting', { key: 'database_migration_notice' });
@@ -141,7 +147,7 @@ export default function App() {
       reportOperationFailure('App.Initialize', error);
       setInitializationState('error');
     }
-  }, [loadRecords, notify]);
+  }, [loadRecords, notify, refreshCollections]);
 
   const retryInitialization = useCallback(() => {
     setInitializationState('loading');
@@ -219,6 +225,15 @@ export default function App() {
   }, [query.mediaTypes, query.regions, query.statuses, records]);
   const advancedOptions = useMemo(() => watchlistFilterOptions(records), [records]);
   const filterSummary = useMemo(() => advancedQuerySummaryItems(query), [query]);
+  const collectionNamesByRecord = useMemo(() => {
+    const names = new Map(collectionState.collections.map(collection => [collection.id, collection.name]));
+    const result = new Map<string, string[]>();
+    for (const member of collectionState.members) {
+      const name = names.get(member.collectionId); if (!name) continue;
+      result.set(member.recordId, [...(result.get(member.recordId) ?? []), name]);
+    }
+    return result;
+  }, [collectionState.collections, collectionState.members]);
 
   const filtered = useMemo(() => {
     return filterRecordsByQuery(records, query)
@@ -317,12 +332,13 @@ export default function App() {
     setShowForm(true);
   }
 
-  async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>) {
+  async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>, collectionIds: string[] = []) {
     const today = localDateString();
     if (data.status === '在看' && !data.startDate) data.startDate = today;
     if (data.status === '已看' && !data.endDate) data.endDate = today;
 
     try {
+      let savedRecord: WatchRecord;
       if (editingRecord) {
         if (data.imdbId) {
           const duplicate = records.find(r => r.imdbId === data.imdbId && r.id !== editingRecord.id);
@@ -332,7 +348,7 @@ export default function App() {
             }
           }
         }
-        await updateRecord(editingRecord.id, data);
+        savedRecord = await updateRecord(editingRecord.id, data);
         notify('success', '记录已更新。');
       } else {
         if (data.imdbId) {
@@ -343,8 +359,18 @@ export default function App() {
             }
           }
         }
-        await addRecord(data);
+        savedRecord = await addRecord(data);
         notify('success', '记录已添加。');
+      }
+      try {
+        const currentMembers = collectionState.members.filter(member => member.recordId === savedRecord.id);
+        const selected = new Set(collectionIds);
+        for (const member of currentMembers.filter(member => !selected.has(member.collectionId))) await collectionState.removeMember(member);
+        const currentIds = new Set(currentMembers.map(member => member.collectionId));
+        for (const collection of collectionState.collections.filter(collection => selected.has(collection.id) && !currentIds.has(collection.id))) await collectionState.addMembers(collection, [savedRecord.id]);
+      } catch (membershipError) {
+        reportOperationFailure('App.SaveRecordCollections', membershipError);
+        notify('warning', '条目已保存，但收藏集更新失败，请在收藏集中心重试。');
       }
       setEditingRecord(null);
       return true;
@@ -363,6 +389,7 @@ export default function App() {
     if (confirm('确定要删除这条记录吗？')) {
       try {
         await deleteRecord(id);
+        await collectionState.refresh();
         notify('success', '记录已删除。');
       } catch (error) {
         reportOperationFailure('App.DeleteRecord', error);
@@ -453,6 +480,7 @@ export default function App() {
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         onShowDashboard={() => setShowDashboard(true)}
+        onShowCollections={() => setShowCollections(true)}
         onShowSettings={() => { setSettingsInitialTab('basic'); setShowSettings(true); }}
         onShowSyncSettings={() => { setSettingsInitialTab('sync'); setShowSettings(true); }}
         onShowForm={() => setShowForm(true)}
@@ -562,11 +590,13 @@ export default function App() {
               onLockToggle={handleLockToggle}
               onStatusChange={handleStatusChange}
               onNextEpisodeChange={handleNextEpisodeChange}
+              collectionNamesByRecord={collectionNamesByRecord}
             />
         ) : (
           <PosterWall
             filtered={filtered}
             onEdit={handleEdit}
+            collectionNamesByRecord={collectionNamesByRecord}
           />
         )}
       </main>
@@ -578,6 +608,8 @@ export default function App() {
           onSave={handleSave}
           onDelete={handleDelete}
           onNotify={notify}
+          collections={collectionState.collections}
+          collectionMembers={collectionState.members}
           onClose={handleCloseForm}
         />
       )}
@@ -595,8 +627,8 @@ export default function App() {
           }}
           onImport={handleImport}
           onSync={syncNow}
-          onUpdateRecord={updateRecord}
-          onDatabaseRestored={reloadAndSchedule}
+          onUpdateRecord={async (id, updates) => { await updateRecord(id, updates); }}
+          onDatabaseRestored={async () => { const loaded = await reloadAndSchedule(); await collectionState.refresh(); return loaded; }}
           syncInterval={syncInterval}
           onSyncIntervalChange={setSyncInterval}
           pullIntervalMinutes={pullIntervalMinutes}
@@ -614,6 +646,24 @@ export default function App() {
             onClose={() => setShowDashboard(false)}
           />
         </Suspense>
+      )}
+
+      {showCollections && (
+        <CollectionCenter
+          records={records}
+          collections={collectionState.collections}
+          members={collectionState.members}
+          onCreate={collectionState.create}
+          onUpdate={collectionState.update}
+          onDelete={collectionState.remove}
+          onAddMembers={collectionState.addMembers}
+          onRemoveMember={collectionState.removeMember}
+          onReorder={collectionState.reorder}
+          onApplySuggestion={collectionState.applySuggestion}
+          onEditRecord={record => { setShowCollections(false); handleEdit(record); }}
+          onNotify={notify}
+          onClose={() => setShowCollections(false)}
+        />
       )}
 
       {showAdvancedFilters && (

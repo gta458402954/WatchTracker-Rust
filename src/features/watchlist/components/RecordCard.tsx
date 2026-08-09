@@ -47,9 +47,10 @@ interface RecordCardProps {
   onStatusChange: (id: string, status: Status) => void;
   onNextEpisodeChange?: (record: WatchRecord, nextEpisode: number | null) => void;
   onLockToggle?: (id: string) => void;
+  collectionNames?: string[];
 }
 
-export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onNextEpisodeChange, onLockToggle }: RecordCardProps) {
+export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onNextEpisodeChange, onLockToggle, collectionNames = [] }: RecordCardProps) {
   const statusConf = STATUS_CONFIG[record.status];
   const mediaType = mediaTypeOf(record);
   const detailTags = record.genres;
@@ -173,6 +174,8 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
                 </span>
               ) : null;
             })()}
+            {collectionNames.slice(0, 2).map(name => <span key={name} className="max-w-[110px] truncate rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600" title={`收藏集：${name}`}>🎞️ {name}</span>)}
+            {collectionNames.length > 2 && <span className="text-[10px] font-semibold text-indigo-500">+{collectionNames.length - 2}</span>}
             {record.imdbId && (
               <a
                 href={`https://www.imdb.com/title/${record.imdbId}/`}

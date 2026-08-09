@@ -1,5 +1,6 @@
 mod app_paths;
 mod auth;
+mod collections;
 mod commands;
 mod db;
 mod db_atomic_crud;
@@ -129,11 +130,20 @@ pub fn run() {
             commands::insert_record,
             commands::update_record,
             commands::delete_record,
+            commands::get_collections,
+            commands::get_collection_members,
+            commands::create_collection,
+            commands::update_collection,
+            commands::delete_collection,
+            commands::add_collection_members,
+            commands::remove_collection_member,
+            commands::reorder_collection_members,
             commands::get_episode_tracking,
             commands::get_all_episode_completions,
             commands::enable_episode_tracking,
             commands::set_next_episode,
             commands::replace_library,
+            commands::replace_library_v3,
             commands::replace_all_records,
             commands::get_sync_snapshot,
             commands::get_sync_runtime_state,

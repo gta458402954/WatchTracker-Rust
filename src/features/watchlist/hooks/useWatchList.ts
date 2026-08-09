@@ -256,6 +256,7 @@ export function useWatchList(
     recordsRef.current = updated;
     setRecords(updated);
     void scheduleLocalWrite();
+    return persisted;
   }, [scheduleLocalWrite]);
 
   const updateRecord = useCallback(async (id: string, updates: UpdateWatchRecord) => {
@@ -264,6 +265,7 @@ export function useWatchList(
     recordsRef.current = updated;
     setRecords(updated);
     void scheduleLocalWrite();
+    return persisted;
   }, [scheduleLocalWrite]);
 
   const deleteRecord = useCallback(async (id: string) => {

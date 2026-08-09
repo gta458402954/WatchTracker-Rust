@@ -138,6 +138,8 @@ pub fn replace_library_atomic(
     completions: Vec<EpisodeCompletion>,
 ) -> Result<(), AppError> {
     let transaction = conn.transaction()?;
+    let previous_collection_members = crate::collections::all_members(&transaction)?;
+    let actor = crate::sync_state::device_id(&transaction)?;
     let locked_ids = transaction
         .prepare("SELECT id FROM records WHERE isLocked=1")?
         .query_map([], |row| row.get(0))?
@@ -149,6 +151,11 @@ pub fn replace_library_atomic(
             .collect(),
     )?;
     db::replace_all_records_tx(&transaction, records)?;
+    crate::collections::reconcile_after_record_replace_tx(
+        &transaction,
+        &previous_collection_members,
+        &actor,
+    )?;
     replace_completions_tx(&transaction, &completions, &locked_ids)?;
     let generation = mark_local_records_mutated(&transaction, "library-import")?;
     crate::sync_staging::rebuild_from_current(&transaction, generation)?;

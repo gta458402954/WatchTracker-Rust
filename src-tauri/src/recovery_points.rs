@@ -59,6 +59,7 @@ fn validate_reason(reason: &str) -> Result<&str, AppError> {
         | "migration"
         | "target-migration"
         | "episode-history-migration"
+        | "collections-migration"
         | "pre-restore" => Ok(reason),
         _ => Err(general("Invalid recovery point reason")),
     }
@@ -99,6 +100,13 @@ fn verify_database(path: &Path) -> Result<(i32, i64), AppError> {
     let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
     if integrity != "ok" {
         return Err(general("Recovery point integrity check failed"));
+    }
+    let foreign_key_violations: i64 =
+        conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })?;
+    if foreign_key_violations != 0 {
+        return Err(general("Recovery point contains invalid relationships"));
     }
     Ok((database_version(&conn)?, record_count(&conn)?))
 }
@@ -313,7 +321,14 @@ pub fn restore(
     }
     let restored_state = (|| -> Result<i64, AppError> {
         let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-        if integrity != "ok" || database_version(conn)? != CURRENT_DB_VERSION {
+        let foreign_key_violations: i64 =
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if integrity != "ok"
+            || foreign_key_violations != 0
+            || database_version(conn)? != CURRENT_DB_VERSION
+        {
             return Err(general("Restored database failed verification"));
         }
         record_count(conn)

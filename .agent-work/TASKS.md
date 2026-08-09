@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 3 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2` 与 `TASK-D-UX-004` 已实现。剩余 8 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停，实际待设计排期为 6 项；下一项为 `TASK-D-UX-003`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 3 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003` 与 `TASK-D-UX-004` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1502,7 +1502,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-001-R1` | R2 | 检索体验 | IMPLEMENTED | 保存视图下拉化，高级面板、计数和摘要去重完成 |
 | `TASK-D-UX-001-R2` | R2 | 检索体验 | IMPLEMENTED | 八区主工具栏、单一同步入口、更多操作和响应式地区收敛已实现 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
-| `TASK-D-UX-003` | R2 | 内容组织 | NEEDS-DESIGN | R2 收藏集 |
+| `TASK-D-UX-003` | R2 | 内容组织 | IMPLEMENTED | 扁平多对多收藏集、手工排序、TMDB 建议、本地 V3 与 WebDAV V5 已实现 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
 | `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
@@ -1773,12 +1773,17 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-UX-003：系列 / 收藏集
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
 - Priority: R2
 - Scope: 多对多收藏集模型、手工排序、自动/手工归组、导入导出和同步冲突语义。
 - Current Basis: 当前媒体分类和文本标签不能表达稳定的多维集合关系。
+- Approved Design: `docs/COLLECTIONS_DESIGN.md`。用户于 2026-08-09 确认概念图及五项推荐决策：第一版采用扁平多对多收藏集、用户确认后的 TMDB 稳定标识建议、“更多”菜单内收藏集中心、删除集合永不删除记录，以及 WebDAV V5 跨设备同步。
+- Implementation: 保持数据库主版本 V18，以 `collections_schema_version=1` 增加集合、成员和两类 tombstone；Rust 目的限定命令在同一事务中维护 revision、generation、staging V2 与 outbox。收藏集中心支持创建、编辑、删除、片库批量加入、移除和确定顺序；RecordForm 可调整归属，列表及海报墙显示精简标记。TMDB 只生成基于 IMDb→TMDB 稳定标识的只读建议，显式确认后写入。
+- Data Exchange: 完整本地备份升级为 V3；V2/旧数组导入保留仍有效的收藏集关系。WebDAV payload 升级为 V5，继续复用 `records-v3.json`、ETag 条件提交、target 隔离、publish intent 与 CAS；V3/V4 读取为空集合，首次 V5 发布必须确认，V6+ 明确拒绝。
+- Safety: 删除收藏集不删除 records；删除 record 同事务生成成员 tombstone；恢复点校验同时执行 `integrity_check` 与 `foreign_key_check`。360 px 详情采用上下布局且页面无横向溢出。
+- Acceptance Evidence: Node 108/108、Rust 78/78、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；Playwright 78 项均执行，新增收藏集创建/加入/排序/安全删除、零隐式写入和 360 px 专项通过。Windows runner 在报告完成后仍存在既有 Vite 子进程不自动退出问题，外层命令会超时。
 
 ### TASK-D-ARCH-001：跨语言类型生成
 

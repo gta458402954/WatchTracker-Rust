@@ -9,6 +9,8 @@ import {
   deleteRecoveryPoint,
   getSettingAsync,
   getAllEpisodeCompletions,
+  getCollections,
+  getCollectionMembers,
   getSyncSnapshot,
   getSyncTargets,
   getTmdbDetailAsync,
@@ -20,6 +22,7 @@ import {
   restoreRecoveryPoint,
   resolveSyncConflict,
   replaceLibrary,
+  replaceLibraryV3,
   saveTmdbCredential,
   searchTmdbAsync,
   setRecoveryPointRetained,
@@ -107,6 +110,7 @@ const RECOVERY_REASON_LABELS: Record<RecoveryPoint['reason'], string> = {
   migration: '数据库迁移前',
   'target-migration': '同步目标迁移前',
   'episode-history-migration': '逐集历史迁移前',
+  'collections-migration': '收藏集迁移前',
   'pre-restore': '恢复操作前',
 };
 
@@ -478,12 +482,16 @@ export default function SettingsModal({
   // 备份文件导出
   async function handleExport() {
     try {
-      const episodeCompletions = await getAllEpisodeCompletions();
+      const [episodeCompletions, collections, collectionMembers] = await Promise.all([
+        getAllEpisodeCompletions(), getCollections(), getCollectionMembers(),
+      ]);
       const data = JSON.stringify({
-        formatVersion: 2,
+        formatVersion: 3,
         exportedAt: new Date().toISOString(),
         records,
         episodeCompletions,
+        collections,
+        collectionMembers,
       }, null, 2);
       const blob = new Blob([data], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -512,6 +520,19 @@ export default function SettingsModal({
           if (typeof reader.result !== 'string') throw new Error('无法读取文件内容');
           const parsed: unknown = JSON.parse(reader.result);
           if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            && (parsed as { formatVersion?: unknown }).formatVersion === 3) {
+            const envelope = parsed as { records?: unknown; episodeCompletions?: unknown; collections?: unknown; collectionMembers?: unknown };
+            const completeData = normalizeImportedRecords(envelope.records);
+            if (!Array.isArray(envelope.episodeCompletions) || !Array.isArray(envelope.collections) || !Array.isArray(envelope.collectionMembers)) throw new Error('收藏集备份格式无效');
+            await replaceLibraryV3(
+              completeData,
+              envelope.episodeCompletions as import('../../../shared/types').EpisodeCompletion[],
+              envelope.collections as import('../../../shared/types').WatchCollection[],
+              envelope.collectionMembers as import('../../../shared/types').CollectionMember[],
+            );
+            await onDatabaseRestored();
+            showSuccess(`已导入 ${completeData.length} 条记录、${envelope.episodeCompletions.length} 条逐集历史和 ${envelope.collections.length} 个收藏集。`);
+          } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
             && (parsed as { formatVersion?: unknown }).formatVersion === 2) {
             const envelope = parsed as { records?: unknown; episodeCompletions?: unknown };
             const completeData = normalizeImportedRecords(envelope.records);

@@ -56,6 +56,8 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
             paths.database().display()
         )
     })?;
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|error| error.to_string())?;
 
     let current_version = existing_db_version(&conn).map_err(|error| error.to_string())?;
     if current_version > KNOWN_DOWNGRADE_VERSION {
@@ -97,6 +99,12 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
     if needs_episode_history_backup {
         recovery_points::create(&conn, paths, "episode-history-migration")
             .map_err(|error| format!("episode_history_migration_failed:{error}"))?;
+    }
+    let needs_collections_backup = existing_db_version(&conn).unwrap_or(0) > 0
+        && !crate::collections::schema_ready(&conn).unwrap_or(false);
+    if needs_collections_backup {
+        recovery_points::create(&conn, paths, "collections-migration")
+            .map_err(|error| format!("collections_migration_failed:{error}"))?;
     }
 
     // 初始化表逻辑
@@ -511,6 +519,7 @@ pub(crate) fn setup_db(conn: &Connection) -> Result<()> {
     }
 
     migrate_episode_history_schema(conn)?;
+    crate::collections::migrate_schema(conn)?;
 
     Ok(())
 }

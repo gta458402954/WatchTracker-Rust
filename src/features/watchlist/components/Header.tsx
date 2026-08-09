@@ -19,6 +19,7 @@ interface HeaderProps {
   viewMode: 'list' | 'poster';
   onViewModeChange: (value: 'list' | 'poster') => void;
   onShowDashboard: () => void;
+  onShowCollections: () => void;
   onShowSettings: () => void;
   onShowSyncSettings: () => void;
   onShowForm: () => void;
@@ -42,6 +43,7 @@ export default function Header({
   viewMode,
   onViewModeChange,
   onShowDashboard,
+  onShowCollections,
   onShowSettings,
   onShowSyncSettings,
   onShowForm,
@@ -131,6 +133,7 @@ export default function Header({
           viewMode={viewMode}
           onViewModeChange={onViewModeChange}
           onShowDashboard={onShowDashboard}
+          onShowCollections={onShowCollections}
           onShowForm={onShowForm}
         />
       </div>

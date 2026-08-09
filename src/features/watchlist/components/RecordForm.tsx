@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { WatchRecord, Status, MediaType } from '../../../shared/types';
+import { WatchRecord, Status, MediaType, type CollectionMember, type WatchCollection } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getTmdbCredentialStatus, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
 import {
@@ -17,10 +17,12 @@ import SafePosterImage from './SafePosterImage';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
-  onSave: (data: Omit<WatchRecord, 'id' | 'createdAt'>) => Promise<boolean | void> | boolean | void;
+  onSave: (data: Omit<WatchRecord, 'id' | 'createdAt'>, collectionIds: string[]) => Promise<boolean | void> | boolean | void;
   onDelete?: (id: string) => void;
   onClose: () => void;
   onNotify?: (tone: NoticeTone, message: string) => void;
+  collections?: WatchCollection[];
+  collectionMembers?: CollectionMember[];
 }
 
 const isAlwaysEpisodic = (mediaType: MediaType | null | undefined) => mediaType === '剧集' || mediaType === '综艺';
@@ -55,7 +57,10 @@ function smartProgress(raw: string): string {
   return t;
 }
 
-export default function RecordForm({ record, onSave, onDelete, onClose, onNotify }: RecordFormProps) {
+export default function RecordForm({ record, onSave, onDelete, onClose, onNotify, collections = [], collectionMembers = [] }: RecordFormProps) {
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>(() => record
+    ? collectionMembers.filter(member => member.recordId === record.id).map(member => member.collectionId)
+    : []);
   const [form, setForm] = useState<Omit<WatchRecord, 'id' | 'createdAt'>>(
     record
       ? {
@@ -376,7 +381,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.chineseName.trim() && !form.originalName.trim()) return;
-    const result = await onSave(form);
+    const result = await onSave(form, selectedCollectionIds);
     if (result !== false) {
       onClose();
     }
@@ -423,6 +428,17 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
               <input value={form.contentTags || ''} onChange={event => set('contentTags', event.target.value)} placeholder="如：韩国" className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400" />
             </div>
           </div>
+
+          {collections.length > 0 && <fieldset className="rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
+            <legend className="px-1 text-sm font-medium text-gray-700">所属收藏集</legend>
+            <div className="mt-1 flex max-h-28 flex-wrap gap-2 overflow-y-auto">
+              {collections.map(collection => {
+                const selected = selectedCollectionIds.includes(collection.id);
+                return <label key={collection.id} className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold ${selected ? 'border-indigo-300 bg-indigo-100 text-indigo-700' : 'border-gray-200 bg-white text-gray-500'}`}><input type="checkbox" className="sr-only" checked={selected} onChange={() => setSelectedCollectionIds(current => selected ? current.filter(id => id !== collection.id) : [...current, collection.id])} />🎞️ {collection.name}</label>;
+              })}
+            </div>
+            <p className="mt-2 text-[10px] text-gray-400">调整归组不会修改条目内容；可在“系列与收藏集”中创建和排序。</p>
+          </fieldset>}
 
           {/* Names */}
           <div className="grid grid-cols-2 gap-3">
