@@ -47,6 +47,7 @@ declare global {
     __WATCHTRACKER_TEST__: MockSnapshot;
     __TAURI_INTERNALS__: {
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+      convertFileSrc: (filePath: string, protocol?: string) => string;
     };
   }
 }
@@ -149,6 +150,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       };
 
       window.__TAURI_INTERNALS__ = {
+        convertFileSrc: (filePath, protocol = 'asset') =>
+          `http://${protocol}.localhost/${encodeURIComponent(filePath)}`,
         invoke: async (command, rawArgs = {}) => {
           const args = structuredClone(rawArgs);
           snapshot.calls.push({

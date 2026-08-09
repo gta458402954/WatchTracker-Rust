@@ -109,11 +109,18 @@ pub fn read_valid(path: &Path) -> Result<(Vec<u8>, &'static str), String> {
 }
 
 pub fn referenced_file_names(records: &[WatchRecord]) -> HashSet<String> {
-    records
-        .iter()
-        .filter_map(|record| record.poster_path.as_deref())
-        .filter_map(|path| normalized_file_name(path, "w342").ok())
-        .collect()
+    let mut names = HashSet::new();
+    for record in records {
+        let Some(path) = record.poster_path.as_deref() else {
+            continue;
+        };
+        for size in ["w342", "w92"] {
+            if let Ok(name) = normalized_file_name(path, size) {
+                names.insert(name);
+            }
+        }
+    }
+    names
 }
 
 fn is_temporary(path: &Path) -> bool {
@@ -313,6 +320,10 @@ mod tests {
             normalized_file_name("/abc.jpg", "w92").unwrap(),
             "w92_abc.jpg"
         );
+        assert_eq!(
+            normalized_file_name("/2baf1e.jpg", "w92").unwrap(),
+            "w92_2baf1e.jpg"
+        );
         for value in [
             "abc.jpg",
             "/nested/a.jpg",
@@ -340,19 +351,22 @@ mod tests {
         fs::write(paths.posters().join("kept.jpg"), jpeg).unwrap();
         fs::write(paths.posters().join("orphan.jpg"), jpeg).unwrap();
         fs::write(paths.posters().join("w92_kept.jpg"), jpeg).unwrap();
+        fs::write(paths.posters().join("w92_orphan.jpg"), jpeg).unwrap();
         let records = [record("/kept.jpg")];
 
         let before = stats(&paths, &records).unwrap();
-        assert_eq!(before.referenced_count, 1);
+        assert_eq!(before.referenced_count, 2);
         assert_eq!(before.orphan_count, 2);
         let after = clean(&paths, &records, "unreferenced").unwrap();
         assert!(paths.posters().join("kept.jpg").is_file());
+        assert!(paths.posters().join("w92_kept.jpg").is_file());
         assert!(!paths.posters().join("orphan.jpg").exists());
-        assert!(!paths.posters().join("w92_kept.jpg").exists());
-        assert_eq!(after.referenced_count, 1);
+        assert!(!paths.posters().join("w92_orphan.jpg").exists());
+        assert_eq!(after.referenced_count, 2);
 
         clean(&paths, &records, "all").unwrap();
         assert!(!paths.posters().join("kept.jpg").exists());
+        assert!(!paths.posters().join("w92_kept.jpg").exists());
         let _ = fs::remove_dir_all(paths.root());
     }
 }

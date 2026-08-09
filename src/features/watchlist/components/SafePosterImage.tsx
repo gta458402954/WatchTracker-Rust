@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { downloadPosterAsync } from '../../../shared/lib/database';
 import { reportOperationFailure } from '../../../shared/lib/feedback';
+import { posterSource } from '../../../shared/lib/posterSource';
 
 interface SafePosterImageProps {
   posterPath: string;
@@ -10,18 +11,13 @@ interface SafePosterImageProps {
   compact?: boolean;
 }
 
-function cacheName(path: string, size: 'w92' | 'w342'): string {
-  const name = path.replace(/^\//, '');
-  return size === 'w92' ? `w92_${name}` : name;
-}
-
 export default function SafePosterImage({ posterPath, size = 'w342', alt, className, compact = false }: SafePosterImageProps) {
   const [revision, setRevision] = useState(0);
   const [attempted, setAttempted] = useState(false);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const source = useMemo(
-    () => `poster://localhost/${cacheName(posterPath, size)}?v=${revision}`,
+    () => posterSource(posterPath, size, revision),
     [posterPath, revision, size],
   );
 
