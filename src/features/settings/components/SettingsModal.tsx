@@ -59,6 +59,7 @@ import { formatGitCommitTime } from '../../../shared/lib/buildInfoCore';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 
 interface SettingsModalProps {
+  initialTab?: 'basic' | 'sync' | 'categories' | 'tools' | 'about';
   onClose: () => void;
   records: WatchRecord[];
   onImport: (records: WatchRecord[]) => void | Promise<void>;
@@ -125,10 +126,11 @@ function formatBytes(bytes: number): string {
 }
 
 export default function SettingsModal({
+  initialTab = 'basic',
   onClose, records, onImport, onSync, onUpdateRecord, onDatabaseRestored,
   syncInterval, onSyncIntervalChange, pullIntervalMinutes, onPullIntervalChange, syncRuntime, onNotify
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools' | 'about'>('basic');
+  const [activeTab, setActiveTab] = useState<'basic' | 'sync' | 'categories' | 'tools' | 'about'>(initialTab);
 
   // WebDAV 状态
   const [username, setUsername] = useState('');

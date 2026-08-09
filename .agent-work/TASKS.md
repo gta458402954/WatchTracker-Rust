@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 2 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1` 与 `TASK-D-UX-004` 已实现。剩余 8 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停，实际待设计排期为 6 项；下一项为 `TASK-D-UX-003`。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 3 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2` 与 `TASK-D-UX-004` 已实现。剩余 8 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停，实际待设计排期为 6 项；下一项为 `TASK-D-UX-003`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1500,6 +1500,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-004` | R1 | 可访问性 | IMPLEMENTED | 三个主弹窗已统一语义、焦点管理、Escape、焦点恢复和滚动锁定 |
 | `TASK-D-UX-001` | R2 | 检索体验 | IMPLEMENTED | 统一高级查询与本机保存视图已实现并通过完整回归 |
 | `TASK-D-UX-001-R1` | R2 | 检索体验 | IMPLEMENTED | 保存视图下拉化，高级面板、计数和摘要去重完成 |
+| `TASK-D-UX-001-R2` | R2 | 检索体验 | IMPLEMENTED | 八区主工具栏、单一同步入口、更多操作和响应式地区收敛已实现 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | NEEDS-DESIGN | R2 收藏集 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
@@ -1740,6 +1741,24 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Data Boundary: 纯 UI/派生状态修订，不升级 V18、不修改 records/settings schema、不进入 WebDAV/outbox。
 - Implementation: 已删除永久保存视图栏并新增顶部 Portal 弹出面板；高级面板、计数、摘要和选择性清除只处理六类低频条件。无结果重置只清查询并保留排序和显示模式。
 - Acceptance Evidence: Node 101/101、Playwright 72/72、Rust 75/75、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；回归覆盖界面去重、保存视图、360 px、零匹配地区可见性与 records/outbox 数据边界。
+
+### TASK-D-UX-001-R2：顶部工具栏与快捷筛选收敛
+
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
+- Priority: R2
+- Scheduling: COMPLETED（2026-08-09）；下一项为 `TASK-D-UX-003`。
+- Visual Basis: 用户确认沿用此前效果方案的顶部结构；效果图只作为工具栏与筛选层级参考，不包含卡片、海报或元数据展示改版。
+- Scope: 第一行固定为品牌、保存视图、搜索、高级筛选、排序、单一同步入口、设置和“更多”；锁定筛选移至第二行末尾；添加记录、列表/海报切换和数据看板进入“更多”。媒体类型、状态、地区仍为第二行快捷筛选，高级条件摘要仅在存在条件时出现。
+- Sync Contract: 合并原有同步入口，但不合并或改写同步业务逻辑。同步按钮按正常、暂停/待处理、失败/冲突和同步中显示状态；打开面板不得触发网络请求，只有显式操作才可同步、暂停/恢复或打开设置。
+- Region Contract: 桌面默认优先展示 7 个地区，活动地区即使当前为零匹配也必须提升为可见；其余收进“更多地区”，“未知地区”始终可访问。屏幕变窄时减少直接展示数量，不压缩文字；第一国家匹配语义保持不变。
+- Responsive/Accessibility: 1200 px 桌面宽度主工具栏保持单行；760 px 以下允许工具栏内部横向滚动但页面本身不得横向溢出；弹出层使用 Portal，并具备可访问名称、展开状态、Escape、外部点击和焦点返回。
+- Data Boundary: 纯 UI 与派生状态改造；不升级 V18，不修改 records、settings schema、`WatchlistQueryV1`、保存视图格式、WebDAV/outbox 或同步状态机。
+- Approved Plan & Checklist: `docs/TOP_TOOLBAR_REFINEMENT_PLAN.md`。
+- Implementation: Header 已收敛为品牌、保存视图、搜索、高级筛选、排序、状态化同步、设置和更多八区；“更多”承载添加、显示模式和数据看板，并提供安全的 `Ctrl+N`。同步面板展示待发布、冲突和最近成功，打开面板零网络/零业务写入，显式“打开同步设置”直接进入云端同步页。锁定筛选移至第二行，地区按 7/4/2/1 响应式直接展示，活动地区优先提升，其余经 Portal 菜单访问。
+- Data Boundary Evidence: 未修改 Rust、V18、records/settings schema、`WatchlistQueryV1`、保存视图格式或同步状态机；专项 mock 验证只打开同步、更多和地区菜单不产生 WebDAV 请求或业务写 IPC。
+- Acceptance Evidence: Node 105/105、Rust 75/75、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；Playwright 完整 75/75 均执行且无断言失败。当前 Windows runner 在全部用例完成后仍因 Vite 子进程未退出触发外层超时，未发现测试服务器或业务断言失败。Git 提交码与便携 EXE 哈希由源码完成后的独立交付报告记录。
 
 ### TASK-D-UX-002：订阅与播出提醒
 

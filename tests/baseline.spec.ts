@@ -101,7 +101,8 @@ test('current IPC DTO supports create, update, and delete without permissive fal
   await page.goto('/');
   await expect(page.getByText('还没有记录，快去添加吧！')).toBeVisible();
 
-  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('button', { name: '更多操作' }).click();
+  await page.getByRole('menuitem', { name: /添加记录/ }).click();
   await expect(page.getByRole('heading', { name: '添加新记录' })).toBeVisible();
   await page.getByPlaceholder('请输入中文名称').fill('A007 自动化记录');
   await page.getByPlaceholder('英文 / 原名').fill('A007 Automated Record');

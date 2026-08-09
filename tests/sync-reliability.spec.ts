@@ -79,9 +79,10 @@ test('@expected-sync-v3 durable outbox survives reload and resumes without losin
   expect(JSON.parse((await mockSnapshot(page)).settings.sync_outbox_v1 as string).pending).toBe(true);
 
   await page.reload();
-  await expect(page.getByTitle('已暂停自动同步，待同步修改会保留')).toBeVisible();
+  await expect(page.getByRole('button', { name: /云端同步：已暂停/ })).toBeVisible();
   expect(await webdavCallCount(page)).toBe(0);
-  await page.getByTitle('已暂停自动同步，待同步修改会保留').click();
+  await page.getByRole('button', { name: /云端同步：已暂停/ }).click();
+  await page.getByRole('button', { name: '恢复自动同步' }).click();
 
   await expect.poll(async () => JSON.parse((await mockSnapshot(page)).settings.sync_outbox_v1 as string).pending).toBe(false);
   const snapshot = await mockSnapshot(page);

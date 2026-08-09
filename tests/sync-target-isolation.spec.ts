@@ -9,7 +9,7 @@ const settings = {
 async function openSyncSettings(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '设置' }).click();
-  await page.getByRole('button', { name: /云端同步/ }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
   await expect(page.getByText(/已保存目标/)).toBeVisible();
   await page.getByRole('button', { name: '切换或更新凭据' }).click();
 }
@@ -24,7 +24,7 @@ test('@sync-target-display shows a friendly safe address without overflowing act
   await page.setViewportSize({ width: 760, height: 760 });
   await page.goto('/');
   await page.getByRole('button', { name: '设置' }).click();
-  await page.getByRole('button', { name: /云端同步/ }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
 
   await expect(page.getByText('WebDAV 已连接')).toBeVisible();
   await expect(page.getByText(/坚果云 · \/影视追踪/).first()).toBeVisible();
@@ -76,7 +76,7 @@ test('@credential-boundary saved requests never expose credentials to the fronte
   await setupMockIpc(page, { settings });
   await page.goto('/');
   await page.getByRole('button', { name: '设置' }).click();
-  await page.getByRole('button', { name: /云端同步/ }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
   await page.getByRole('button', { name: '立即同步到云端' }).click();
 
   const snapshot = await mockSnapshot(page);

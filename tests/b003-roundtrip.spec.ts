@@ -279,7 +279,8 @@ test('@conditional-record-form new movie preserves all normalized countries and 
     },
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('button', { name: '更多操作' }).click();
+  await page.getByRole('menuitem', { name: /添加记录/ }).click();
   await page.getByPlaceholder('请输入中文名称').fill('电影候选');
   await page.getByPlaceholder('如：韩国').fill('美国,律政,自定义');
   await page.getByRole('button', { name: /自动填充/ }).click();
@@ -323,7 +324,8 @@ test('@expected-record-form mainland-China TMDB metadata does not infer a missin
     },
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('button', { name: '更多操作' }).click();
+  await page.getByRole('menuitem', { name: /添加记录/ }).click();
   await page.locator('select:has(option[value="剧集"])').selectOption('剧集');
   await page.getByPlaceholder('请输入中文名称').fill('大陆剧集候选');
   await page.getByRole('button', { name: /自动填充/ }).click();
@@ -780,7 +782,7 @@ test('@expected-sync-v3 explicitly imports changed legacy data into the conflict
   });
   await page.goto('/');
   await page.getByRole('button', { name: '设置' }).click();
-  await page.getByRole('button', { name: /云端同步/ }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: /检查并导入旧版/ }).click();
   await expect(page.getByText(/已加入 1 项旧版差异/)).toBeVisible();
@@ -840,7 +842,8 @@ test('@conditional-watchlist-boundary sync replacement preserves region fields',
     webdavV3Remote: v3Payload([remote], { revision: 2, commitId: 'commit-2' }),
   });
   await page.goto('/');
-  await page.getByTitle('手动同步到坚果云').click();
+  await page.getByRole('button', { name: /云端同步：/ }).click();
+  await page.getByRole('button', { name: '立即同步' }).click();
   await expect(page.getByText('云端新版本', { exact: true })).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
@@ -928,7 +931,7 @@ test('@conditional-watchlist-boundary conflict choice preserves region fields an
   });
   await page.goto('/');
   await page.getByRole('button', { name: '设置' }).click();
-  await page.getByRole('button', { name: /云端同步/ }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
 
   await expect(page.getByText(/云端：被覆盖版本/)).toBeVisible();
   page.once('dialog', dialog => dialog.accept());

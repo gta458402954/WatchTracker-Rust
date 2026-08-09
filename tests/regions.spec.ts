@@ -95,14 +95,14 @@ test('media/status scope drives options while search does not, and unavailable s
   await page.getByRole('banner').getByRole('combobox').selectOption('rating');
   await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
 
-  await page.getByTitle('显示全部').click();
+  await page.getByTitle('显示全部锁定状态').click();
   await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
   await page.getByTitle('仅显示已锁定').click();
   await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
   await page.getByTitle('仅显示未锁定').click();
 
   await (await regionButton(page, '法国')).click();
-  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(initialOptions);
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(['法国 1', '中国大陆 2']);
   await page.getByRole('button', { name: /^未看 1$/ }).click();
   await expect(page.getByText('CN 未看电影', { exact: true })).toHaveCount(0);
   await expect(page.getByText('当前筛选没有匹配记录')).toBeVisible();
@@ -113,7 +113,7 @@ test('media/status scope drives options while search does not, and unavailable s
   await expect(await regionButton(page, '法国')).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByRole('button', { name: /^剧集 1$/ }).click();
-  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(['中国大陆 1', '法国 0']);
+  await expect(page.getByLabel('地区筛选').getByRole('button')).toHaveText(['法国 0', '中国大陆 1']);
 });
 
 test('dynamic options react to add, edit, delete, and controlled record replacement', async ({ page }) => {
@@ -131,7 +131,8 @@ test('dynamic options react to add, edit, delete, and controlled record replacem
   await page.getByTitle('删除').click();
   await expect(page.getByLabel('地区筛选')).toHaveCount(0);
 
-  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('button', { name: '更多操作' }).click();
+  await page.getByRole('menuitem', { name: /添加记录/ }).click();
   await page.getByPlaceholder('请输入中文名称').fill('新增韩国记录');
   await page.getByPlaceholder('如：韩国').fill('韩国');
   await page.getByRole('button', { name: '添加记录' }).click();
@@ -156,25 +157,21 @@ test('displays BY with its Chinese country name', async ({ page }) => {
   await expect(await regionButton(page, '白俄罗斯')).toHaveText('白俄罗斯 1');
 });
 
-test('many dynamic regions wrap and every button exposes aria-pressed', async ({ page }) => {
+test('many dynamic regions collapse into an accessible overflow menu on narrow screens', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 900 });
   const codes = ['CN', 'HK', 'TW', 'US', 'JP', 'KR', 'GB', 'FR', 'DE', 'IT', 'ES', 'CA', 'AU', 'BR', 'XX'];
   await setupMockIpc(page, { records: codes.map(code => record(`记录-${code}`, code)) });
   await page.goto('/');
 
   const group = page.getByLabel('地区筛选');
-  const buttons = group.getByRole('button');
-  await expect(buttons).toHaveCount(codes.length);
-  await expect(group).toHaveCSS('flex-wrap', 'wrap');
+  const directButtons = group.getByRole('button').filter({ hasNotText: '更多地区' });
+  await expect(directButtons).toHaveCount(2);
+  for (const button of await directButtons.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
 
-  const rows = await buttons.evaluateAll(elements =>
-    [...new Set(elements.map(element => Math.round(element.getBoundingClientRect().top)))],
-  );
-  expect(rows.length).toBeGreaterThan(1);
-  for (const button of await buttons.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
-
-  await buttons.nth(0).click();
-  await expect(buttons.nth(0)).toHaveAttribute('aria-pressed', 'true');
+  await group.getByRole('button', { name: /更多地区/ }).click();
+  await expect(page.getByRole('menu', { name: '更多地区' }).getByRole('menuitemcheckbox')).toHaveCount(codes.length - 2);
+  await page.getByRole('menuitemcheckbox', { name: /XX/ }).click();
+  await expect(group.getByRole('button', { name: /XX/ })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('only the first country of one record enters the top filter', async ({ page }) => {

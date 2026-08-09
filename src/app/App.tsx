@@ -77,6 +77,7 @@ export default function App() {
   const [editingRecord, setEditingRecord] = useState<WatchRecord | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>('createdAt');
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'basic' | 'sync'>('basic');
   const [showDashboard, setShowDashboard] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string>('');
@@ -87,7 +88,6 @@ export default function App() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const startupViewAppliedRef = useRef(false);
-  const [lastSync, setLastSync] = useState<string | null>(null);
   const [hasWebDAVCreds, setHasWebDAVCreds] = useState(false);
   const handleSavedViewError = useCallback((message: string) => notify('warning', message), [notify]);
   const savedViews = useSavedWatchlistViews(initializationState === 'ready', handleSavedViewError);
@@ -155,6 +155,19 @@ export default function App() {
     void loadInitialState();
   }, [loadInitialState]);
 
+  useEffect(() => {
+    const openNewRecord = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'n') return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('[role="dialog"]')) return;
+      event.preventDefault();
+      setEditingRecord(null);
+      setShowForm(true);
+    };
+    document.addEventListener('keydown', openNewRecord);
+    return () => document.removeEventListener('keydown', openNewRecord);
+  }, []);
+
   // 手动同步到坚果云 WebDAV
   async function handleQuickSync() {
     setSyncing(true);
@@ -176,7 +189,6 @@ export default function App() {
           setSyncMsg('✅ 已同步');
           notify('success', '同步完成。');
         }
-        setLastSync(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
       } else {
         const safeDetail = syncFailureMessage(result.error);
         const message = safeDetail ?? publicFailureMessage('同步');
@@ -431,22 +443,18 @@ export default function App() {
         onSearchChange={searchText => setQuery(current => ({ ...current, searchText }))}
         sortBy={sortBy}
         onSortByChange={setSortBy}
-        lockFilter={query.lock}
-        onLockFilterChange={lock => setQuery(current => ({ ...current, lock }))}
         hasWebDAVCreds={hasWebDAVCreds}
         syncing={syncing}
         syncMsg={syncMsg}
+        syncRuntime={syncRuntime}
         onQuickSync={handleQuickSync}
         isSyncPaused={isSyncPaused}
-        syncPending={Boolean(syncRuntime && (
-          syncRuntime.outbox.pending || syncRuntime.stagedCount > 0
-          || syncRuntime.publishPending || syncRuntime.conflictCount > 0
-        ))}
         onToggleSyncPause={toggleSyncPause}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         onShowDashboard={() => setShowDashboard(true)}
-        onShowSettings={() => setShowSettings(true)}
+        onShowSettings={() => { setSettingsInitialTab('basic'); setShowSettings(true); }}
+        onShowSyncSettings={() => { setSettingsInitialTab('sync'); setShowSettings(true); }}
         onShowForm={() => setShowForm(true)}
         activeFilterCount={activeAdvancedQueryDimensionCount(query)}
         onShowAdvancedFilters={() => setShowAdvancedFilters(true)}
@@ -480,8 +488,8 @@ export default function App() {
         }))}
         activeRegions={query.regions}
         onRegionChange={(region: RegionFilter) => setQuery(current => ({ ...current, regions: region === 'all' ? [] : [region] }))}
-        lastSync={lastSync}
-        isSyncing={syncing}
+        lockFilter={query.lock}
+        onLockFilterChange={lock => setQuery(current => ({ ...current, lock }))}
       />
 
       <ActiveFilterSummary
@@ -577,6 +585,7 @@ export default function App() {
       {/* Settings Modal */}
       {showSettings && (
         <SettingsModal
+          initialTab={settingsInitialTab}
           records={records}
           onClose={async () => {
             setShowSettings(false);

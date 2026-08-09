@@ -53,22 +53,22 @@ test('@dialog-accessibility traps focus and restores each launcher', async ({ pa
   await expect(settingsDialog).toHaveCount(0);
   await expectFocusRestored(page, settingsTrigger);
 
-  const addTrigger = page.getByRole('button', { name: '添加', exact: true });
-  await addTrigger.click();
+  const moreTrigger = page.getByRole('button', { name: '更多操作' });
+  await moreTrigger.click();
+  await page.getByRole('menuitem', { name: /添加记录/ }).click();
   const recordDialog = page.getByRole('dialog', { name: '添加新记录' });
   await expect(recordDialog).toBeVisible();
   await expect(page.getByPlaceholder('请输入中文名称')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(recordDialog).toHaveCount(0);
-  await expectFocusRestored(page, addTrigger);
+  await expectFocusRestored(page, moreTrigger);
 
-  const dashboardTrigger = page.getByTitle('数据看板');
-  await dashboardTrigger.click();
+  await moreTrigger.click();
+  await page.getByRole('menuitem', { name: '数据看板' }).click();
   const dashboardDialog = page.getByRole('dialog', { name: '观看概览' });
   await expect(dashboardDialog).toBeVisible();
   await expect(dashboardDialog.getByRole('button', { name: '关闭观看概览' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dashboardDialog).toHaveCount(0);
-  await expectFocusRestored(page, dashboardTrigger);
+  await expectFocusRestored(page, moreTrigger);
 });
-
