@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001` 与 `TASK-D-DISCOVERY-001` 已实现，剩余为 11 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 已由用户明确暂缓并移出当前排期。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 1 个同步修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001` 与 `TASK-D-UX-004` 已实现。剩余 9 个 `NEEDS-DESIGN`，其中 `TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已由用户明确暂缓并移出当前排期，因此当前实际待排期为 7 项；下一项为 `TASK-D-UX-001`。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1496,10 +1496,10 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-HISTORY-001` | R1 | 观看历史 | IMPLEMENTED | 逐集完成时间、V18 功能迁移与同步 V4 已实现 |
 | `TASK-D-DISCOVERY-001` | R1 | 内容发现 | IMPLEMENTED | R1 今晚看什么；可解释会话队列已实现 |
 | `TASK-D-IMPORT-001` | R1 | 数据交换 | NEEDS-DESIGN | 用户于 2026-08-05 明确暂缓；不进入当前排期 |
-| `TASK-D-NET-001` | R1 | 网络安全 | IMPLEMENTED | 端点独立限额、原子海报缓存、安全清理与界面维护已实现 |
-| `TASK-D-UX-004` | R1 | 可访问性 | NEEDS-DESIGN | R2 弹窗可访问性，提升为 R1 |
+| `TASK-D-NET-001` | R1 | 网络安全 | IMPLEMENTED | 端点独立限额、原子海报缓存、安全清理、跨平台协议 URL 与界面维护已实现 |
+| `TASK-D-UX-004` | R1 | 可访问性 | IMPLEMENTED | 三个主弹窗已统一语义、焦点管理、Escape、焦点恢复和滚动锁定 |
 | `TASK-D-UX-001` | R2 | 检索体验 | NEEDS-DESIGN | R2 高级筛选 |
-| `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | R2 订阅提醒 |
+| `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | NEEDS-DESIGN | R2 收藏集 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
@@ -1696,17 +1696,21 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Current Basis: 海报路径已限制在单文件名和统一目录，但下载仍把完整响应直接写入最终文件。
 - Approved Design: `docs/NETWORK_POSTER_CACHE_SECURITY_DESIGN.md`。TMDB JSON、海报和 WebDAV 响应分开设限；海报采用路径白名单、流式硬上限、MIME＋签名校验、同目录临时文件原子发布、4 路并发和无索引缓存清理。用户已确认自动清理绝不删除仍被条目引用的海报、失败时使用占位图和手动重试、搜索缩略图也统一经过 Rust 并移除 WebView 对 TMDB 图片的直连权限。任务可进入实施。
 - Implementation: Rust 为 TMDB JSON、海报、WebDAV GET/PROPFIND 与 PUT 分别执行 4/10/64/1/64 MiB 上限及独立超时。海报只接受严格 TMDB 文件路径和 JPEG/PNG/WebP 实际签名，使用同目录唯一 `.part`、写入刷新和最终重命名；全局最多 4 路、同文件串行并在锁后复检。`poster://` 同样拒绝超限或无效缓存。
-- Cache/UI Boundary: 启动和下载后执行 500 MiB 软上限、400 MiB 回收目标，只按旧到新删除未引用缓存；当前 records 引用文件及未完成临时下载不自动删除，超过 24 小时的残留 `.part` 才回收。设置页提供统计、未引用清理和二次确认全部清空。海报墙失败后显示占位/手动重试，搜索 `w92_` 与正式 `w342` 缓存隔离；WebView CSP 已移除 TMDB 图片直连。
-- Acceptance Evidence: Rust 75/75、Node 85/85、Playwright 64/64、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过。专项测试确认未引用清理保留条目引用海报、显式缓存维护不调用任何业务记录写命令；全部测试使用临时目录和 mock IPC，未访问真实 TMDB/WebDAV 或修改正式便携数据库。
+- Cache/UI Boundary: 启动和下载后执行 500 MiB 软上限、400 MiB 回收目标，只按旧到新删除未引用缓存；当前 records 引用的 `w342` 与 `w92` 派生文件及未完成临时下载不自动删除，超过 24 小时的残留 `.part` 才回收。设置页提供统计、未引用清理和二次确认全部清空。海报墙失败后显示占位/手动重试，搜索 `w92_` 与正式 `w342` 缓存隔离；WebView CSP 已移除 TMDB 图片直连。提交 `6aeb8c4` 改由 Tauri `convertFileSrc` 生成 Windows/Android 与 macOS/Linux 各自正确的自定义协议 URL，修复 Windows 全部海报无法显示的回归。
+- Acceptance Evidence: 初始专项通过 Rust 75/75、Node 85/85、Playwright 64/64、typecheck、lint、生产 build、rustfmt 与严格 Clippy。协议修订随后通过 Node 93/93、Rust 75/75、typecheck、lint、生产前端 build、无 bundle Tauri Release build、rustfmt 与严格 Clippy；Playwright 海报专项两项均执行且无断言失败，但当前 Windows runner 在 Vite 子进程退出阶段超时。修订后的便携 EXE 已由提交 `6aeb8c4` 构建并替换，正式 `data` 目录和数据库未修改。全部自动测试使用临时目录和 mock IPC，未访问真实 TMDB/WebDAV。
 
 ### TASK-D-UX-004：完整弹窗可访问性
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
 - Priority: R1
+- Scheduling: 2026-08-09 已完成设计、实施与验收。
 - Scope: 为 RecordForm、Settings、Dashboard 统一补齐 dialog 语义、标题关联、焦点陷阱、初始焦点、Escape 和焦点恢复。
 - Current Basis: 三个弹窗已有 Escape 关闭，但未形成完整可访问弹窗契约。
+- Approved Design: `docs/ACCESSIBLE_DIALOG_DESIGN.md`。使用共享 Hook 和顶层弹窗栈，统一初始焦点、Tab/Shift+Tab 循环、Escape、焦点恢复及引用计数滚动锁定；不修改视觉布局、业务数据或同步协议。
+- Implementation: 新增 `useAccessibleDialog`，并接入 RecordForm、SettingsModal 与 Dashboard；三个弹窗均具备 `role="dialog"`、`aria-modal`、可见标题关联和明确初始焦点。Settings 批量任务期间 Escape 仍只请求安全停止。
+- Acceptance Evidence: Node 93/93、Playwright 68/68、Rust 75/75、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过。浏览器回归覆盖 dialog 名称、初始焦点、双向焦点循环、Escape 关闭、触发器焦点恢复和页面滚动锁定。
 
 ### TASK-D-UX-001：高级筛选与保存视图
 
@@ -1723,8 +1727,10 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Owner: Unassigned
 - Status: NEEDS-DESIGN
 - Priority: R2
+- Scheduling: USER-PAUSED（2026-08-09）。当前定位为个人影视管理工具，尚不具备可靠逐集日程源、后台刷新、系统通知、时区/延期处理和程序未运行时调度条件；现阶段不进行设计或实施，只有用户以后明确恢复时才重新进入排期。
 - Scope: 下集播出、剧集完结和即将上映提醒的数据刷新、通知权限、去重、时区与离线行为。
 - Current Basis: 已有 TMDB 元数据入口，但没有播出日程持久化或系统通知流程。
+- Future Entry Point: 若以后恢复，优先验证“打开软件时只读展示近期可能更新条目”的轻量方案和数据质量；在证明可靠后，才评估 Windows 通知与后台提醒。
 
 ### TASK-D-UX-003：系列 / 收藏集
 

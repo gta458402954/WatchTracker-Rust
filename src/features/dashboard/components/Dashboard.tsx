@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { WatchRecord } from '../../../shared/types';
 import { getGenreDistribution } from '../../../shared/lib/analytics';
 import { mediaTypeOf } from '../../../shared/lib/classification';
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 import { dashboardWatchingProgress } from '../../../shared/lib/dashboardProgress';
+import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import {
   buildDiscoveryQueue,
   discoveryEmptyMessage,
@@ -52,12 +53,8 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
   const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
   const [skippedIds, setSkippedIds] = useState<Set<string>>(() => new Set());
   const [detailRecordId, setDetailRecordId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  const initialFocusRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useAccessibleDialog<HTMLDivElement>({ onEscape: onClose, initialFocusRef });
 
   const rangeStart = useMemo(() => {
     const start = new Date();
@@ -133,10 +130,10 @@ export default function Dashboard({ onClose, records }: DashboardProps) {
   const recentCompleted = useMemo(() => [...summary.completed].sort((a, b) => completionDate(b)!.getTime() - completionDate(a)!.getTime()).slice(0, 3), [summary.completed]);
   const genres = useMemo(() => getGenreDistribution(records.filter(record => record.status === '已看')).slice(0, 5), [records]);
 
-  return <div className="fixed inset-0 z-50 flex flex-col bg-[#0b1020] p-5 text-slate-200 sm:p-7 overflow-hidden">
+  return <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dashboard-dialog-title" tabIndex={-1} className="fixed inset-0 z-50 flex flex-col bg-[#0b1020] p-5 text-slate-200 sm:p-7 overflow-hidden">
     <header className="relative z-10 flex shrink-0 items-center justify-between border-b border-slate-800 pb-5">
-      <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400">WatchTracker</p><h2 className="mt-1 text-2xl font-black text-white">观看概览</h2></div>
-      <div className="flex items-center gap-3"><div className="hidden rounded-xl bg-slate-900 p-1 sm:flex">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${range === item ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>{RANGE_LABELS[item]}</button>)}</div><button onClick={onClose} className="rounded-xl bg-slate-800 p-2 text-slate-400 hover:bg-slate-700 hover:text-white" aria-label="关闭"><svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18 18 6M6 6l12 12" /></svg></button></div>
+      <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400">WatchTracker</p><h2 id="dashboard-dialog-title" className="mt-1 text-2xl font-black text-white">观看概览</h2></div>
+      <div className="flex items-center gap-3"><div className="hidden rounded-xl bg-slate-900 p-1 sm:flex">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${range === item ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>{RANGE_LABELS[item]}</button>)}</div><button ref={initialFocusRef} onClick={onClose} className="rounded-xl bg-slate-800 p-2 text-slate-400 hover:bg-slate-700 hover:text-white" aria-label="关闭观看概览"><svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18 18 6M6 6l12 12" /></svg></button></div>
     </header>
     <div className="relative z-10 mt-4 flex gap-2 overflow-x-auto pb-1 sm:hidden">{(Object.keys(RANGE_LABELS) as DateRange[]).map(item => <button key={item} onClick={() => setRange(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-bold ${range === item ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{RANGE_LABELS[item]}</button>)}</div>
     <main className="custom-scrollbar relative z-10 mt-5 flex-1 overflow-y-auto pr-2">

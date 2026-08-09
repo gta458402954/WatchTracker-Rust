@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { WatchRecord, Status, MediaType } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getTmdbCredentialStatus, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
@@ -12,6 +12,7 @@ import {
   TmdbSeason,
 } from '../../../shared/lib/classification';
 import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
+import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import SafePosterImage from './SafePosterImage';
 
 interface RecordFormProps {
@@ -339,14 +340,8 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
   }
 
   const progressRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  const initialFocusRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useAccessibleDialog<HTMLDivElement>({ onEscape: onClose, initialFocusRef });
 
   function set<K extends keyof typeof form>(key: K, value: typeof form[K]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -390,14 +385,23 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="record-form-title"
+        tabIndex={-1}
+        className="relative bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">
+          <h2 id="record-form-title" className="text-lg font-bold text-gray-900">
             {record ? '编辑记录' : '添加新记录'}
           </h2>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="关闭记录表单"
             className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -426,6 +430,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
               <label className="block text-sm font-medium text-gray-700 mb-1">中文名 <span className="text-red-400">*</span></label>
               <div className="flex gap-2">
                 <input
+                  ref={initialFocusRef}
                   type="text"
                   value={form.chineseName}
                   onChange={e => set('chineseName', e.target.value)}

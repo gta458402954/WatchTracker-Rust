@@ -270,7 +270,7 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 
 > 本节记录后续迭代方向。优先级表示后续排期顺序，不改变本次地区重构的范围与完成定义。每项功能开始开发前，应单独完成数据模型、交互、兼容策略、测试范围和完成定义。
 
-> 2026-08-02 已按当前 `main` 实现重新审计。每个方向对应一个独立 `TASK-D-*`；“当前状态”使用 `IMPLEMENTED`（已实现并通过本地验收）、`PARTIALLY_IMPLEMENTED`（已交付一部分边界、其余仍需设计）、`SPECIFIED`（已有专项业务规则）或 `NEEDS-DESIGN`（方向已确认但仍需专项设计）。
+> 2026-08-09 已按当前 `main` 再次审计。每个方向对应一个独立 `TASK-D-*`；“当前状态”使用 `IMPLEMENTED`（已实现并通过本地验收）、`PARTIALLY_IMPLEMENTED`（已交付一部分边界、其余仍需设计）、`SPECIFIED`（已有专项业务规则）或 `NEEDS-DESIGN`（方向已确认但仍需专项设计）。当前剩余 9 个 `NEEDS-DESIGN`，其中 Trakt 专项与订阅提醒由用户暂停，实际待排期 7 项；下一项为 `TASK-D-UX-001`。
 
 | 优先级 | 分类 | 任务 | 功能 | 当前状态 | 当前实现基础与主要缺口 |
 | --- | --- | --- | --- | --- | --- |
@@ -280,15 +280,15 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 | R0 | 数据恢复 | `TASK-D-DATA-004` | 高风险操作自动恢复点 | IMPLEMENTED | 导入、同步全量落盘、V19 migration、至少 2 条实际批量补全写入及恢复前会创建经完整性/版本/条数/SHA 校验的 SQLite 恢复点；支持 10 个自动点、500MB 软容量、永久保留、管理界面和失败回退 |
 | R0 | 同步一致性 | `TASK-D-SYNC-001` | 同步冲突、版本域与条件提交 | IMPLEMENTED | 已实现独立 `records-v3.json`、强/弱 ETag 条件写入与 412 重拉、三方字段合并、持久冲突选择、`expectedGeneration` 和原子本地 SyncCommit；旧客户端变化会被阻断并可显式导入冲突中心，数据库保持 V18 |
 | R0 | 同步可靠性 | `TASK-D-SYNC-002` | 持久化 outbox 与主动拉取 | IMPLEMENTED | 已实现单槽 generation 高水位 outbox、原子确认、跨重启暂停/补跑、启动/聚焦/网络恢复/周期主动拉取、持久退避和状态展示；保持 V18 |
-| R0 | 同步隔离 | `TASK-D-SYNC-003` | WebDAV 目标隔离与安全切换 | NEEDS-DESIGN | 当前 URL、凭据和同步设置是全局 setting；目标切换流程及未来 baseline/ETag/outbox 命名空间尚未设计 |
+| R0 | 同步隔离 | `TASK-D-SYNC-003` | WebDAV 目标隔离与安全切换 | IMPLEMENTED | 已实现 URL＋用户名稳定 target ID、凭据与同步状态命名空间、target epoch CAS、安全探测/切换、旧状态 V18 原子迁移及断开后保留 |
 | R0 | 凭据安全 | `TASK-D-SEC-001` | Windows 凭据保护与旧格式迁移 | IMPLEMENTED | 已接入当前 Windows 用户 Credential Manager，V18 仅保留引用；旧格式逐项迁移，已保存秘密不再往返 React，换机后明确要求重输 |
 | R1 | 观看历史 | `TASK-D-HISTORY-001` | 逐集完成时间与完结状态 | IMPLEMENTED | 已实现 V18 功能迁移、独立启用状态、逐集事件表、原子推进、完整导入导出及同步 V4；同集完成时间冲突由用户选择 |
 | R1 | 内容发现 | `TASK-D-DISCOVERY-001` | “今晚看什么”队列 | IMPLEMENTED | 已实现锁定可推荐、在看/已看排除、剧集单集时长、会话内非持久队列、四类筛选、稳定可解释评分、本轮不重复/跳过、准确空状态和只读摘要；不产生数据库或同步写入 |
 | R1 | 数据交换 | `TASK-D-IMPORT-001` | Trakt 专项导入导出 | NEEDS-DESIGN | 用户于 2026-08-05 明确暂缓，当前不进入设计或实施排期；恢复前仍需处理 Trakt schema、身份匹配、重复、冲突和往返测试 |
-| R1 | 网络安全 | `TASK-D-NET-001` | 网络响应与海报缓存安全 | IMPLEMENTED | 已实现端点独立限额、海报流式校验与原子落盘、4 路并发、500 MiB 软容量、只自动清理未引用文件、失败占位/手动重试、缓存维护及缩略图 Rust 安全下载 |
-| R1 | 可访问性 | `TASK-D-UX-004` | 完整弹窗可访问性 | NEEDS-DESIGN | RecordForm、Settings、Dashboard 已支持 Escape；仍缺统一 dialog 语义、焦点陷阱、初始焦点和关闭后的焦点恢复 |
+| R1 | 网络安全 | `TASK-D-NET-001` | 网络响应与海报缓存安全 | IMPLEMENTED | 已实现端点独立限额、海报流式校验与原子落盘、4 路并发、500 MiB 软容量、只自动清理未引用文件、失败占位/手动重试、缓存维护、缩略图 Rust 安全下载及 Tauri 跨平台海报协议 URL |
+| R1 | 可访问性 | `TASK-D-UX-004` | 完整弹窗可访问性 | IMPLEMENTED | RecordForm、Settings、Dashboard 已统一接入 dialog 语义、标题关联、初始焦点、顶层焦点陷阱、Escape、关闭后焦点恢复与引用计数滚动锁定；Settings 批量任务仍保持安全停止语义 |
 | R2 | 检索体验 | `TASK-D-UX-001` | 高级筛选与保存视图 | NEEDS-DESIGN | 已有搜索、媒体类型、状态、地区和锁定筛选；尚无多条件查询模型、命名视图和持久化 |
-| R2 | 追剧体验 | `TASK-D-UX-002` | 订阅与播出提醒 | NEEDS-DESIGN | 已有 TMDB 元数据和桌面端；尚无播出计划数据、刷新策略、通知权限和离线行为 |
+| R2 | 追剧体验 | `TASK-D-UX-002` | 订阅与播出提醒 | NEEDS-DESIGN | USER-PAUSED（2026-08-09）；个人管理定位下当前价值不足，且缺少可靠日程源、后台刷新、通知权限、时区/延期和离线调度基础，恢复时先验证打开软件时的只读近期更新展示 |
 | R2 | 内容组织 | `TASK-D-UX-003` | 系列 / 收藏集 | NEEDS-DESIGN | 当前只有单值媒体分类和文本标签；尚无多对多收藏集模型、排序和导入同步语义 |
 | R2 | 工程架构 | `TASK-D-ARCH-001` | 跨语言类型生成 | NEEDS-DESIGN | Rust DTO、TypeScript 类型、SQL 字段仍由多处手工维护；尚未选择单一 schema 源和漂移检查 |
 | R2 | 工程架构 | `TASK-D-ARCH-002` | 同步模块和大型组件拆分 | NEEDS-DESIGN | `webdav.ts`、`RecordForm` 和 `SettingsModal` 承担多类职责；拆分必须保持现有数据与错误处理不变量 |

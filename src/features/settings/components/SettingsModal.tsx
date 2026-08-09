@@ -56,6 +56,7 @@ import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
 import { formatWebDavTargetUrl } from '../../../shared/lib/webdavDisplay';
 import { BUILD_INFO } from '../../../shared/lib/buildInfo';
 import { formatGitCommitTime } from '../../../shared/lib/buildInfoCore';
+import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -531,21 +532,6 @@ export default function SettingsModal({
     input.click();
   }
 
-  // 快捷键退出
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (batchSyncing) {
-        batchCancelRef.current = true;
-        setBatchStatus('正在安全停止批量任务...');
-      } else {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [batchSyncing, onClose]);
-
   // 数据库整理优化
   async function handleVacuum() {
     setVacuumStatus('正在压缩数据库...');
@@ -894,6 +880,17 @@ export default function SettingsModal({
     setBatchStatus(batchPhase === 'planning' ? '正在停止分析...' : '将在当前记录写入完成后停止...');
   }
 
+  const dialogRef = useAccessibleDialog<HTMLDivElement>({
+    onEscape: () => {
+      if (batchSyncing) {
+        batchCancelRef.current = true;
+        setBatchStatus('正在安全停止批量任务...');
+      } else {
+        onClose();
+      }
+    },
+  });
+
   async function handleClearBatchNoDataState() {
     if (!confirm('确定清除全部“TMDB 无数据”记忆吗？清除后，下次分析会重新查询这些缺失字段。')) return;
     try {
@@ -928,13 +925,20 @@ export default function SettingsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-gray-50 text-gray-800 font-sans overflow-hidden animate-fade-in animate-duration-200">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-dialog-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex bg-gray-50 text-gray-800 font-sans overflow-hidden animate-fade-in animate-duration-200"
+    >
       {/* 左侧导航栏 */}
       <div className="w-64 bg-white border-r border-gray-200 flex flex-col justify-between shrink-0 select-none">
         <div>
           {/* 头部标题 */}
           <div className="px-6 py-8 border-b border-gray-100">
-            <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
+            <h2 id="settings-dialog-title" className="text-xl font-black text-gray-900 flex items-center gap-2">
               <span>⚙️</span> 设置中心
             </h2>
             <p className="text-[10px] text-gray-400 font-mono mt-1 uppercase tracking-wider">System Settings</p>
