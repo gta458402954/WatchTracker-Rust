@@ -206,7 +206,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return structuredClone(collectionMembers);
             case 'create_collection': {
               requireKeys(command, args, ['input']);
-              const input = args.input as { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null };
+              const input = args.input as { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind']; orderMode?: WatchCollection['orderMode'] };
               const now = new Date().toISOString();
               const collection: WatchCollection = {
                 id: `collection-${collections.length + 1}`,
@@ -215,6 +215,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 description: input.description,
                 sourceKind: input.sourceKind ?? 'manual',
                 sourceKey: input.sourceKey ?? null,
+                collectionKind: input.collectionKind ?? (input.sourceKind === 'tmdb-tv-show' ? 'tv-series' : input.sourceKind === 'tmdb-movie-collection' ? 'movie-series' : 'manual'),
+                orderMode: input.orderMode ?? (input.sourceKind && input.sourceKind !== 'manual' ? 'chronological' : 'manual'),
                 createdAt: now,
                 updatedAt: now,
                 rev: 1,
@@ -228,7 +230,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             }
             case 'update_collection': {
               requireKeys(command, args, ['id', 'input']);
-              const input = args.input as { name: string; description: string | null; expectedRev: number };
+              const input = args.input as { name: string; description: string | null; expectedRev: number; orderMode?: WatchCollection['orderMode'] };
               const index = collections.findIndex(item => item.id === args.id);
               if (index < 0) throw new Error('collection_missing');
               if (collections[index].rev !== input.expectedRev) throw new Error('stale_collection');
@@ -237,6 +239,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 name: input.name.trim(),
                 normalizedName: input.name.trim().toLocaleLowerCase(),
                 description: input.description,
+                orderMode: input.orderMode ?? collections[index].orderMode,
                 updatedAt: new Date().toISOString(),
                 rev: input.expectedRev + 1,
                 revActor: 'mock-device',

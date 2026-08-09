@@ -1,5 +1,7 @@
 use crate::db_atomic_helpers::mark_local_records_mutated;
 use crate::error::AppError;
+use crate::models::WatchRecord;
+use crate::record_validation::{prepare_record, RecordWriteContext};
 use chrono::{SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,10 @@ pub struct Collection {
     pub description: Option<String>,
     pub source_kind: String,
     pub source_key: Option<String>,
+    #[serde(default = "manual_collection_kind")]
+    pub collection_kind: String,
+    #[serde(default = "manual_order_mode")]
+    pub order_mode: String,
     pub created_at: String,
     pub updated_at: String,
     pub rev: i64,
@@ -64,6 +70,10 @@ pub struct CreateCollectionInput {
     #[serde(default = "manual_source")]
     pub source_kind: String,
     pub source_key: Option<String>,
+    #[serde(default)]
+    pub collection_kind: Option<String>,
+    #[serde(default)]
+    pub order_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,10 +82,50 @@ pub struct UpdateCollectionInput {
     pub name: String,
     pub description: Option<String>,
     pub expected_rev: i64,
+    #[serde(default)]
+    pub order_mode: Option<String>,
 }
 
 fn manual_source() -> String {
     "manual".to_string()
+}
+
+fn manual_collection_kind() -> String {
+    "manual".to_string()
+}
+fn manual_order_mode() -> String {
+    "manual".to_string()
+}
+
+fn collection_behavior(
+    source_kind: &str,
+    collection_kind: Option<String>,
+    order_mode: Option<String>,
+) -> Result<(String, String), AppError> {
+    let inferred_kind = match source_kind {
+        "tmdb-tv-show" => "tv-series",
+        "tmdb-movie-collection" => "movie-series",
+        _ => "manual",
+    };
+    let kind = collection_kind.unwrap_or_else(|| inferred_kind.to_string());
+    if !matches!(
+        kind.as_str(),
+        "manual" | "tv-series" | "movie-series" | "universe"
+    ) {
+        return Err(AppError::General("collection_kind_invalid".into()));
+    }
+    let mode = order_mode.unwrap_or_else(|| {
+        if source_kind == "manual" {
+            "manual"
+        } else {
+            "chronological"
+        }
+        .to_string()
+    });
+    if !matches!(mode.as_str(), "manual" | "chronological") {
+        return Err(AppError::General("collection_order_mode_invalid".into()));
+    }
+    Ok((kind, mode))
 }
 
 fn now() -> String {
@@ -137,6 +187,13 @@ pub fn schema_ready(conn: &Connection) -> rusqlite::Result<bool> {
             |row| row.get::<_, String>(0),
         )
         .optional()?;
+    let identity_marker = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key='tmdb_identity_schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
     let required = [
         "collections",
         "collection_members",
@@ -147,7 +204,36 @@ pub fn schema_ready(conn: &Connection) -> rusqlite::Result<bool> {
     let tables = statement
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<HashSet<_>>>()?;
-    Ok(marker.as_deref() == Some("1") && required.iter().all(|name| tables.contains(*name)))
+    let columns = if tables.contains("collections") {
+        let mut statement = conn.prepare("SELECT name FROM pragma_table_info('collections')")?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
+        values
+    } else {
+        HashSet::new()
+    };
+    let record_columns = {
+        let mut statement = conn.prepare("SELECT name FROM pragma_table_info('records')")?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
+        values
+    };
+    Ok(marker.as_deref() == Some("2")
+        && identity_marker.as_deref() == Some("1")
+        && required.iter().all(|name| tables.contains(*name))
+        && columns.contains("collectionKind")
+        && columns.contains("orderMode")
+        && [
+            "tmdbMediaKind",
+            "tmdbId",
+            "tmdbParentId",
+            "tmdbSeasonNumber",
+            "seriesRecordKind",
+        ]
+        .iter()
+        .all(|name| record_columns.contains(*name)))
 }
 
 pub fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
@@ -160,6 +246,8 @@ pub fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
            description TEXT,
            sourceKind TEXT NOT NULL DEFAULT 'manual' CHECK(sourceKind IN ('manual','tmdb-movie-collection','tmdb-tv-show')),
            sourceKey TEXT,
+           collectionKind TEXT NOT NULL DEFAULT 'manual' CHECK(collectionKind IN ('manual','tv-series','movie-series','universe')),
+           orderMode TEXT NOT NULL DEFAULT 'manual' CHECK(orderMode IN ('manual','chronological')),
            createdAt TEXT NOT NULL,
            updatedAt TEXT NOT NULL,
            rev INTEGER NOT NULL DEFAULT 0,
@@ -189,9 +277,52 @@ pub fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
            id TEXT PRIMARY KEY, collectionId TEXT NOT NULL, recordId TEXT NOT NULL,
            deletedAt TEXT NOT NULL, rev INTEGER NOT NULL, revActor TEXT NOT NULL
          );
-         INSERT INTO settings(key,value) VALUES('collections_schema_version','1')
-           ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+         ",
     )?;
+    let columns = {
+        let mut statement =
+            transaction.prepare("SELECT name FROM pragma_table_info('collections')")?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
+        values
+    };
+    if !columns.contains("collectionKind") {
+        transaction.execute("ALTER TABLE collections ADD COLUMN collectionKind TEXT NOT NULL DEFAULT 'manual' CHECK(collectionKind IN ('manual','tv-series','movie-series','universe'))", [])?;
+    }
+    if !columns.contains("orderMode") {
+        transaction.execute("ALTER TABLE collections ADD COLUMN orderMode TEXT NOT NULL DEFAULT 'manual' CHECK(orderMode IN ('manual','chronological'))", [])?;
+    }
+    let record_columns = {
+        let mut statement = transaction.prepare("SELECT name FROM pragma_table_info('records')")?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
+        values
+    };
+    for (name, definition) in [
+        (
+            "tmdbMediaKind",
+            "TEXT CHECK(tmdbMediaKind IN ('movie','tv','tv-season'))",
+        ),
+        ("tmdbId", "INTEGER"),
+        ("tmdbParentId", "INTEGER"),
+        ("tmdbSeasonNumber", "INTEGER CHECK(tmdbSeasonNumber >= 0)"),
+        (
+            "seriesRecordKind",
+            "TEXT CHECK(seriesRecordKind IN ('season','whole-series','single-work'))",
+        ),
+    ] {
+        if !record_columns.contains(name) {
+            transaction.execute(
+                &format!("ALTER TABLE records ADD COLUMN {name} {definition}"),
+                [],
+            )?;
+        }
+    }
+    transaction.execute("INSERT INTO settings(key,value) VALUES('tmdb_identity_schema_version','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value", [])?;
+    transaction.execute("UPDATE collections SET collectionKind=CASE sourceKind WHEN 'tmdb-tv-show' THEN 'tv-series' WHEN 'tmdb-movie-collection' THEN 'movie-series' ELSE collectionKind END, orderMode=CASE WHEN sourceKind='manual' THEN orderMode ELSE 'chronological' END", [])?;
+    transaction.execute("INSERT INTO settings(key,value) VALUES('collections_schema_version','2') ON CONFLICT(key) DO UPDATE SET value=excluded.value", [])?;
     let raw = transaction
         .query_row(
             "SELECT value FROM settings WHERE key='required_app_features_v1'",
@@ -210,6 +341,15 @@ pub fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
     if !features.iter().any(|feature| feature == "collections-v1") {
         features.push("collections-v1".into());
     }
+    if !features.iter().any(|feature| feature == "collections-v2") {
+        features.push("collections-v2".into());
+    }
+    if !features
+        .iter()
+        .any(|feature| feature == "series-identity-v1")
+    {
+        features.push("series-identity-v1".into());
+    }
     features.sort();
     transaction.execute(
         "INSERT INTO settings(key,value) VALUES('required_app_features_v1',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -226,6 +366,12 @@ fn map_collection(row: &Row<'_>) -> rusqlite::Result<Collection> {
         description: row.get("description")?,
         source_kind: row.get("sourceKind")?,
         source_key: row.get("sourceKey")?,
+        collection_kind: row
+            .get("collectionKind")
+            .unwrap_or_else(|_| "manual".to_string()),
+        order_mode: row
+            .get("orderMode")
+            .unwrap_or_else(|_| "manual".to_string()),
         created_at: row.get("createdAt")?,
         updated_at: row.get("updatedAt")?,
         rev: row.get("rev")?,
@@ -328,6 +474,8 @@ pub fn create(
     let (name, normalized) = normalized_name(&input.name)?;
     let description = description(input.description)?;
     let (source_kind, source_key) = validate_source(&input.source_kind, input.source_key)?;
+    let (collection_kind, order_mode) =
+        collection_behavior(&source_kind, input.collection_kind, input.order_mode)?;
     let timestamp = now();
     let id = Uuid::new_v4().to_string();
     let tx = conn.transaction()?;
@@ -338,7 +486,7 @@ pub fn create(
     )? {
         return Err(AppError::General("collection_name_duplicate".into()));
     }
-    tx.execute("INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6,?7,?7,1,?8)", params![id,name,normalized,description,source_kind,source_key,timestamp,actor])?;
+    tx.execute("INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,collectionKind,orderMode,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,1,?10)", params![id,name,normalized,description,source_kind,source_key,collection_kind,order_mode,timestamp,actor])?;
     tx.execute("DELETE FROM collection_tombstones WHERE id=?1", [&id])?;
     let generation = mark_local_records_mutated(&tx, "collection-create")?;
     let value = get(&tx, &id)?;
@@ -367,7 +515,16 @@ pub fn update(
     if current.rev != input.expected_rev {
         return Err(AppError::General("stale_collection".into()));
     }
-    if current.name == name && current.description == description {
+    let order_mode = input
+        .order_mode
+        .unwrap_or_else(|| current.order_mode.clone());
+    if !matches!(order_mode.as_str(), "manual" | "chronological") {
+        return Err(AppError::General("collection_order_mode_invalid".into()));
+    }
+    if current.name == name
+        && current.description == description
+        && current.order_mode == order_mode
+    {
         tx.commit()?;
         return Ok(current);
     }
@@ -378,7 +535,7 @@ pub fn update(
     )? {
         return Err(AppError::General("collection_name_duplicate".into()));
     }
-    tx.execute("UPDATE collections SET name=?2, normalizedName=?3, description=?4, updatedAt=?5, rev=rev+1, revActor=?6 WHERE id=?1", params![id,name,normalized,description,timestamp,actor])?;
+    tx.execute("UPDATE collections SET name=?2, normalizedName=?3, description=?4, orderMode=?5, updatedAt=?6, rev=rev+1, revActor=?7 WHERE id=?1", params![id,name,normalized,description,order_mode,timestamp,actor])?;
     let generation = mark_local_records_mutated(&tx, "collection-update")?;
     let value = get(&tx, id)?;
     crate::sync_staging::stage_entity_upsert(
@@ -403,11 +560,13 @@ pub fn add_members(
     if !matches!(source_kind, "manual" | "tmdb") {
         return Err(AppError::General("collection_source_invalid".into()));
     }
+    // Preserve the caller's order while still dropping duplicate IDs.
+    let mut seen = HashSet::new();
     let unique = record_ids
         .into_iter()
         .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .collect::<HashSet<_>>();
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect::<Vec<_>>();
     let timestamp = now();
     let tx = conn.transaction()?;
     let collection = get(&tx, collection_id)?;
@@ -479,6 +638,99 @@ pub fn add_members(
         .collect();
     tx.commit()?;
     Ok(result)
+}
+
+pub fn create_records_with_members(
+    conn: &mut Connection,
+    collection_id: &str,
+    records: Vec<WatchRecord>,
+    expected_rev: i64,
+    actor: &str,
+) -> Result<Vec<WatchRecord>, AppError> {
+    if records.is_empty() || records.len() > 100 {
+        return Err(AppError::General("missing_seasons_batch_invalid".into()));
+    }
+    let timestamp = now();
+    let tx = conn.transaction()?;
+    let collection = get(&tx, collection_id)?;
+    if collection.rev != expected_rev {
+        return Err(AppError::General("stale_collection".into()));
+    }
+    let mut seen_ids = HashSet::new();
+    let mut prepared = Vec::with_capacity(records.len());
+    for record in records {
+        let mut record = prepare_record(record, RecordWriteContext::Local)?;
+        if !seen_ids.insert(record.id.clone())
+            || tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM records WHERE id=?1)",
+                [&record.id],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            return Err(AppError::General("missing_season_duplicate".into()));
+        }
+        if let (Some(parent_id), Some(season_number)) =
+            (record.tmdb_parent_id, record.tmdb_season_number)
+        {
+            let duplicate = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM records r JOIN collection_members m ON m.recordId=r.id WHERE m.collectionId=?1 AND r.tmdbParentId=?2 AND r.tmdbSeasonNumber=?3)",
+                params![collection_id, parent_id, season_number],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if duplicate
+                || prepared.iter().any(|item: &WatchRecord| {
+                    item.tmdb_parent_id == Some(parent_id)
+                        && item.tmdb_season_number == Some(season_number)
+                })
+            {
+                return Err(AppError::General("missing_season_duplicate".into()));
+            }
+        }
+        record.rev = 1;
+        record.rev_actor = actor.to_string();
+        record.updated_at = Some(timestamp.clone());
+        prepared.push(record);
+    }
+    let mut position = tx.query_row(
+        "SELECT COALESCE(MAX(position),-1024)+1024 FROM collection_members WHERE collectionId=?1",
+        [collection_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let mut created_members = Vec::with_capacity(prepared.len());
+    for record in &prepared {
+        crate::db::insert_record(&tx, record.clone())?;
+        let id = member_id(collection_id, &record.id);
+        tx.execute("INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,'tmdb',?5,?5,1,?6)", params![id, collection_id, record.id, position, timestamp, actor])?;
+        created_members.push(tx.query_row(
+            "SELECT * FROM collection_members WHERE id=?1",
+            [&id],
+            map_member,
+        )?);
+        position += 1024;
+    }
+    let collection = bump_collection(&tx, collection_id, actor, &timestamp)?;
+    let generation = mark_local_records_mutated(&tx, "series-completion")?;
+    crate::sync_staging::stage_entity_upsert(
+        &tx,
+        "collection",
+        collection_id,
+        serde_json::to_value(collection).map_err(|error| AppError::General(error.to_string()))?,
+        generation,
+    )?;
+    for record in &prepared {
+        crate::sync_staging::stage_upsert(&tx, record, generation)?;
+    }
+    for member in &created_members {
+        crate::sync_staging::stage_entity_upsert(
+            &tx,
+            "collection-member",
+            &member.id,
+            serde_json::to_value(member).map_err(|error| AppError::General(error.to_string()))?,
+            generation,
+        )?;
+    }
+    tx.commit()?;
+    Ok(prepared)
 }
 
 pub fn remove_member(
@@ -706,7 +958,12 @@ pub fn replace_all_tx(
         let desc = description(item.description.clone())?;
         let (source_kind, source_key) =
             validate_source(&item.source_kind, item.source_key.clone())?;
-        conn.execute("INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![item.id,name,normalized,desc,source_kind,source_key,item.created_at,item.updated_at,item.rev,item.rev_actor])?;
+        let (collection_kind, order_mode) = collection_behavior(
+            &source_kind,
+            Some(item.collection_kind.clone()),
+            Some(item.order_mode.clone()),
+        )?;
+        conn.execute("INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,collectionKind,orderMode,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)", params![item.id,name,normalized,desc,source_kind,source_key,collection_kind,order_mode,item.created_at,item.updated_at,item.rev,item.rev_actor])?;
     }
     for item in members {
         conn.execute("INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![item.id,item.collection_id,item.record_id,item.position,item.source_kind,item.created_at,item.updated_at,item.rev,item.rev_actor])?;
@@ -801,6 +1058,8 @@ mod tests {
                 description: None,
                 source_kind: "manual".into(),
                 source_key: None,
+                collection_kind: None,
+                order_mode: None,
             },
             "device",
         )
@@ -844,6 +1103,8 @@ mod tests {
                 description: None,
                 source_kind: "manual".into(),
                 source_key: None,
+                collection_kind: None,
+                order_mode: None,
             },
             "device",
         )
@@ -855,6 +1116,8 @@ mod tests {
                 description: None,
                 source_kind: "manual".into(),
                 source_key: None,
+                collection_kind: None,
+                order_mode: None,
             },
             "device",
         )
@@ -867,11 +1130,81 @@ mod tests {
                 name: "新名称".into(),
                 description: None,
                 expected_rev: 0,
+                order_mode: None,
             },
             "device",
         )
         .unwrap_err();
         assert!(stale.to_string().contains("stale_collection"));
         assert_eq!(all(&conn).unwrap()[0].name, "系列");
+    }
+
+    #[test]
+    fn missing_seasons_create_atomically_and_reject_stable_identity_duplicates() {
+        let mut conn = database();
+        let collection = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "测试剧".into(),
+                description: None,
+                source_kind: "tmdb-tv-show".into(),
+                source_key: Some("tmdb:tv-show:42".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let before_generation = crate::db_atomic_helpers::get_records_generation(&conn).unwrap();
+        let mut first = record("season-1");
+        first.media_type = "剧集".into();
+        first.tmdb_media_kind = Some("tv-season".into());
+        first.tmdb_id = Some(101);
+        first.tmdb_parent_id = Some(42);
+        first.tmdb_season_number = Some(1);
+        first.series_record_kind = Some("season".into());
+        let created = create_records_with_members(
+            &mut conn,
+            &collection.id,
+            vec![first],
+            collection.rev,
+            "device",
+        )
+        .unwrap();
+        assert_eq!(created.len(), 1);
+        assert_eq!(
+            crate::db_atomic_helpers::get_records_generation(&conn).unwrap(),
+            before_generation + 1
+        );
+        let current = all(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == collection.id)
+            .unwrap();
+        let before_count = crate::db::get_all_records(&conn).unwrap().len();
+        let before_generation = crate::db_atomic_helpers::get_records_generation(&conn).unwrap();
+        let mut duplicate = record("season-1-copy");
+        duplicate.media_type = "剧集".into();
+        duplicate.tmdb_media_kind = Some("tv-season".into());
+        duplicate.tmdb_id = Some(999);
+        duplicate.tmdb_parent_id = Some(42);
+        duplicate.tmdb_season_number = Some(1);
+        duplicate.series_record_kind = Some("season".into());
+        assert!(create_records_with_members(
+            &mut conn,
+            &current.id,
+            vec![duplicate],
+            current.rev,
+            "device"
+        )
+        .is_err());
+        assert_eq!(
+            crate::db::get_all_records(&conn).unwrap().len(),
+            before_count
+        );
+        assert_eq!(
+            crate::db_atomic_helpers::get_records_generation(&conn).unwrap(),
+            before_generation
+        );
     }
 }

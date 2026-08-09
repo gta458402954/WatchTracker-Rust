@@ -8,7 +8,7 @@ export interface SyncTombstoneV3 {
 }
 
 export interface SyncPayloadV3 {
-  schemaVersion: 3 | 4 | 5;
+  schemaVersion: 3 | 4 | 5 | 6;
   documentId: string;
   revision: number;
   commitId: string;
@@ -285,7 +285,7 @@ export function emptySyncPayload(deviceId: string, now = new Date().toISOString(
 export function parseSyncPayloadV3(value: unknown): SyncPayloadV3 {
   if (!value || typeof value !== 'object') throw new Error('invalid_remote_payload');
   const payload = value as Partial<SyncPayloadV3> & { schemaVersion?: number };
-  if (typeof payload.schemaVersion === 'number' && payload.schemaVersion > 5) {
+  if (typeof payload.schemaVersion === 'number' && payload.schemaVersion > 6) {
     throw new Error('unsupported_remote_schema');
   }
   const validTombstones = Array.isArray(payload.tombstones) && payload.tombstones.every(item => item
@@ -297,15 +297,16 @@ export function parseSyncPayloadV3(value: unknown): SyncPayloadV3 {
       && (item.completedAt === null || typeof item.completedAt === 'string')
       && typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
       && Number.isInteger(item.rev) && item.rev >= 0 && typeof item.revActor === 'string'));
-  const validCollections = payload.schemaVersion !== 5 || (
+  const validCollections = (payload.schemaVersion ?? 0) < 5 || (
     Array.isArray(payload.collections) && Array.isArray(payload.collectionMembers)
     && Array.isArray(payload.collectionTombstones) && Array.isArray(payload.collectionMemberTombstones)
-    && payload.collections.every(item => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isInteger(item.rev))
+    && payload.collections.every(item => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isInteger(item.rev)
+      && (payload.schemaVersion === 5 || (['manual', 'tv-series', 'movie-series', 'universe'].includes(item.collectionKind) && ['manual', 'chronological'].includes(item.orderMode))))
     && payload.collectionMembers.every(item => item && typeof item.id === 'string' && typeof item.collectionId === 'string' && typeof item.recordId === 'string' && Number.isInteger(item.position) && Number.isInteger(item.rev))
     && payload.collectionTombstones.every(item => item && typeof item.id === 'string' && typeof item.deletedAt === 'string' && Number.isInteger(item.rev))
     && payload.collectionMemberTombstones.every(item => item && typeof item.id === 'string' && typeof item.collectionId === 'string' && typeof item.recordId === 'string' && typeof item.deletedAt === 'string' && Number.isInteger(item.rev))
   );
-  if (![3, 4, 5].includes(payload.schemaVersion ?? -1) || !Array.isArray(payload.records) || !validTombstones || !validCompletions || !validCollections
+  if (![3, 4, 5, 6].includes(payload.schemaVersion ?? -1) || !Array.isArray(payload.records) || !validTombstones || !validCompletions || !validCollections
     || payload.records.some(record => !record || typeof record.id !== 'string')
     || typeof payload.documentId !== 'string' || !payload.documentId
     || !Number.isInteger(payload.revision) || (payload.revision ?? -1) < 0
@@ -317,10 +318,14 @@ export function parseSyncPayloadV3(value: unknown): SyncPayloadV3 {
   return {
     ...(payload as SyncPayloadV3),
     episodeCompletions: (payload.schemaVersion ?? 0) >= 4 ? payload.episodeCompletions : [],
-    collections: payload.schemaVersion === 5 ? payload.collections : [],
-    collectionMembers: payload.schemaVersion === 5 ? payload.collectionMembers : [],
-    collectionTombstones: payload.schemaVersion === 5 ? payload.collectionTombstones : [],
-    collectionMemberTombstones: payload.schemaVersion === 5 ? payload.collectionMemberTombstones : [],
+    collections: (payload.schemaVersion ?? 0) >= 5 ? payload.collections?.map(item => ({
+      ...item,
+      collectionKind: item.collectionKind ?? (item.sourceKind === 'tmdb-tv-show' ? 'tv-series' : item.sourceKind === 'tmdb-movie-collection' ? 'movie-series' : 'manual'),
+      orderMode: item.orderMode ?? (item.sourceKind === 'manual' ? 'manual' : 'chronological'),
+    })) : [],
+    collectionMembers: (payload.schemaVersion ?? 0) >= 5 ? payload.collectionMembers : [],
+    collectionTombstones: (payload.schemaVersion ?? 0) >= 5 ? payload.collectionTombstones : [],
+    collectionMemberTombstones: (payload.schemaVersion ?? 0) >= 5 ? payload.collectionMemberTombstones : [],
   };
 }
 

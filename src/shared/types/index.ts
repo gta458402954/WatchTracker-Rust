@@ -32,6 +32,11 @@ export interface WatchRecord {
   episodeRuntime?: number | null;
   mediaType: MediaType;
   contentTags?: string | null;
+  tmdbMediaKind?: 'movie' | 'tv' | 'tv-season' | null;
+  tmdbId?: number | null;
+  tmdbParentId?: number | null;
+  tmdbSeasonNumber?: number | null;
+  seriesRecordKind?: 'season' | 'whole-series' | 'single-work' | null;
   rev?: number;
   revActor?: string;
 }
@@ -55,6 +60,8 @@ export interface WatchCollection {
   description: string | null;
   sourceKind: CollectionSourceKind;
   sourceKey: string | null;
+  collectionKind: 'manual' | 'tv-series' | 'movie-series' | 'universe';
+  orderMode: 'manual' | 'chronological';
   createdAt: string;
   updatedAt: string;
   rev: number;
@@ -102,4 +109,9 @@ export type UpdateWatchRecord = Partial<Pick<WatchRecord,
   interestLevel?: number | null;
   episodeRuntime?: number | null;
   contentTags?: string | null;
+  tmdbMediaKind?: WatchRecord['tmdbMediaKind'];
+  tmdbId?: number | null;
+  tmdbParentId?: number | null;
+  tmdbSeasonNumber?: number | null;
+  seriesRecordKind?: WatchRecord['seriesRecordKind'];
 };

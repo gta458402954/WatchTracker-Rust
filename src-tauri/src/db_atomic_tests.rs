@@ -43,6 +43,11 @@ mod tests {
             episode_runtime: None,
             media_type: "电影".to_string(),
             content_tags: None,
+            tmdb_media_kind: None,
+            tmdb_id: None,
+            tmdb_parent_id: None,
+            tmdb_season_number: None,
+            series_record_kind: None,
             rev: 2,
             rev_actor: "old-actor".to_string(),
         }

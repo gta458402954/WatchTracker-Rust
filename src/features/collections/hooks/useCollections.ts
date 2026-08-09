@@ -22,14 +22,20 @@ export function useCollections() {
     return { collections: nextCollections, members: nextMembers };
   }, []);
 
-  const create = useCallback(async (name: string, description: string | null = null) => {
-    const value = await createCollection({ name, description, sourceKind: 'manual', sourceKey: null });
+  const create = useCallback(async (name: string, description: string | null = null, collectionKind: WatchCollection['collectionKind'] = 'manual') => {
+    const value = await createCollection({ name, description, sourceKind: 'manual', sourceKey: null, collectionKind, orderMode: collectionKind === 'universe' ? 'chronological' : 'manual' });
     await refresh();
     return value;
   }, [refresh]);
 
   const update = useCallback(async (collection: WatchCollection, name: string, description: string | null) => {
     const value = await updateCollection(collection.id, { name, description, expectedRev: collection.rev });
+    await refresh();
+    return value;
+  }, [refresh]);
+
+  const setOrderMode = useCallback(async (collection: WatchCollection, orderMode: WatchCollection['orderMode']) => {
+    const value = await updateCollection(collection.id, { name: collection.name, description: collection.description, expectedRev: collection.rev, orderMode });
     await refresh();
     return value;
   }, [refresh]);
@@ -61,5 +67,5 @@ export function useCollections() {
     await refresh();
   }, [collections, refresh]);
 
-  return { collections, members, refresh, create, update, remove, addMembers, removeMember, reorder, applySuggestion };
+  return { collections, members, refresh, create, update, setOrderMode, remove, addMembers, removeMember, reorder, applySuggestion };
 }

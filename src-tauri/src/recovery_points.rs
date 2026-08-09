@@ -60,6 +60,8 @@ fn validate_reason(reason: &str) -> Result<&str, AppError> {
         | "target-migration"
         | "episode-history-migration"
         | "collections-migration"
+        | "series-identity-migration"
+        | "series-completion"
         | "pre-restore" => Ok(reason),
         _ => Err(general("Invalid recovery point reason")),
     }

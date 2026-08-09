@@ -39,6 +39,7 @@ import {
 import type { SavedWatchlistViewV1 } from '../shared/lib/savedViews';
 import { useCollections } from '../features/collections/hooks/useCollections';
 import CollectionCenter from '../features/collections/components/CollectionCenter';
+import { createMissingSeasons, createRecoveryPoint } from '../shared/lib/database';
 
 type InitializationState = 'loading' | 'ready' | 'error';
 
@@ -655,11 +656,17 @@ export default function App() {
           members={collectionState.members}
           onCreate={collectionState.create}
           onUpdate={collectionState.update}
+          onSetOrderMode={collectionState.setOrderMode}
           onDelete={collectionState.remove}
           onAddMembers={collectionState.addMembers}
           onRemoveMember={collectionState.removeMember}
           onReorder={collectionState.reorder}
           onApplySuggestion={collectionState.applySuggestion}
+          onCreateMissingSeasons={async (collection, newRecords) => {
+            await createRecoveryPoint('series-completion');
+            await createMissingSeasons(collection.id, newRecords, collection.rev);
+            await Promise.all([loadRecords(), collectionState.refresh()]);
+          }}
           onEditRecord={record => { setShowCollections(false); handleEdit(record); }}
           onNotify={notify}
           onClose={() => setShowCollections(false)}

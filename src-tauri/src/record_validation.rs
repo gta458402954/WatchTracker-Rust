@@ -146,6 +146,28 @@ pub fn prepare_record(
     normalize_optional_text(&mut record.origin_country);
     normalize_optional_text(&mut record.tmdb_status);
     normalize_optional_text(&mut record.content_tags);
+    normalize_optional_text(&mut record.tmdb_media_kind);
+    normalize_optional_text(&mut record.series_record_kind);
+    if record
+        .tmdb_media_kind
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "movie" | "tv" | "tv-season"))
+    {
+        return Err(invalid("tmdbMediaKind", "unsupported value"));
+    }
+    if record
+        .series_record_kind
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "season" | "whole-series" | "single-work"))
+    {
+        return Err(invalid("seriesRecordKind", "unsupported value"));
+    }
+    if record.tmdb_id.is_some_and(|value| value <= 0)
+        || record.tmdb_parent_id.is_some_and(|value| value <= 0)
+        || record.tmdb_season_number.is_some_and(|value| value < 0)
+    {
+        return Err(invalid("tmdbIdentity", "invalid numeric value"));
+    }
 
     if record.id.is_empty() {
         return Err(invalid("id", "must not be empty"));
@@ -218,6 +240,8 @@ pub fn prepare_update(mut updates: UpdateWatchRecord) -> Result<UpdateWatchRecor
         &mut updates.origin_country,
         &mut updates.tmdb_status,
         &mut updates.content_tags,
+        &mut updates.tmdb_media_kind,
+        &mut updates.series_record_kind,
     ] {
         normalize_patch_text(value);
     }
@@ -228,6 +252,21 @@ pub fn prepare_update(mut updates: UpdateWatchRecord) -> Result<UpdateWatchRecor
         |value| value > 0,
         "must be greater than zero",
     )?;
+    if let Patch::Value(value) = updates.tmdb_season_number {
+        if value < 0 {
+            return Err(invalid("tmdbSeasonNumber", "must be non-negative"));
+        }
+    }
+    if let Patch::Value(value) = &updates.tmdb_media_kind {
+        if !matches!(value.as_str(), "movie" | "tv" | "tv-season") {
+            return Err(invalid("tmdbMediaKind", "unsupported value"));
+        }
+    }
+    if let Patch::Value(value) = &updates.series_record_kind {
+        if !matches!(value.as_str(), "season" | "whole-series" | "single-work") {
+            return Err(invalid("seriesRecordKind", "unsupported value"));
+        }
+    }
     validate_patch_i32(
         "movieProgress",
         &updates.movie_progress,

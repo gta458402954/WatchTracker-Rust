@@ -82,13 +82,13 @@ React UI
 
 数据库写入边界统一保留 V18：records 使用明确的 `ON CONFLICT(id) DO UPDATE`，不再依靠删除再插入语义。本地新增严格校验至少一个名称、固定媒体类型和数值范围，并由 Rust 写入 `updatedAt`、`rev`、`revActor`；部分更新只验证被修改字段，因此旧脏行仍可逐步修复。导入和同步全量替换采用兼容模式规范化空文本、旧媒体类型和无效旧数值，重复 ID 会在删除现有记录前使整批失败，锁定记录仍保留本地版本。
 
-收藏集不提升数据库主版本，而由 `collections_schema_version=1` 幂等功能迁移增加 `collections`、`collection_members` 及两类 tombstone 表。成员 ID 由 collection ID 与 record ID 确定性生成；增删、排序、删除记录时的关系清理均与 generation、staging 和 outbox 同事务。迁移前创建 `collections-migration` 恢复点，恢复校验同时执行 SQLite `integrity_check` 与 `foreign_key_check`。
+收藏集不提升数据库主版本。当前由 `collections_schema_version=2` 和 `tmdb_identity_schema_version=1` 幂等功能迁移维护集合、成员、两类 tombstone、集合类型/排序模式及记录的稳定 TMDB 身份；迁移前创建 `series-identity-migration` 恢复点。成员 ID 由 collection ID 与 record ID 确定性生成；普通增删、排序、删除记录及缺失季批量创建均与 generation、staging 和 outbox 同事务，缺失季还会按 TMDB parent ID 与 season number 复查重复。
 
 ## 5. 当前同步边界
 
 已经实现：
 
-- 独立 `records-v3.json` 与 payload V5、ETag 条件写入和 412 重拉：GET 返回规范强 ETag 时使用 HTTP `If-Match`；弱、缺失或未加引号的验证器先以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，再使用 WebDAV `If`；首次创建使用 `If-None-Match: *`，仍无合法验证器才禁止上传；连续三次 412 只有在验证器指纹确实变化时才报告 `remote_busy`，固定指纹被拒绝则停止自动重试并保留本地数据；
+- 独立 `records-v3.json` 与 payload V6、ETag 条件写入和 412 重拉：V6 同步集合类型、排序模式与记录 TMDB 身份，V5 读取时补安全默认，V7+ 拒绝且零 PUT；GET 返回规范强 ETag 时使用 HTTP `If-Match`，弱、缺失或未加引号的验证器先以 `PROPFIND Depth: 0` 读取 `DAV:getetag`，再使用 WebDAV `If`；首次创建使用 `If-None-Match: *`，仍无合法验证器才禁止上传；连续三次 412 只有在验证器指纹确实变化时才报告 `remote_busy`，固定指纹被拒绝则停止自动重试并保留本地数据；
 - 共同 baseline 三方字段合并、删除 Tombstone、锁定保护和持久冲突中心；
 - `get_sync_snapshot`、`commit_sync_result(expectedGeneration)`、恢复点和本地原子落盘；
 - 旧数组/schema v2 首次迁移、旧客户端后续写入检测和显式冲突导入；

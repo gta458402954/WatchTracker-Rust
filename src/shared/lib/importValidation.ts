@@ -62,6 +62,11 @@ export function normalizeImportedRecord(
     episodeRuntime: nullableNumber('episodeRuntime'),
     mediaType,
     contentTags: nullableText('contentTags'),
+    tmdbMediaKind: ['movie', 'tv', 'tv-season'].includes(text('tmdbMediaKind')) ? text('tmdbMediaKind') as WatchRecord['tmdbMediaKind'] : null,
+    tmdbId: nullableNumber('tmdbId'),
+    tmdbParentId: nullableNumber('tmdbParentId'),
+    tmdbSeasonNumber: nullableNumber('tmdbSeasonNumber'),
+    seriesRecordKind: ['season', 'whole-series', 'single-work'].includes(text('seriesRecordKind')) ? text('seriesRecordKind') as WatchRecord['seriesRecordKind'] : null,
     rev: revision !== null && Number.isInteger(revision) && revision >= 0 ? revision : 0,
     revActor: nullableText('revActor') ?? '',
   };

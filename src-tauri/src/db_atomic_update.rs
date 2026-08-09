@@ -91,6 +91,15 @@ pub fn update_record_atomic(
     });
     optional!(updates.media_type, "mediaType", Value::Text);
     patch!(updates.content_tags, "contentTags", Value::Text);
+    patch!(updates.tmdb_media_kind, "tmdbMediaKind", Value::Text);
+    patch!(updates.tmdb_id, "tmdbId", Value::Integer);
+    patch!(updates.tmdb_parent_id, "tmdbParentId", Value::Integer);
+    patch!(
+        updates.tmdb_season_number,
+        "tmdbSeasonNumber",
+        |value: i32| Value::Integer(value as i64)
+    );
+    patch!(updates.series_record_kind, "seriesRecordKind", Value::Text);
 
     if clauses.is_empty() {
         return Err(AppError::General("Empty update payload".to_string()));

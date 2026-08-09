@@ -111,6 +111,8 @@ const RECOVERY_REASON_LABELS: Record<RecoveryPoint['reason'], string> = {
   'target-migration': '同步目标迁移前',
   'episode-history-migration': '逐集历史迁移前',
   'collections-migration': '收藏集迁移前',
+  'series-identity-migration': '系列身份迁移前',
+  'series-completion': '补充系列条目前',
   'pre-restore': '恢复操作前',
 };
 
@@ -486,7 +488,7 @@ export default function SettingsModal({
         getAllEpisodeCompletions(), getCollections(), getCollectionMembers(),
       ]);
       const data = JSON.stringify({
-        formatVersion: 3,
+        formatVersion: 4,
         exportedAt: new Date().toISOString(),
         records,
         episodeCompletions,
@@ -520,7 +522,7 @@ export default function SettingsModal({
           if (typeof reader.result !== 'string') throw new Error('无法读取文件内容');
           const parsed: unknown = JSON.parse(reader.result);
           if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-            && (parsed as { formatVersion?: unknown }).formatVersion === 3) {
+            && [3, 4].includes((parsed as { formatVersion?: number }).formatVersion ?? -1)) {
             const envelope = parsed as { records?: unknown; episodeCompletions?: unknown; collections?: unknown; collectionMembers?: unknown };
             const completeData = normalizeImportedRecords(envelope.records);
             if (!Array.isArray(envelope.episodeCompletions) || !Array.isArray(envelope.collections) || !Array.isArray(envelope.collectionMembers)) throw new Error('收藏集备份格式无效');

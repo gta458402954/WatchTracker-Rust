@@ -103,7 +103,7 @@ pub fn init(paths: &AppPaths) -> Result<DbState, String> {
     let needs_collections_backup = existing_db_version(&conn).unwrap_or(0) > 0
         && !crate::collections::schema_ready(&conn).unwrap_or(false);
     if needs_collections_backup {
-        recovery_points::create(&conn, paths, "collections-migration")
+        recovery_points::create(&conn, paths, "series-identity-migration")
             .map_err(|error| format!("collections_migration_failed:{error}"))?;
     }
 
@@ -632,6 +632,11 @@ fn map_row_to_record(row: &Row<'_>) -> Result<WatchRecord> {
         episode_runtime: row.get("episodeRuntime").unwrap_or(None),
         media_type: row.get("mediaType").unwrap_or_else(|_| "电影".to_string()),
         content_tags: row.get("contentTags").unwrap_or(None),
+        tmdb_media_kind: row.get("tmdbMediaKind").unwrap_or(None),
+        tmdb_id: row.get("tmdbId").unwrap_or(None),
+        tmdb_parent_id: row.get("tmdbParentId").unwrap_or(None),
+        tmdb_season_number: row.get("tmdbSeasonNumber").unwrap_or(None),
+        series_record_kind: row.get("seriesRecordKind").unwrap_or(None),
         rev: row.get("rev").unwrap_or(0),
         rev_actor: row.get("revActor").unwrap_or_default(),
     })
@@ -674,8 +679,9 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
             id, originalName, chineseName, progress, totalEpisodes, episodeTrackingEnabled, nextEpisode, status, platform, rating,
             startDate, endDate, notes, createdAt, movieProgress, movieDuration, releaseYear,
             posterPath, updatedAt, imdbId, isLocked, genres, originCountry, imdbRating,
-            tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags, rev, revActor
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            tmdbStatus, interestLevel, episodeRuntime, mediaType, contentTags, tmdbMediaKind, tmdbId,
+            tmdbParentId, tmdbSeasonNumber, seriesRecordKind, rev, revActor
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
             originalName = excluded.originalName,
             chineseName = excluded.chineseName,
@@ -705,6 +711,11 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
             episodeRuntime = excluded.episodeRuntime,
             mediaType = excluded.mediaType,
             contentTags = excluded.contentTags,
+            tmdbMediaKind = excluded.tmdbMediaKind,
+            tmdbId = excluded.tmdbId,
+            tmdbParentId = excluded.tmdbParentId,
+            tmdbSeasonNumber = excluded.tmdbSeasonNumber,
+            seriesRecordKind = excluded.seriesRecordKind,
             rev = excluded.rev,
             revActor = excluded.revActor",
         params![
@@ -737,6 +748,11 @@ pub fn insert_record(conn: &Connection, r: WatchRecord) -> Result<()> {
             r.episode_runtime,
             r.media_type,
             r.content_tags,
+            r.tmdb_media_kind,
+            r.tmdb_id,
+            r.tmdb_parent_id,
+            r.tmdb_season_number,
+            r.series_record_kind,
             r.rev,
             r.rev_actor
         ],
@@ -881,6 +897,11 @@ mod tests {
             episode_runtime: Some(120),
             media_type: "电影".to_string(),
             content_tags: Some("美国".to_string()),
+            tmdb_media_kind: None,
+            tmdb_id: None,
+            tmdb_parent_id: None,
+            tmdb_season_number: None,
+            series_record_kind: None,
             rev: 0,
             rev_actor: String::new(),
         }

@@ -263,13 +263,15 @@ function payloadForCommit(
   deviceId: string,
   now: string,
 ): SyncPayloadV3 {
-  const useV5 = current.schemaVersion === 5 || collectionState.collections.length > 0
+  const useV6 = current.schemaVersion === 6 || collectionState.collections.length > 0
+    || remote.records.some(record => record.tmdbId != null || record.tmdbParentId != null || record.tmdbSeasonNumber != null || record.seriesRecordKind != null);
+  const useV5 = current.schemaVersion === 5
     || collectionState.collectionMembers.length > 0 || collectionState.collectionTombstones.length > 0
     || collectionState.collectionMemberTombstones.length > 0;
   const useV4 = current.schemaVersion === 4 || episodeCompletions.length > 0
     || remote.records.some(record => record.episodeTrackingEnabled);
   return {
-    schemaVersion: useV5 ? 5 : useV4 ? 4 : 3,
+    schemaVersion: useV6 ? 6 : useV5 ? 5 : useV4 ? 4 : 3,
     documentId: current.documentId,
     revision: current.revision + 1,
     commitId: crypto.randomUUID(),
@@ -278,8 +280,8 @@ function payloadForCommit(
     committedAt: now,
     records: remote.records,
     tombstones: remote.tombstones,
-    ...(useV4 || useV5 ? { episodeCompletions } : {}),
-    ...(useV5 ? collectionState : {}),
+    ...(useV4 || useV5 || useV6 ? { episodeCompletions } : {}),
+    ...(useV5 || useV6 ? collectionState : {}),
   };
 }
 
@@ -448,6 +450,13 @@ export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<Syn
             throw new Error('collections_sync_upgrade_required');
           }
           await setSettingAsync('sync_v5_upgrade_confirmed', '1');
+        }
+        if (remotePayload.schemaVersion < 6 && nextPayload.schemaVersion === 6
+          && await getSettingAsync('sync_v6_upgrade_confirmed') !== '1') {
+          if (!window.confirm('系列类型和年代排序需要把云端同步格式升级到 V6。旧版程序将安全停止同步，所有设备都需要更新到支持 V6 的版本。是否继续？')) {
+            throw new Error('series_sync_upgrade_required');
+          }
+          await setSettingAsync('sync_v6_upgrade_confirmed', '1');
         }
         await prepareSyncPublishIntent({
           targetId: snapshot.targetId,

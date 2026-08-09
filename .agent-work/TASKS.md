@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 3 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003` 与 `TASK-D-UX-004` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 4 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1` 与 `TASK-D-UX-004` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1503,6 +1503,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-001-R2` | R2 | 检索体验 | IMPLEMENTED | 八区主工具栏、单一同步入口、更多操作和响应式地区收敛已实现 |
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | IMPLEMENTED | 扁平多对多收藏集、手工排序、TMDB 建议、本地 V3 与 WebDAV V5 已实现 |
+| `TASK-D-UX-003-R1` | R2 | 系列补全 | IMPLEMENTED | 本地系列识别、持久 TMDB 身份、缓存、完整季原子补充、年代排序、影视宇宙和表单归组已实现 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
 | `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
@@ -1617,7 +1618,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-SYNC-003：WebDAV 目标隔离与安全切换
 
-- Phase: IMPLEMENTATION
+- Phase: COMPLETED
 - Owner: Codex
 - Status: IMPLEMENTED
 - Priority: R0
@@ -1784,6 +1785,20 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Data Exchange: 完整本地备份升级为 V3；V2/旧数组导入保留仍有效的收藏集关系。WebDAV payload 升级为 V5，继续复用 `records-v3.json`、ETag 条件提交、target 隔离、publish intent 与 CAS；V3/V4 读取为空集合，首次 V5 发布必须确认，V6+ 明确拒绝。
 - Safety: 删除收藏集不删除 records；删除 record 同事务生成成员 tombstone；恢复点校验同时执行 `integrity_check` 与 `foreign_key_check`。360 px 详情采用上下布局且页面无横向溢出。
 - Acceptance Evidence: Node 108/108、Rust 78/78、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过；Playwright 78 项均执行，新增收藏集创建/加入/排序/安全删除、零隐式写入和 360 px 专项通过。Windows runner 在报告完成后仍存在既有 Vite 子进程不自动退出问题，外层命令会超时。
+
+### TASK-D-UX-003-R1：系列识别、完整季补充与归组体验重构
+
+- Phase: IMPLEMENTATION
+- Owner: Codex
+- Status: IMPLEMENTED
+- Priority: R2
+- Scope: 先以本地证据确认多季作品，再按需读取 TMDB 全部季并原子补充缺少季；电影、衍生剧和特别篇通过显式确认关联；收藏集按年代展示与排序；RecordForm 收敛归组入口。
+- Approved Design: `docs/SERIES_DISCOVERY_COMPLETION_DESIGN.md`。用户确认使用推荐方案，并补充成员标题末尾显示年代、按从老到新排列，以及解决编辑表单收藏集平铺混乱的问题。
+- Safety: 所有扫描与预览零业务写入；新增季只填充新记录且不覆盖已有记录；锁定记录不自动写身份；缓存仅本地；批量创建使用 Rust 单事务并在提交前复查重复。
+- Implementation: V18 以 `tmdb_identity_schema_version=1` 和 `collections_schema_version=2` 持久化 TMDB 身份、收藏集类型与排序模式；本地发现按 IMDb 去重、4 路并发、显示进度且可停止，成功/无结果缓存分别为 30/7 天。确认的 TMDB 剧集可一次查看全部季，已存在季禁用，已播常规缺失季默认选择，第 0 季默认隐藏；Rust `create_missing_seasons` 在一个事务中创建记录、成员、revision、generation、staging 与 outbox，并按 parent ID + season number 二次去重。影视宇宙通过显式搜索确认关联电影或衍生剧。
+- Data Exchange: 完整本地备份已升级为 V4，并兼容 V3；WebDAV 已升级为 V6，V5 安全补默认集合语义，V7+ 拒绝且零 PUT，首次 V6 发布需确认；派生缓存不参与交换。
+- UX: 成员标题显示年代；chronological 从老到新且未知最后，manual 保留上下排序。RecordForm 下部仅摘要最多两个归组，并通过可搜索管理器调整关系。
+- Acceptance Evidence: Node 113/113、Rust 79/79、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过。收藏集 Playwright 专项 3 项均执行且无失败，其中包括完整创建/加入/排序/安全删除、只读打开和 360 px；Windows runner 在报告后仍有既有 Vite 子进程不自动退出，外层命令超时。
 
 ### TASK-D-ARCH-001：跨语言类型生成
 

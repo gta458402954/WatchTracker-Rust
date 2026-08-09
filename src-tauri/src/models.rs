@@ -68,6 +68,11 @@ pub struct WatchRecord {
     pub episode_runtime: Option<i32>,
     pub media_type: String,
     pub content_tags: Option<String>,
+    pub tmdb_media_kind: Option<String>,
+    pub tmdb_id: Option<i64>,
+    pub tmdb_parent_id: Option<i64>,
+    pub tmdb_season_number: Option<i32>,
+    pub series_record_kind: Option<String>,
     #[serde(default)]
     pub rev: i64,
     #[serde(default)]
@@ -141,4 +146,14 @@ pub struct UpdateWatchRecord {
     pub media_type: Option<String>,
     #[serde(default)]
     pub content_tags: Patch<String>,
+    #[serde(default)]
+    pub tmdb_media_kind: Patch<String>,
+    #[serde(default)]
+    pub tmdb_id: Patch<i64>,
+    #[serde(default)]
+    pub tmdb_parent_id: Patch<i64>,
+    #[serde(default)]
+    pub tmdb_season_number: Patch<i32>,
+    #[serde(default)]
+    pub series_record_kind: Patch<String>,
 }

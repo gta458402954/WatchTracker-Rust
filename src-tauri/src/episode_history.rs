@@ -400,6 +400,11 @@ mod tests {
             episode_runtime: None,
             media_type: "剧集".into(),
             content_tags: None,
+            tmdb_media_kind: None,
+            tmdb_id: None,
+            tmdb_parent_id: None,
+            tmdb_season_number: None,
+            series_record_kind: None,
             rev: 1,
             rev_actor: "seed".into(),
         }

@@ -200,6 +200,24 @@ pub fn add_collection_members(
 }
 
 #[tauri::command]
+pub fn create_missing_seasons(
+    state: State<DbState>,
+    collection_id: String,
+    records: Vec<WatchRecord>,
+    expected_rev: i64,
+) -> Result<Vec<WatchRecord>, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::create_records_with_members(
+        &mut conn,
+        &collection_id,
+        records,
+        expected_rev,
+        &actor,
+    )
+}
+
+#[tauri::command]
 pub fn remove_collection_member(
     state: State<DbState>,
     collection_id: String,

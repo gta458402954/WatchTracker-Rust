@@ -15,6 +15,7 @@ function record(id: string, status: WatchRecord['status'] = '未看'): WatchReco
 const collection: WatchCollection = {
   id: 'collection-1', name: '测试系列', normalizedName: '测试系列', description: '端到端测试',
   sourceKind: 'manual', sourceKey: null, createdAt: '2026-08-09T00:00:00.000Z',
+  collectionKind: 'manual', orderMode: 'manual',
   updatedAt: '2026-08-09T00:00:00.000Z', rev: 1, revActor: 'mock-device',
 };
 

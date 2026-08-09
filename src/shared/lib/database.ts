@@ -23,14 +23,16 @@ export async function deleteRecord(id: string): Promise<void> {
 
 export const getCollections = (): Promise<WatchCollection[]> => invoke('get_collections');
 export const getCollectionMembers = (): Promise<CollectionMember[]> => invoke('get_collection_members');
-export const createCollection = (input: { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null }): Promise<WatchCollection> =>
+export const createCollection = (input: { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind']; orderMode?: WatchCollection['orderMode'] }): Promise<WatchCollection> =>
   invoke('create_collection', { input });
-export const updateCollection = (id: string, input: { name: string; description: string | null; expectedRev: number }): Promise<WatchCollection> =>
+export const updateCollection = (id: string, input: { name: string; description: string | null; expectedRev: number; orderMode?: WatchCollection['orderMode'] }): Promise<WatchCollection> =>
   invoke('update_collection', { id, input });
 export const deleteCollection = (id: string, expectedRev: number): Promise<void> =>
   invoke('delete_collection', { id, expectedRev });
 export const addCollectionMembers = (collectionId: string, recordIds: string[], expectedRev: number, sourceKind: 'manual' | 'tmdb' = 'manual'): Promise<CollectionMember[]> =>
   invoke('add_collection_members', { collectionId, recordIds, sourceKind, expectedRev });
+export const createMissingSeasons = (collectionId: string, records: WatchRecord[], expectedRev: number): Promise<WatchRecord[]> =>
+  invoke('create_missing_seasons', { collectionId, records, expectedRev });
 export const removeCollectionMember = (collectionId: string, recordId: string, expectedRev: number): Promise<void> =>
   invoke('remove_collection_member', { collectionId, recordId, expectedRev });
 export const reorderCollectionMembers = (collectionId: string, recordIds: string[], expectedRev: number): Promise<CollectionMember[]> =>
@@ -56,7 +58,7 @@ export const replaceLibrary = (records: WatchRecord[], episodeCompletions: Episo
 export const replaceLibraryV3 = (records: WatchRecord[], episodeCompletions: EpisodeCompletion[], collections: WatchCollection[], collectionMembers: CollectionMember[]): Promise<void> =>
   invoke('replace_library_v3', { records, episodeCompletions, collections, collectionMembers });
 
-export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'episode-history-migration' | 'collections-migration' | 'pre-restore';
+export type RecoveryReason = 'import' | 'sync' | 'batch-metadata' | 'migration' | 'target-migration' | 'episode-history-migration' | 'collections-migration' | 'series-identity-migration' | 'series-completion' | 'pre-restore';
 
 export interface RecoveryPoint {
   id: string;

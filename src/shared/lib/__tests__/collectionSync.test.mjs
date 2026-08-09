@@ -5,7 +5,7 @@ import { parseSyncPayloadV3 } from '../syncMerge.ts';
 
 const collection = (fields = {}) => ({
   id: 'c1', name: '系列', normalizedName: '系列', description: null, sourceKind: 'manual', sourceKey: null,
-  createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', rev: 1, revActor: 'base', ...fields,
+  collectionKind: 'manual', orderMode: 'manual', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', rev: 1, revActor: 'base', ...fields,
 });
 const member = (fields = {}) => ({
   id: 'm1', collectionId: 'c1', recordId: 'r1', position: 0, sourceKind: 'manual',
@@ -39,5 +39,17 @@ describe('TASK-D-UX-003 collection synchronization', () => {
     assert.throws(() => parseSyncPayloadV3({ ...base, schemaVersion: 5, episodeCompletions: [] }), /invalid_remote_payload/);
     const v5 = parseSyncPayloadV3({ ...base, schemaVersion: 5, episodeCompletions: [], ...emptyCollectionState() });
     assert.equal(v5.schemaVersion, 5);
+  });
+
+  test('V6 carries collection kind and order mode while V5 receives safe defaults', () => {
+    const base = { documentId: 'd', revision: 1, commitId: 'c', parentCommitId: null, writerId: 'w', committedAt: '2026-01-01T00:00:00Z', records: [], tombstones: [], episodeCompletions: [], collectionMembers: [], collectionTombstones: [], collectionMemberTombstones: [] };
+    const legacy = { ...collection() };
+    delete legacy.collectionKind; delete legacy.orderMode;
+    const v5 = parseSyncPayloadV3({ ...base, schemaVersion: 5, collections: [legacy] });
+    assert.equal(v5.collections[0].collectionKind, 'manual');
+    assert.equal(v5.collections[0].orderMode, 'manual');
+    const v6 = parseSyncPayloadV3({ ...base, schemaVersion: 6, collections: [collection({ collectionKind: 'universe', orderMode: 'chronological' })] });
+    assert.equal(v6.collections[0].collectionKind, 'universe');
+    assert.throws(() => parseSyncPayloadV3({ ...base, schemaVersion: 6, collections: [legacy] }), /invalid_remote_payload/);
   });
 });
