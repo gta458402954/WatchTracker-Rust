@@ -80,6 +80,13 @@ export interface CollectionMember {
   revActor: string;
 }
 
+export interface CollectionDraft {
+  temporaryId: string;
+  name: string;
+  description: string | null;
+  collectionKind: WatchCollection['collectionKind'];
+}
+
 export interface CollectionTombstone { id: string; deletedAt: string; rev: number; revActor: string }
 export interface CollectionMemberTombstone extends CollectionTombstone { collectionId: string; recordId: string }
 

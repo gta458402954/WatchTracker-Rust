@@ -25,7 +25,9 @@ export const getCollections = (): Promise<WatchCollection[]> => invoke('get_coll
 export const getCollectionMembers = (): Promise<CollectionMember[]> => invoke('get_collection_members');
 export const createCollection = (input: { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind']; orderMode?: WatchCollection['orderMode'] }): Promise<WatchCollection> =>
   invoke('create_collection', { input });
-export const updateCollection = (id: string, input: { name: string; description: string | null; expectedRev: number; orderMode?: WatchCollection['orderMode'] }): Promise<WatchCollection> =>
+export const createCollectionForRecord = (input: { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind']; orderMode?: WatchCollection['orderMode'] }, recordId: string): Promise<WatchCollection> =>
+  invoke('create_collection_for_record', { input, recordId });
+export const updateCollection = (id: string, input: { name: string; description: string | null; expectedRev: number; orderMode?: WatchCollection['orderMode']; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind'] }): Promise<WatchCollection> =>
   invoke('update_collection', { id, input });
 export const deleteCollection = (id: string, expectedRev: number): Promise<void> =>
   invoke('delete_collection', { id, expectedRev });

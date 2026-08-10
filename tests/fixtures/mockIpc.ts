@@ -228,9 +228,23 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               recordsGeneration += 1; queueOutbox('collection-create');
               return structuredClone(collection);
             }
+            case 'create_collection_for_record': {
+              requireKeys(command, args, ['input', 'recordId']);
+              const input = args.input as { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind']; orderMode?: WatchCollection['orderMode'] };
+              if (!snapshot.records.some(item => item.id === args.recordId)) throw new Error('collection_reference_invalid');
+              const normalizedName = input.name.trim().toLocaleLowerCase();
+              if (collections.some(item => item.normalizedName === normalizedName)) throw new Error('collection_name_duplicate');
+              const now = new Date().toISOString();
+              const collection: WatchCollection = { id: `collection-${collections.length + 1}`, name: input.name.trim(), normalizedName, description: input.description, sourceKind: input.sourceKind ?? 'manual', sourceKey: input.sourceKey ?? null, collectionKind: input.collectionKind ?? 'manual', orderMode: input.orderMode ?? 'manual', createdAt: now, updatedAt: now, rev: 1, revActor: 'mock-device' };
+              const member: CollectionMember = { id: `member-${collection.id}-${args.recordId}`, collectionId: collection.id, recordId: args.recordId as string, position: 0, sourceKind: 'manual', createdAt: now, updatedAt: now, rev: 1, revActor: 'mock-device' };
+              collections = [...collections, collection]; collectionMembers = [...collectionMembers, member];
+              snapshot.collections = collections; snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('collection-create-for-record');
+              return structuredClone(collection);
+            }
             case 'update_collection': {
               requireKeys(command, args, ['id', 'input']);
-              const input = args.input as { name: string; description: string | null; expectedRev: number; orderMode?: WatchCollection['orderMode'] };
+              const input = args.input as { name: string; description: string | null; expectedRev: number; orderMode?: WatchCollection['orderMode']; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind'] };
               const index = collections.findIndex(item => item.id === args.id);
               if (index < 0) throw new Error('collection_missing');
               if (collections[index].rev !== input.expectedRev) throw new Error('stale_collection');
@@ -239,6 +253,9 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 name: input.name.trim(),
                 normalizedName: input.name.trim().toLocaleLowerCase(),
                 description: input.description,
+                sourceKind: input.sourceKind ?? collections[index].sourceKind,
+                sourceKey: input.sourceKey ?? collections[index].sourceKey,
+                collectionKind: input.collectionKind ?? collections[index].collectionKind,
                 orderMode: input.orderMode ?? collections[index].orderMode,
                 updatedAt: new Date().toISOString(),
                 rev: input.expectedRev + 1,

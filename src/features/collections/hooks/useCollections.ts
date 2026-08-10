@@ -3,6 +3,7 @@ import type { CollectionMember, WatchCollection } from '../../../shared/types';
 import {
   addCollectionMembers,
   createCollection,
+  createCollectionForRecord,
   deleteCollection,
   getCollectionMembers,
   getCollections,
@@ -23,7 +24,13 @@ export function useCollections() {
   }, []);
 
   const create = useCallback(async (name: string, description: string | null = null, collectionKind: WatchCollection['collectionKind'] = 'manual') => {
-    const value = await createCollection({ name, description, sourceKind: 'manual', sourceKey: null, collectionKind, orderMode: collectionKind === 'universe' ? 'chronological' : 'manual' });
+    const value = await createCollection({ name, description, sourceKind: 'manual', sourceKey: null, collectionKind, orderMode: collectionKind === 'manual' ? 'manual' : 'chronological' });
+    await refresh();
+    return value;
+  }, [refresh]);
+
+  const createForRecord = useCallback(async (name: string, description: string | null, collectionKind: WatchCollection['collectionKind'], recordId: string) => {
+    const value = await createCollectionForRecord({ name, description, sourceKind: 'manual', sourceKey: null, collectionKind, orderMode: collectionKind === 'manual' ? 'manual' : 'chronological' }, recordId);
     await refresh();
     return value;
   }, [refresh]);
@@ -36,6 +43,12 @@ export function useCollections() {
 
   const setOrderMode = useCallback(async (collection: WatchCollection, orderMode: WatchCollection['orderMode']) => {
     const value = await updateCollection(collection.id, { name: collection.name, description: collection.description, expectedRev: collection.rev, orderMode });
+    await refresh();
+    return value;
+  }, [refresh]);
+
+  const bindSource = useCallback(async (collection: WatchCollection, sourceKind: WatchCollection['sourceKind'], sourceKey: string, collectionKind: WatchCollection['collectionKind']) => {
+    const value = await updateCollection(collection.id, { name: collection.name, description: collection.description, expectedRev: collection.rev, sourceKind, sourceKey, collectionKind, orderMode: 'chronological' });
     await refresh();
     return value;
   }, [refresh]);
@@ -67,5 +80,5 @@ export function useCollections() {
     await refresh();
   }, [collections, refresh]);
 
-  return { collections, members, refresh, create, update, setOrderMode, remove, addMembers, removeMember, reorder, applySuggestion };
+  return { collections, members, refresh, create, createForRecord, update, setOrderMode, bindSource, remove, addMembers, removeMember, reorder, applySuggestion };
 }

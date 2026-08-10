@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { WatchRecord, MediaType, Status } from '../shared/types';
+import { WatchRecord, MediaType, Status, type CollectionDraft } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
 import StatsBar from '../features/watchlist/components/StatsBar';
 import RecordForm from '../features/watchlist/components/RecordForm';
@@ -333,7 +333,7 @@ export default function App() {
     setShowForm(true);
   }
 
-  async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>, collectionIds: string[] = []) {
+  async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>, collectionIds: string[] = [], collectionDrafts: CollectionDraft[] = []) {
     const today = localDateString();
     if (data.status === '在看' && !data.startDate) data.startDate = today;
     if (data.status === '已看' && !data.endDate) data.endDate = today;
@@ -369,6 +369,9 @@ export default function App() {
         for (const member of currentMembers.filter(member => !selected.has(member.collectionId))) await collectionState.removeMember(member);
         const currentIds = new Set(currentMembers.map(member => member.collectionId));
         for (const collection of collectionState.collections.filter(collection => selected.has(collection.id) && !currentIds.has(collection.id))) await collectionState.addMembers(collection, [savedRecord.id]);
+        for (const draft of collectionDrafts) {
+          await collectionState.createForRecord(draft.name, draft.description, draft.collectionKind, savedRecord.id);
+        }
       } catch (membershipError) {
         reportOperationFailure('App.SaveRecordCollections', membershipError);
         notify('warning', '条目已保存，但收藏集更新失败，请在收藏集中心重试。');
@@ -657,6 +660,7 @@ export default function App() {
           onCreate={collectionState.create}
           onUpdate={collectionState.update}
           onSetOrderMode={collectionState.setOrderMode}
+          onBindSource={collectionState.bindSource}
           onDelete={collectionState.remove}
           onAddMembers={collectionState.addMembers}
           onRemoveMember={collectionState.removeMember}

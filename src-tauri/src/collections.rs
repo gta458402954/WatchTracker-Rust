@@ -84,6 +84,12 @@ pub struct UpdateCollectionInput {
     pub expected_rev: i64,
     #[serde(default)]
     pub order_mode: Option<String>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub source_key: Option<String>,
+    #[serde(default)]
+    pub collection_kind: Option<String>,
 }
 
 fn manual_source() -> String {
@@ -501,6 +507,67 @@ pub fn create(
     Ok(value)
 }
 
+pub fn create_for_record(
+    conn: &mut Connection,
+    input: CreateCollectionInput,
+    record_id: &str,
+    actor: &str,
+) -> Result<Collection, AppError> {
+    let (name, normalized) = normalized_name(&input.name)?;
+    let description = description(input.description)?;
+    let (source_kind, source_key) = validate_source(&input.source_kind, input.source_key)?;
+    let (collection_kind, order_mode) =
+        collection_behavior(&source_kind, input.collection_kind, input.order_mode)?;
+    let timestamp = now();
+    let id = Uuid::new_v4().to_string();
+    let tx = conn.transaction()?;
+    if !tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM records WHERE id=?1)",
+        [record_id],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(AppError::General("collection_reference_invalid".into()));
+    }
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM collections WHERE normalizedName=?1)",
+        [&normalized],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(AppError::General("collection_name_duplicate".into()));
+    }
+    tx.execute("INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,collectionKind,orderMode,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,1,?10)", params![id,name,normalized,description,source_kind,source_key,collection_kind,order_mode,timestamp,actor])?;
+    let member_id = member_id(&id, record_id);
+    tx.execute("INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,0,'manual',?4,?4,1,?5)", params![member_id,id,record_id,timestamp,actor])?;
+    tx.execute("DELETE FROM collection_tombstones WHERE id=?1", [&id])?;
+    tx.execute(
+        "DELETE FROM collection_member_tombstones WHERE id=?1",
+        [&member_id],
+    )?;
+    let generation = mark_local_records_mutated(&tx, "collection-create-for-record")?;
+    let value = get(&tx, &id)?;
+    let member = tx.query_row(
+        "SELECT * FROM collection_members WHERE id=?1",
+        [&member_id],
+        map_member,
+    )?;
+    crate::sync_staging::stage_entity_upsert(
+        &tx,
+        "collection",
+        &id,
+        serde_json::to_value(&value).map_err(|error| AppError::General(error.to_string()))?,
+        generation,
+    )?;
+    crate::sync_staging::stage_entity_upsert(
+        &tx,
+        "collection-member",
+        &member_id,
+        serde_json::to_value(&member).map_err(|error| AppError::General(error.to_string()))?,
+        generation,
+    )?;
+    tx.commit()?;
+    Ok(value)
+}
+
 pub fn update(
     conn: &mut Connection,
     id: &str,
@@ -515,14 +582,33 @@ pub fn update(
     if current.rev != input.expected_rev {
         return Err(AppError::General("stale_collection".into()));
     }
-    let order_mode = input
-        .order_mode
-        .unwrap_or_else(|| current.order_mode.clone());
-    if !matches!(order_mode.as_str(), "manual" | "chronological") {
-        return Err(AppError::General("collection_order_mode_invalid".into()));
-    }
+    let source_kind = input
+        .source_kind
+        .unwrap_or_else(|| current.source_kind.clone());
+    let source_key = if source_kind == current.source_kind && input.source_key.is_none() {
+        current.source_key.clone()
+    } else {
+        input.source_key
+    };
+    let (source_kind, source_key) = validate_source(&source_kind, source_key)?;
+    let (collection_kind, order_mode) = collection_behavior(
+        &source_kind,
+        Some(
+            input
+                .collection_kind
+                .unwrap_or_else(|| current.collection_kind.clone()),
+        ),
+        Some(
+            input
+                .order_mode
+                .unwrap_or_else(|| current.order_mode.clone()),
+        ),
+    )?;
     if current.name == name
         && current.description == description
+        && current.source_kind == source_kind
+        && current.source_key == source_key
+        && current.collection_kind == collection_kind
         && current.order_mode == order_mode
     {
         tx.commit()?;
@@ -535,7 +621,7 @@ pub fn update(
     )? {
         return Err(AppError::General("collection_name_duplicate".into()));
     }
-    tx.execute("UPDATE collections SET name=?2, normalizedName=?3, description=?4, orderMode=?5, updatedAt=?6, rev=rev+1, revActor=?7 WHERE id=?1", params![id,name,normalized,description,order_mode,timestamp,actor])?;
+    tx.execute("UPDATE collections SET name=?2, normalizedName=?3, description=?4, sourceKind=?5, sourceKey=?6, collectionKind=?7, orderMode=?8, updatedAt=?9, rev=rev+1, revActor=?10 WHERE id=?1", params![id,name,normalized,description,source_kind,source_key,collection_kind,order_mode,timestamp,actor])?;
     let generation = mark_local_records_mutated(&tx, "collection-update")?;
     let value = get(&tx, id)?;
     crate::sync_staging::stage_entity_upsert(
@@ -1094,6 +1180,46 @@ mod tests {
     }
 
     #[test]
+    fn record_editor_collection_creation_commits_collection_and_member_together() {
+        let mut conn = database();
+        let collection = create_for_record(
+            &mut conn,
+            CreateCollectionInput {
+                name: "权力的游戏".into(),
+                description: None,
+                source_kind: "manual".into(),
+                source_key: None,
+                collection_kind: Some("tv-series".into()),
+                order_mode: Some("chronological".into()),
+            },
+            "one",
+            "device",
+        )
+        .unwrap();
+        assert_eq!(collection.collection_kind, "tv-series");
+        let members = all_members(&conn).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].record_id, "one");
+        let before = all(&conn).unwrap();
+        let error = create_for_record(
+            &mut conn,
+            CreateCollectionInput {
+                name: "无效引用".into(),
+                description: None,
+                source_kind: "manual".into(),
+                source_key: None,
+                collection_kind: None,
+                order_mode: None,
+            },
+            "missing",
+            "device",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("collection_reference_invalid"));
+        assert_eq!(all(&conn).unwrap(), before);
+    }
+
+    #[test]
     fn duplicate_name_and_stale_revision_do_not_write() {
         let mut conn = database();
         let collection = create(
@@ -1131,6 +1257,9 @@ mod tests {
                 description: None,
                 expected_rev: 0,
                 order_mode: None,
+                source_kind: None,
+                source_key: None,
+                collection_kind: None,
             },
             "device",
         )

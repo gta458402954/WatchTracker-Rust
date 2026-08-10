@@ -133,6 +133,7 @@ pub fn run() {
             commands::get_collections,
             commands::get_collection_members,
             commands::create_collection,
+            commands::create_collection_for_record,
             commands::update_collection,
             commands::delete_collection,
             commands::add_collection_members,

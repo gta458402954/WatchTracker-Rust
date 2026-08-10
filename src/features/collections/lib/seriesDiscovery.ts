@@ -1,18 +1,52 @@
 import type { WatchRecord } from '../../../shared/types';
 import type { TmdbSeason } from '../../../shared/lib/classification';
 
-const SEASON_PATTERNS = [
+const ARABIC_SEASON_PATTERNS = [
   /第\s*(\d+)\s*季/i,
   /\bSeason\s*(\d+)\b/i,
   /\bS(\d{1,3})(?:E\d+)?\b/i,
 ];
+const CHINESE_SEASON_PATTERN = /第\s*([零〇一二两三四五六七八九十百]+)\s*季/i;
+
+function chineseNumber(value: string): number | null {
+  const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if ([...value].every(character => character in digits)) {
+    const number = Number([...value].map(character => digits[character]).join(''));
+    return Number.isInteger(number) && number >= 0 && number <= 99 ? number : null;
+  }
+  const hundred = value.indexOf('百');
+  const ten = value.indexOf('十');
+  let number = 0;
+  if (hundred >= 0) number += (hundred === 0 ? 1 : digits[value[hundred - 1]]) * 100;
+  if (ten >= 0) number += (ten === 0 || (hundred >= 0 && ten === hundred + 1) ? 1 : digits[value[ten - 1]]) * 10;
+  const last = value.at(-1)!;
+  if (last !== '百' && last !== '十') number += digits[last] ?? 0;
+  return Number.isInteger(number) && number >= 0 && number <= 99 ? number : null;
+}
+
+function seasonOfText(value: string | null | undefined): number | null {
+  if (!value) return null;
+  for (const pattern of ARABIC_SEASON_PATTERNS) {
+    const match = value.match(pattern);
+    if (match) return Number(match[1]);
+  }
+  const chinese = value.match(CHINESE_SEASON_PATTERN);
+  return chinese ? chineseNumber(chinese[1]) : null;
+}
+
+export function seriesBaseName(value: string | null | undefined): string {
+  return (value ?? '')
+    .replace(/第\s*\d+\s*季/ig, '')
+    .replace(CHINESE_SEASON_PATTERN, '')
+    .replace(/\bSeason\s*\d+\b/ig, '')
+    .replace(/\bS\d{1,3}(?:E\d+)?\b/ig, '')
+    .trim();
+}
 
 export function seasonNumberOf(record: Pick<WatchRecord, 'chineseName' | 'originalName' | 'progress'>): number | null {
   for (const value of [record.chineseName, record.originalName, record.progress]) {
-    for (const pattern of SEASON_PATTERNS) {
-      const match = value?.match(pattern);
-      if (match) return Number(match[1]);
-    }
+    const season = seasonOfText(value);
+    if (season !== null) return season;
   }
   return null;
 }
@@ -35,13 +69,12 @@ export function locallyKnownSeries(records: WatchRecord[]): Array<{ key: string;
   for (const record of records) {
     const season = seasonNumberOf(record);
     if (season == null) continue;
-    const base = (record.chineseName || record.originalName)
-      .replace(/第\s*\d+\s*季/ig, '')
-      .replace(/\bSeason\s*\d+\b/ig, '')
-      .replace(/\bS\d{1,3}(?:E\d+)?\b/ig, '')
-      .trim();
+    const chineseBase = seriesBaseName(record.chineseName);
+    const originalBase = seriesBaseName(record.originalName);
+    const base = chineseBase || originalBase;
     if (!base) continue;
-    const key = record.imdbId?.trim().toLowerCase() || `title:${base.toLowerCase()}`;
+    const identity = record.tmdbParentId ? `tmdb:${record.tmdbParentId}` : null;
+    const key = identity || record.imdbId?.trim().toLowerCase() || `title:${base.toLowerCase()}\0${originalBase.toLowerCase()}`;
     const group = groups.get(key) ?? { name: base, recordIds: [], seasons: [] };
     group.recordIds.push(record.id);
     if (!group.seasons.includes(season)) group.seasons.push(season);

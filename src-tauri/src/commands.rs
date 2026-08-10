@@ -158,6 +158,17 @@ pub fn create_collection(
 }
 
 #[tauri::command]
+pub fn create_collection_for_record(
+    state: State<DbState>,
+    input: crate::collections::CreateCollectionInput,
+    record_id: String,
+) -> Result<crate::collections::Collection, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::create_for_record(&mut conn, input, &record_id, &actor)
+}
+
+#[tauri::command]
 pub fn update_collection(
     state: State<DbState>,
     id: String,

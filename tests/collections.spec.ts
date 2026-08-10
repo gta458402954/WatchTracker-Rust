@@ -92,3 +92,24 @@ test('@collections remains page-safe at 360px', async ({ page }) => {
   await page.getByRole('button', { name: '返回收藏集' }).click();
   await expect(page.getByPlaceholder('搜索收藏集')).toBeVisible();
 });
+
+test('@collections creates a staged collection from record editing only when the record is saved', async ({ page }) => {
+  await setupMockIpc(page, { records: [record('权力的游戏 第 1 季')] });
+  await page.goto('/');
+  await page.getByTitle('编辑').click();
+  await expect(page.getByRole('heading', { name: '编辑记录' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '整理与归组' })).toBeVisible();
+  await page.getByRole('button', { name: '管理' }).click();
+  const manager = page.getByRole('dialog', { name: '管理所属收藏集' });
+  await manager.getByRole('button', { name: '新建' }).click();
+  await manager.getByPlaceholder('收藏集名称').fill('权力的游戏');
+  await manager.locator('select').selectOption('tv-series');
+  await manager.getByRole('button', { name: '加入待创建列表' }).click();
+  await manager.getByRole('button', { name: '完成' }).click();
+  expect((await mockSnapshot(page)).collections).toHaveLength(0);
+  await page.getByRole('button', { name: '保存修改' }).click();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.collections).toHaveLength(1);
+  expect(snapshot.collections[0].collectionKind).toBe('tv-series');
+  expect(snapshot.collectionMembers).toHaveLength(1);
+});

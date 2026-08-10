@@ -1800,6 +1800,16 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - UX: 成员标题显示年代；chronological 从老到新且未知最后，manual 保留上下排序。RecordForm 下部仅摘要最多两个归组，并通过可搜索管理器调整关系。
 - Acceptance Evidence: Node 113/113、Rust 79/79、typecheck、lint、生产 build、rustfmt 与严格 Clippy 全部通过。收藏集 Playwright 专项 3 项均执行且无失败，其中包括完整创建/加入/排序/安全删除、只读打开和 360 px；Windows runner 在报告后仍有既有 Vite 子进程不自动退出，外层命令超时。
 
+### TASK-D-UX-003-R2：收藏集发现、缺失条目与元数据补充重构
+
+- Phase: IMPLEMENTATION
+- Owner: Codex
+- Status: IN-PROGRESS
+- Priority: R1
+- Approved Design: `docs/COLLECTION_DISCOVERY_REWORK_DESIGN.md`。用户要求修正全库 350 项误扫描、已有系列重复建议、中文季数拆组、手工系列无法检查缺失内容、影视宇宙功能互斥、记录内无法新建收藏集，以及自动补充季元数据不完整。
+- Data Boundary: 数据库主版本继续为 V18；扫描和预览零业务写入；旧数据不在启动时自动整理；新记录只填 TMDB 可用字段，已有记录只填缺失字段。
+- Implementation Progress: 已实现中文季数归一、统一季元数据映射、全局扫描入口、已有集合差异过滤、四类收藏集创建、手工电视剧系列稳定来源绑定、影视宇宙缺失条目入口、多父剧选择、记录内收藏集草稿，以及收藏集与当前记录成员关系的 Rust 原子创建命令。完整门禁与便携版验收完成后再改为 IMPLEMENTED。
+
 ### TASK-D-ARCH-001：跨语言类型生成
 
 - Phase: DEFERRED
