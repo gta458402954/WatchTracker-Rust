@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import type { CollectionMember, WatchCollection } from '../../../shared/types';
 import {
   addCollectionMembers,
+  applyCollectionSuggestion,
   createCollection,
   createCollectionForRecord,
   deleteCollection,
@@ -73,10 +74,9 @@ export function useCollections() {
     await refresh();
   }, [refresh]);
 
-  const applySuggestion = useCallback(async (name: string, sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show', sourceKey: string, recordIds: string[]) => {
-    let collection = collections.find(item => item.sourceKey === sourceKey);
-    if (!collection) collection = await createCollection({ name, description: null, sourceKind, sourceKey });
-    await addCollectionMembers(collection.id, recordIds, collection.rev, 'tmdb');
+  const applySuggestion = useCallback(async (name: string, sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show', sourceKey: string, recordIds: string[], targetCollectionId?: string) => {
+    const collection = targetCollectionId ? collections.find(item => item.id === targetCollectionId) : collections.find(item => item.sourceKey === sourceKey);
+    await applyCollectionSuggestion({ name, sourceKind, sourceKey, recordIds, targetCollectionId: collection?.id ?? null, expectedRev: collection?.rev ?? null });
     await refresh();
   }, [collections, refresh]);
 

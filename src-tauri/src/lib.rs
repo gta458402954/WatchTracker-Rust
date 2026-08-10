@@ -137,6 +137,7 @@ pub fn run() {
             commands::update_collection,
             commands::delete_collection,
             commands::add_collection_members,
+            commands::apply_collection_suggestion,
             commands::create_missing_seasons,
             commands::remove_collection_member,
             commands::reorder_collection_members,

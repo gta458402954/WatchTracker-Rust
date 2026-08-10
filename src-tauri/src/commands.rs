@@ -211,6 +211,16 @@ pub fn add_collection_members(
 }
 
 #[tauri::command]
+pub fn apply_collection_suggestion(
+    state: State<DbState>,
+    input: crate::collections::ApplyCollectionSuggestionInput,
+) -> Result<crate::collections::Collection, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::apply_suggestion(&mut conn, input, &actor)
+}
+
+#[tauri::command]
 pub fn create_missing_seasons(
     state: State<DbState>,
     collection_id: String,

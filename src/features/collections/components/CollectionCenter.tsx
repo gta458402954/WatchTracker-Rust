@@ -6,8 +6,8 @@ import SafePosterImage from '../../watchlist/components/SafePosterImage';
 import { getTmdbDetailAsync, searchTmdbAsync } from '../../../shared/lib/database';
 import type { TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
 import { getEmptyRecord } from '../../../shared/lib/constants';
-import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, readIdentityCache, seasonNumberOf, seriesBaseName, writeIdentityCache } from '../lib/seriesDiscovery';
-import { seasonRecordMetadata } from '../lib/tmdbRecordMapping';
+import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, readIdentityCache, seasonNumberOf, seriesBaseName, tvSourceKey, writeIdentityCache } from '../lib/seriesDiscovery';
+import { movieRecordMetadata, seasonRecordMetadata } from '../lib/tmdbRecordMapping';
 
 interface Props {
   records: WatchRecord[];
@@ -21,14 +21,23 @@ interface Props {
   onAddMembers: (collection: WatchCollection, recordIds: string[]) => Promise<void>;
   onRemoveMember: (member: CollectionMember) => Promise<void>;
   onReorder: (collection: WatchCollection, recordIds: string[]) => Promise<void>;
-  onApplySuggestion: (name: string, sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show', sourceKey: string, recordIds: string[]) => Promise<void>;
+  onApplySuggestion: (name: string, sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show', sourceKey: string, recordIds: string[], targetCollectionId?: string) => Promise<void>;
   onCreateMissingSeasons: (collection: WatchCollection, records: WatchRecord[]) => Promise<void>;
   onEditRecord: (record: WatchRecord) => void;
   onClose: () => void;
   onNotify: (tone: 'success' | 'warning' | 'error' | 'info', message: string) => void;
 }
 
-interface CollectionSuggestion { name: string; sourceKind: 'manual' | 'tmdb-movie-collection' | 'tmdb-tv-show'; sourceKey: string; recordIds: string[] }
+interface CollectionSuggestion {
+  name: string;
+  sourceKind: 'manual' | 'tmdb-movie-collection' | 'tmdb-tv-show';
+  sourceKey: string;
+  recordIds: string[];
+  targetCollectionId?: string;
+  requiresBinding?: boolean;
+}
+interface ScanMatchChoice { id: number; mediaType: 'movie' | 'tv'; label: string }
+interface ScanAmbiguity { imdbId: string; recordIds: string[]; choices: ScanMatchChoice[] }
 
 function errorText(error: unknown): string {
   const value = String(error);
@@ -55,9 +64,12 @@ export default function CollectionCenter(props: Props) {
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
   const cancelScanRef = useRef(false);
   const [suggestions, setSuggestions] = useState<CollectionSuggestion[]>([]);
+  const [scanAmbiguities, setScanAmbiguities] = useState<ScanAmbiguity[]>([]);
   const [seasonDetail, setSeasonDetail] = useState<TmdbMedia | null>(null);
   const [selectedSeasonNumbers, setSelectedSeasonNumbers] = useState<Set<number>>(() => new Set());
   const [showSpecials, setShowSpecials] = useState(false);
+  const [movieCollectionDetail, setMovieCollectionDetail] = useState<TmdbMedia | null>(null);
+  const [selectedMovieIds, setSelectedMovieIds] = useState<Set<number>>(() => new Set());
   const [parentChoices, setParentChoices] = useState<Array<{ id: number; name: string }>>([]);
   const [linkingRelated, setLinkingRelated] = useState(false);
   const [relatedSearch, setRelatedSearch] = useState('');
@@ -90,6 +102,26 @@ export default function CollectionCenter(props: Props) {
   });
   const visibleCollections = collections.filter(item => item.name.toLowerCase().includes(search.trim().toLowerCase()));
   const watchedCount = selectedMembers.filter(item => recordById.get(item.recordId)?.status === '已看').length;
+  const selectedParentIds = [...new Set(selectedMembers
+    .map(member => recordById.get(member.recordId)?.tmdbParentId)
+    .filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0))];
+
+  function reconcileSuggestion(item: CollectionSuggestion): CollectionSuggestion | null {
+    const itemIds = new Set(item.recordIds);
+    const parentId = item.sourceKey.startsWith('tmdb:tv-show:') ? Number(item.sourceKey.slice('tmdb:tv-show:'.length)) : null;
+    const existingCollection = collections.find(collection => {
+      if (collection.sourceKey === item.sourceKey) return true;
+      const collectionRecords = members.filter(member => member.collectionId === collection.id).map(member => recordById.get(member.recordId)).filter(Boolean) as WatchRecord[];
+      const collectionParentIds = [...new Set(collectionRecords.map(record => record.tmdbParentId).filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0))];
+      if (parentId != null && collectionParentIds.length === 1 && collectionParentIds[0] === parentId) return true;
+      return collectionRecords.some(record => itemIds.has(record.id)) && collection.normalizedName === item.name.trim().toLowerCase();
+    });
+    if (!existingCollection) return item;
+    const existingIds = new Set(members.filter(member => member.collectionId === existingCollection.id).map(member => member.recordId));
+    const requiresBinding = item.sourceKind !== 'manual' && existingCollection.sourceKey !== item.sourceKey;
+    const value = { ...item, targetCollectionId: existingCollection.id, requiresBinding, recordIds: item.recordIds.filter(id => !existingIds.has(id)) };
+    return value.recordIds.length > 0 || value.requiresBinding ? value : null;
+  }
 
   async function run(action: () => Promise<void>, success: string) {
     setBusy(true);
@@ -144,14 +176,24 @@ export default function CollectionCenter(props: Props) {
 
   async function scanSuggestions() {
     cancelScanRef.current = false;
+    setScanAmbiguities([]);
     setScanning(true);
     const grouped = new Map<string, CollectionSuggestion>();
     let failures = 0;
     for (const candidate of locallyKnownSeries(records)) {
-      grouped.set(`local:${candidate.key}`, { name: candidate.name, sourceKind: 'manual', sourceKey: `local:${candidate.key}`, recordIds: candidate.recordIds });
+      const stable = candidate.tmdbParentId != null;
+      const sourceKey = stable ? tvSourceKey(candidate.tmdbParentId!) : `local:${candidate.key}`;
+      const current = grouped.get(sourceKey) ?? {
+        name: candidate.name,
+        sourceKind: stable ? 'tmdb-tv-show' as const : 'manual' as const,
+        sourceKey,
+        recordIds: [],
+      };
+      for (const recordId of candidate.recordIds) if (!current.recordIds.includes(recordId)) current.recordIds.push(recordId);
+      grouped.set(sourceKey, current);
     }
     const byImdb = new Map<string, WatchRecord[]>();
-    for (const record of records.filter(item => item.imdbId)) {
+    for (const record of records.filter(item => item.imdbId && !item.tmdbParentId)) {
       const key = record.imdbId!.trim().toLowerCase();
       byImdb.set(key, [...(byImdb.get(key) ?? []), record]);
     }
@@ -166,11 +208,22 @@ export default function CollectionCenter(props: Props) {
       try {
         const cached = readIdentityCache<{ searchResult: Awaited<ReturnType<typeof searchTmdbAsync>>; detail: Awaited<ReturnType<typeof getTmdbDetailAsync>> | null }>(imdbId);
         const searchResult = cached?.searchResult ?? await searchTmdbAsync({ query: imdbId, language: 'zh-CN' });
-        const match = searchResult.results?.find(item => item.id != null && item.media_type && ['movie', 'tv', 'tv_season'].includes(item.media_type));
-        if (!match?.id && !match?.show_id) { writeIdentityCache(imdbId, { searchResult, detail: null }, false); failures += 1; continue; }
-        const isTv = match.media_type !== 'movie';
-        const id = match.media_type === 'tv_season' ? match.show_id : match.id;
-        if (id == null) { failures += 1; continue; }
+        const matches = (searchResult.results ?? []).reduce<ScanMatchChoice[]>((values, item) => {
+          let choice: ScanMatchChoice | null = null;
+          if (item.media_type === 'movie' && item.id != null) choice = { id: item.id, mediaType: 'movie', label: item.title || item.original_title || `TMDB ${item.id}` };
+          if (item.media_type === 'tv' && item.id != null) choice = { id: item.id, mediaType: 'tv', label: item.name || item.original_name || `TMDB ${item.id}` };
+          if (item.media_type === 'tv_season' && item.show_id != null) choice = { id: item.show_id, mediaType: 'tv', label: item.name || `TMDB ${item.show_id}` };
+          if (choice && !values.some(other => other.id === choice.id && other.mediaType === choice.mediaType)) values.push(choice);
+          return values;
+        }, []);
+        if (matches.length !== 1) {
+          if (matches.length > 1) setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices: matches }]);
+          else { writeIdentityCache(imdbId, { searchResult, detail: null }, false); failures += 1; }
+          continue;
+        }
+        const match = matches[0];
+        const isTv = match.mediaType === 'tv';
+        const id = match.id;
         const detailResult = cached?.detail ?? await getTmdbDetailAsync({ id, mediaType: isTv ? 'tv' : 'movie', language: 'zh-CN' });
         writeIdentityCache(imdbId, { searchResult, detail: detailResult }, true);
         const detail = detailResult.data;
@@ -187,17 +240,34 @@ export default function CollectionCenter(props: Props) {
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
-    const found = [...grouped.values()].map(item => {
-      const existingCollection = collections.find(collection => collection.sourceKey === item.sourceKey
-        || (!collection.sourceKey && collection.normalizedName === item.name.trim().toLowerCase()));
-      if (!existingCollection) return item;
-      const existingIds = new Set(members.filter(member => member.collectionId === existingCollection.id).map(member => member.recordId));
-      return { ...item, recordIds: item.recordIds.filter(id => !existingIds.has(id)) };
-    }).filter(item => item.recordIds.length > 0);
+    const found = [...grouped.values()].map(reconcileSuggestion).filter((item): item is CollectionSuggestion => item !== null);
     setSuggestions(found);
     setScanning(false);
     if (cancelScanRef.current) onNotify('info', `已停止发现系列；保留已完成的 ${completed} 项只读结果。`);
     else onNotify(found.length ? 'info' : 'warning', found.length ? `找到 ${found.length} 组 TMDB 归组建议，请确认后应用。${failures ? ` ${failures} 条未能判定。` : ''}` : '没有找到可可靠归组的 TMDB 建议。');
+  }
+
+  async function resolveScanAmbiguity(ambiguity: ScanAmbiguity, choice: ScanMatchChoice) {
+    setBusy(true);
+    try {
+      const detailResult = await getTmdbDetailAsync({ id: choice.id, mediaType: choice.mediaType, language: 'zh-CN' });
+      const detail = detailResult.data;
+      const sourceId = choice.mediaType === 'tv' ? choice.id : detail?.belongs_to_collection?.id;
+      const sourceName = choice.mediaType === 'tv' ? (detail?.name || detail?.title) : detail?.belongs_to_collection?.name;
+      if (!detailResult.success || sourceId == null || !sourceName) throw new Error('unusable match');
+      const sourceKind = choice.mediaType === 'tv' ? 'tmdb-tv-show' as const : 'tmdb-movie-collection' as const;
+      const sourceKey = choice.mediaType === 'tv' ? tvSourceKey(sourceId) : `tmdb:movie-collection:${sourceId}`;
+      const resolved = reconcileSuggestion({ name: sourceName, sourceKind, sourceKey, recordIds: ambiguity.recordIds });
+      if (resolved) setSuggestions(current => {
+        const prior = current.find(item => item.sourceKey === resolved.sourceKey);
+        if (!prior) return [...current, resolved];
+        return current.map(item => item.sourceKey === resolved.sourceKey ? { ...item, recordIds: [...new Set([...item.recordIds, ...resolved.recordIds])] } : item);
+      });
+      setScanAmbiguities(current => current.filter(item => item.imdbId !== ambiguity.imdbId));
+      onNotify('info', resolved ? `已确认 ${choice.label}，建议已更新。` : `${choice.label} 已经完整归组，无需再次建议。`);
+    } catch {
+      onNotify('error', '无法使用所选 TMDB 匹配，请重试。');
+    } finally { setBusy(false); }
   }
 
   async function applySuggestion(suggestion: CollectionSuggestion) {
@@ -207,18 +277,18 @@ export default function CollectionCenter(props: Props) {
         if (!collection) collection = await props.onCreate(suggestion.name, null);
         await props.onAddMembers(collection, suggestion.recordIds);
       } else {
-        await props.onApplySuggestion(suggestion.name, suggestion.sourceKind, suggestion.sourceKey, suggestion.recordIds);
+        await props.onApplySuggestion(suggestion.name, suggestion.sourceKind, suggestion.sourceKey, suggestion.recordIds, suggestion.targetCollectionId);
       }
       setSuggestions(current => current.filter(item => item.sourceKey !== suggestion.sourceKey));
     }, `已应用“${suggestion.name}”归组建议。`);
   }
 
-  async function inspectMissingSeasons(parentId?: number) {
+  async function inspectMissingSeasons(parentId?: number, forceRefresh = false) {
     if (!selected) return;
     const sourceId = selected.sourceKey?.startsWith('tmdb:tv-show:')
       ? Number(selected.sourceKey.slice('tmdb:tv-show:'.length))
       : null;
-    const memberParentIds = [...new Set(selectedMembers.map(member => recordById.get(member.recordId)?.tmdbParentId).filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0))];
+    const memberParentIds = selectedParentIds;
     const id = parentId ?? sourceId ?? (memberParentIds.length === 1 ? memberParentIds[0] : null);
     if (id == null && memberParentIds.length > 1) {
       setParentChoices(memberParentIds.map(parentId => {
@@ -228,10 +298,22 @@ export default function CollectionCenter(props: Props) {
       return;
     }
     if (id === null || !Number.isInteger(id) || id <= 0) return;
+    if (!selected.sourceKey && selected.collectionKind !== 'universe') {
+      if (!confirm(`已从收藏集成员识别到唯一的 TMDB 父剧 ID ${id}。\n\n确认后会把“${selected.name}”标记为电视剧系列并检查缺失季；已有条目不会被修改。`)) return;
+      try {
+        await props.onBindSource(selected, 'tmdb-tv-show', tvSourceKey(id), 'tv-series');
+      } catch (error) {
+        onNotify('error', errorText(error));
+        return;
+      }
+    }
     setBusy(true);
     try {
-      const result = await getTmdbDetailAsync({ id, mediaType: 'tv', language: 'zh-CN' });
+      const cacheKey = `tv-detail:${id}:zh-CN`;
+      const cached = forceRefresh ? undefined : readIdentityCache<Awaited<ReturnType<typeof getTmdbDetailAsync>>>(cacheKey);
+      const result = cached ?? await getTmdbDetailAsync({ id, mediaType: 'tv', language: 'zh-CN' });
       if (!result.success || !result.data?.seasons) throw new Error('missing seasons');
+      if (!cached) writeIdentityCache(cacheKey, result, true, undefined, 7);
       const existing = new Set(selectedMembers.map(member => recordById.get(member.recordId)).filter(Boolean).map(record => (record as WatchRecord).tmdbSeasonNumber ?? seasonNumberOf(record as WatchRecord)).filter((value): value is number => value != null));
       setSeasonDetail(result.data);
       setSelectedSeasonNumbers(new Set(defaultMissingSeasonNumbers(result.data.seasons, existing)));
@@ -264,12 +346,79 @@ export default function CollectionCenter(props: Props) {
 
   async function bindSelectedSeries() {
     if (!selected) return;
-    const parentIds = [...new Set(selectedMembers.map(member => recordById.get(member.recordId)?.tmdbParentId).filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0))];
+    const parentIds = selectedParentIds;
     if (parentIds.length !== 1) {
       onNotify('warning', parentIds.length ? '成员属于多个 TMDB 父剧，请先修正成员或改为影视宇宙。' : '现有成员缺少稳定 TMDB 父剧身份，请先为任一季确认 TMDB 元数据。');
       return;
     }
     await run(async () => { await props.onBindSource(selected, 'tmdb-tv-show', `tmdb:tv-show:${parentIds[0]}`, 'tv-series'); }, '已绑定 TMDB 电视剧系列，现在可以检查缺失季。');
+  }
+
+  async function inspectMissingMovies(forceRefresh = false) {
+    if (!selected) return;
+    let collectionId = selected.sourceKey?.startsWith('tmdb:movie-collection:')
+      ? Number(selected.sourceKey.slice('tmdb:movie-collection:'.length))
+      : null;
+    if (collectionId == null && selected.collectionKind === 'movie-series') {
+      setBusy(true);
+      try {
+        const movieIds = [...new Set(selectedMembers.map(member => recordById.get(member.recordId)).filter(record => record?.tmdbMediaKind === 'movie' && record.tmdbId).map(record => record!.tmdbId!))];
+        const details = await Promise.all(movieIds.map(id => getTmdbDetailAsync({ id, mediaType: 'movie', language: 'zh-CN' })));
+        const candidates = [...new Set(details.map(result => result.data?.belongs_to_collection?.id).filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0))];
+        if (candidates.length !== 1) {
+          onNotify('warning', candidates.length > 1 ? '成员属于多个 TMDB 电影合集，请先修正成员。' : '现有成员没有可确认的 TMDB 电影合集身份。');
+          return;
+        }
+        collectionId = candidates[0];
+        if (!confirm(`已识别到唯一的 TMDB 电影合集 ID ${collectionId}。\n\n确认后会绑定“${selected.name}”并检查缺失电影；已有条目不会被修改。`)) return;
+        await props.onBindSource(selected, 'tmdb-movie-collection', `tmdb:movie-collection:${collectionId}`, 'movie-series');
+      } catch {
+        onNotify('error', '确认 TMDB 电影合集失败，请稍后重试。');
+        return;
+      } finally { setBusy(false); }
+    }
+    if (collectionId == null || !Number.isInteger(collectionId) || collectionId <= 0) return;
+    setBusy(true);
+    try {
+      const cacheKey = `movie-collection:${collectionId}:zh-CN`;
+      const cached = forceRefresh ? undefined : readIdentityCache<Awaited<ReturnType<typeof getTmdbDetailAsync>>>(cacheKey);
+      const result = cached ?? await getTmdbDetailAsync({ id: collectionId, mediaType: 'collection', language: 'zh-CN' });
+      if (!result.success || !result.data?.parts) throw new Error('missing collection parts');
+      if (!cached) writeIdentityCache(cacheKey, result, true, undefined, 7);
+      const existing = new Set(selectedMembers.map(member => recordById.get(member.recordId)?.tmdbId).filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0));
+      const today = new Date();
+      setMovieCollectionDetail(result.data);
+      setSelectedMovieIds(new Set(result.data.parts.filter(movie => {
+        if (movie.id == null || existing.has(movie.id) || !movie.release_date) return false;
+        const release = new Date(`${movie.release_date}T00:00:00Z`);
+        return !Number.isNaN(release.valueOf()) && release <= today;
+      }).map(movie => movie.id as number)));
+    } catch {
+      onNotify('error', '读取 TMDB 电影合集失败，请稍后重试。');
+    } finally { setBusy(false); }
+  }
+
+  async function createSelectedMovies() {
+    if (!selected || !movieCollectionDetail?.parts || selectedMovieIds.size === 0) return;
+    setBusy(true);
+    try {
+      const chosen = movieCollectionDetail.parts.filter(movie => movie.id != null && selectedMovieIds.has(movie.id));
+      const details = await Promise.all(chosen.map(movie => getTmdbDetailAsync({ id: movie.id!, mediaType: 'movie', language: 'zh-CN' })));
+      if (details.some(result => !result.success || !result.data)) throw new Error('missing movie detail');
+      const now = new Date().toISOString();
+      const recordsToCreate = details.map(result => ({
+        ...getEmptyRecord(),
+        ...movieRecordMetadata(result.data!),
+        id: crypto.randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      }));
+      await props.onCreateMissingSeasons(selected, recordsToCreate);
+      setMovieCollectionDetail(null);
+      onNotify('success', `已补充 ${recordsToCreate.length} 部缺少的电影，已有条目未被覆盖。`);
+    } catch {
+      onNotify('error', '补充电影失败；片库与收藏集均未更改。');
+    } finally { setBusy(false); }
   }
 
   async function searchRelatedWorks() {
@@ -357,9 +506,10 @@ export default function CollectionCenter(props: Props) {
                 {editing ? <div className="space-y-2"><input value={name} onChange={event => setName(event.target.value)} maxLength={80} className="w-full rounded-xl border px-3 py-2 text-xl font-black" /><textarea value={description} onChange={event => setDescription(event.target.value)} maxLength={500} className="w-full resize-none rounded-xl border px-3 py-2 text-sm" /><div className="flex gap-2"><button disabled={busy || !name.trim()} onClick={() => void saveEdit()} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white">保存</button><button onClick={() => setEditing(false)} className="rounded-lg border px-4 text-xs">取消</button></div></div> : <><h3 className="truncate text-3xl font-black text-gray-900">{selected.name}</h3><p className="mt-2 text-sm text-gray-500">{selected.description || '尚未添加说明'}</p></>}
                 <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="rounded-lg border px-3 py-1.5">🎬 {selectedMembers.length} 部作品</span><span className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-emerald-700">✓ 已看 {watchedCount}</span><span className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-1.5 text-amber-700">○ 未看 {selectedMembers.length - watchedCount}</span></div>
               </div>
-              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:justify-end"><button onClick={() => setAdding(true)} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white sm:px-4">＋ 从片库添加</button>{selected.collectionKind === 'tv-series' && !selected.sourceKey && <button disabled={busy} onClick={() => void bindSelectedSeries()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">确认 TMDB 系列</button>}{(selected.sourceKey?.startsWith('tmdb:tv-show:') || selected.collectionKind === 'universe' && selectedMembers.some(member => recordById.get(member.recordId)?.tmdbParentId)) && <button disabled={busy} onClick={() => void inspectMissingSeasons()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">{selected.collectionKind === 'universe' ? '检查缺失条目' : '检查缺失季'}</button>}{selected.collectionKind === 'universe' && <button disabled={busy} onClick={() => setLinkingRelated(true)} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">关联相关作品</button>}<button onClick={startEdit} className="rounded-xl border px-3 py-2 text-sm">编辑</button><button onClick={() => void deleteSelected()} className="rounded-xl border border-red-100 px-3 py-2 text-sm text-red-500">删除</button><button onClick={onClose} aria-label="关闭收藏集中心" className="hidden rounded-xl px-3 py-2 text-xl text-gray-400 md:block">×</button></div>
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:justify-end"><button onClick={() => setAdding(true)} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white sm:px-4">＋ 从片库添加</button>{selected.collectionKind === 'tv-series' && !selected.sourceKey && selectedParentIds.length !== 1 && <button disabled={busy} onClick={() => void bindSelectedSeries()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">确认 TMDB 系列</button>}{(selected.sourceKey?.startsWith('tmdb:tv-show:') || selectedParentIds.length === 1 || selected.collectionKind === 'universe' && selectedParentIds.length > 0) && <button disabled={busy} onClick={() => void inspectMissingSeasons()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">{selected.collectionKind === 'universe' ? '检查缺失条目' : '检查缺失季'}</button>}{selected.collectionKind === 'movie-series' && <button disabled={busy} onClick={() => void inspectMissingMovies()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">检查缺失电影</button>}{selected.collectionKind === 'universe' && <button disabled={busy} onClick={() => setLinkingRelated(true)} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">关联相关作品</button>}<button onClick={startEdit} className="rounded-xl border px-3 py-2 text-sm">编辑</button><button onClick={() => void deleteSelected()} className="rounded-xl border border-red-100 px-3 py-2 text-sm text-red-500">删除</button><button onClick={onClose} aria-label="关闭收藏集中心" className="hidden rounded-xl px-3 py-2 text-xl text-gray-400 md:block">×</button></div>
             </div>
-            {suggestions.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <button key={item.sourceKey} disabled={busy} onClick={() => void applySuggestion(item)} className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-left text-xs text-indigo-700"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.recordIds.length} 部 · 应用</span></button>)}</div></div>}
+            {suggestions.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <button key={item.sourceKey} disabled={busy} onClick={() => void applySuggestion(item)} className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-left text-xs text-indigo-700"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.requiresBinding ? '确认系列身份' : `${item.recordIds.length} 部`} · 应用</span></button>)}</div></div>}
+            {scanAmbiguities.length > 0 && <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"><p className="text-xs font-bold text-amber-800">{scanAmbiguities.length} 项存在多个 TMDB 匹配，请选择</p><div className="mt-2 space-y-2">{scanAmbiguities.map(ambiguity => <div key={ambiguity.imdbId} className="rounded-xl bg-white p-2"><p className="text-[11px] text-gray-500">IMDb {ambiguity.imdbId}</p><div className="mt-1 flex flex-wrap gap-2">{ambiguity.choices.map(choice => <button key={`${choice.mediaType}:${choice.id}`} disabled={busy} onClick={() => void resolveScanAmbiguity(ambiguity, choice)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-800">{choice.label} · {choice.mediaType === 'tv' ? '剧集' : '电影'}</button>)}</div></div>)}</div></div>}
           </div>
           <div className="flex-1 space-y-3 overflow-y-auto p-5 sm:p-7">
             {selectedMembers.map((member, index) => {
@@ -389,7 +539,7 @@ export default function CollectionCenter(props: Props) {
     </div></div>}
     {parentChoices.length > 0 && <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="选择要检查的系列" className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-xl font-black">选择要检查的系列</h3><p className="mt-1 text-xs text-gray-400">影视宇宙包含多个父剧，每次只读取所选系列的 TMDB 全部季</p></div><button onClick={() => setParentChoices([])} className="text-xl text-gray-400">×</button></div><div className="mt-4 space-y-2">{parentChoices.map(choice => <button key={choice.id} onClick={() => { setParentChoices([]); void inspectMissingSeasons(choice.id); }} className="flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left hover:border-indigo-200"><span className="font-bold text-gray-800">{choice.name}</span><span className="text-xs text-gray-400">TMDB {choice.id} →</span></button>)}</div></div></div>}
     {seasonDetail?.seasons && selected && <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="检查缺失季" className="flex max-h-[86vh] w-full max-w-2xl flex-col rounded-3xl bg-white p-5 shadow-2xl">
-      <div className="flex items-start justify-between gap-4"><div><h3 className="text-xl font-black text-gray-900">查看 TMDB 全部季</h3><p className="mt-1 text-xs text-gray-400">只会新增勾选的缺少季，不覆盖片库已有条目</p></div><button onClick={() => setSeasonDetail(null)} className="text-xl text-gray-400">×</button></div>
+      <div className="flex items-start justify-between gap-4"><div><h3 className="text-xl font-black text-gray-900">查看 TMDB 全部季</h3><p className="mt-1 text-xs text-gray-400">只会新增勾选的缺少季，不覆盖片库已有条目</p></div><div className="flex items-center gap-2"><button disabled={busy} onClick={() => void inspectMissingSeasons(undefined, true)} className="rounded-lg border px-3 py-1.5 text-xs font-bold text-indigo-600 disabled:opacity-50">刷新 TMDB</button><button onClick={() => setSeasonDetail(null)} className="text-xl text-gray-400">×</button></div></div>
       <label className="mt-4 flex items-center gap-2 text-xs text-gray-500"><input type="checkbox" checked={showSpecials} onChange={event => setShowSpecials(event.target.checked)} />显示第 0 季 / 特别篇（默认不选）</label>
       <div className="mt-3 flex-1 space-y-2 overflow-y-auto">{seasonDetail.seasons.filter(season => showSpecials || (season.season_number ?? 0) > 0).map((season: TmdbSeason) => {
         const number = season.season_number ?? 0;
@@ -399,6 +549,17 @@ export default function CollectionCenter(props: Props) {
         return <label key={season.id ?? number} className={`flex items-center gap-3 rounded-2xl border p-3 ${existing ? 'bg-gray-50 opacity-60' : 'cursor-pointer hover:border-indigo-200'}`}><input type="checkbox" disabled={existing} checked={checked} onChange={() => setSelectedSeasonNumbers(current => { const next = new Set(current); if (checked) next.delete(number); else next.add(number); return next; })} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-gray-800">{season.name || `第 ${number} 季`} · {season.air_date?.slice(0, 4) || '年份未知'}</p><p className="mt-1 text-xs text-gray-400">{season.episode_count ?? '未知'} 集{existing ? ' · 已在片库' : future ? ' · 尚未播出' : !season.air_date ? ' · 播出日期未知' : ''}</p></div></label>;
       })}</div>
       <div className="mt-4 flex items-center justify-between border-t pt-4"><span className="text-xs text-gray-500">已选择 {selectedSeasonNumbers.size} 季</span><div className="flex gap-2"><button onClick={() => setSeasonDetail(null)} className="rounded-xl border px-4 py-2 text-sm">取消</button><button disabled={busy || selectedSeasonNumbers.size === 0} onClick={() => void createSelectedSeasons()} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-300">补充到片库</button></div></div>
+    </div></div>}
+    {movieCollectionDetail?.parts && selected && <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="检查缺失电影" className="flex max-h-[86vh] w-full max-w-2xl flex-col rounded-3xl bg-white p-5 shadow-2xl">
+      <div className="flex items-start justify-between gap-4"><div><h3 className="text-xl font-black text-gray-900">查看 TMDB 电影合集</h3><p className="mt-1 text-xs text-gray-400">只会新增勾选的缺少电影，不覆盖片库已有条目</p></div><div className="flex items-center gap-2"><button disabled={busy} onClick={() => void inspectMissingMovies(true)} className="rounded-lg border px-3 py-1.5 text-xs font-bold text-indigo-600 disabled:opacity-50">刷新 TMDB</button><button onClick={() => setMovieCollectionDetail(null)} className="text-xl text-gray-400">×</button></div></div>
+      <div className="mt-4 flex-1 space-y-2 overflow-y-auto">{movieCollectionDetail.parts.map(movie => {
+        const id = movie.id ?? 0;
+        const existing = selectedMembers.some(member => recordById.get(member.recordId)?.tmdbId === id);
+        const checked = selectedMovieIds.has(id);
+        const future = !!movie.release_date && new Date(`${movie.release_date}T00:00:00Z`) > new Date();
+        return <label key={id} className={`flex items-center gap-3 rounded-2xl border p-3 ${existing ? 'bg-gray-50 opacity-60' : 'cursor-pointer hover:border-indigo-200'}`}><input type="checkbox" disabled={existing || !id} checked={checked} onChange={() => setSelectedMovieIds(current => { const next = new Set(current); if (checked) next.delete(id); else next.add(id); return next; })} /><SafePosterImage posterPath={movie.poster_path || ''} alt="" compact className="h-16 w-11 rounded-lg object-cover" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-gray-800">{movie.title || movie.name || '未命名电影'} · {movie.release_date?.slice(0, 4) || '年份未知'}</p><p className="mt-1 text-xs text-gray-400">{existing ? '已在片库' : future ? '尚未上映' : !movie.release_date ? '上映日期未知' : '可补充'}</p></div></label>;
+      })}</div>
+      <div className="mt-4 flex items-center justify-between border-t pt-4"><span className="text-xs text-gray-500">已选择 {selectedMovieIds.size} 部</span><div className="flex gap-2"><button onClick={() => setMovieCollectionDetail(null)} className="rounded-xl border px-4 py-2 text-sm">取消</button><button disabled={busy || selectedMovieIds.size === 0} onClick={() => void createSelectedMovies()} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-300">补充到片库</button></div></div>
     </div></div>}
     {linkingRelated && selected && <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="关联相关作品" className="flex max-h-[82vh] w-full max-w-xl flex-col rounded-3xl bg-white p-5 shadow-2xl">
       <div className="flex items-start justify-between"><div><h3 className="text-xl font-black">关联相关作品</h3><p className="mt-1 text-xs text-gray-400">搜索电影、衍生剧或特别篇；只有点击加入后才会写入</p></div><button onClick={() => setLinkingRelated(false)} className="text-xl text-gray-400">×</button></div>

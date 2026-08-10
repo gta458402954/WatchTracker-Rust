@@ -265,6 +265,38 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               recordsGeneration += 1; queueOutbox('collection-update');
               return structuredClone(collections[index]);
             }
+            case 'apply_collection_suggestion': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as { name: string; sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show'; sourceKey: string; recordIds: string[]; targetCollectionId: string | null; expectedRev: number | null };
+              let target = input.targetCollectionId ? collections.find(item => item.id === input.targetCollectionId) : undefined;
+              const now = new Date().toISOString();
+              const isNew = !target;
+              if (target && target.rev !== input.expectedRev) throw new Error('stale_collection');
+              if (!target) {
+                target = {
+                  id: `collection-${collections.length + 1}`, name: input.name.trim(), normalizedName: input.name.trim().toLocaleLowerCase(), description: null,
+                  sourceKind: input.sourceKind, sourceKey: input.sourceKey,
+                  collectionKind: input.sourceKind === 'tmdb-tv-show' ? 'tv-series' : 'movie-series', orderMode: 'chronological',
+                  createdAt: now, updatedAt: now, rev: 1, revActor: 'mock-device',
+                };
+                collections.push(target);
+              } else {
+                target.sourceKind = input.sourceKind;
+                target.sourceKey = input.sourceKey;
+                target.collectionKind = input.sourceKind === 'tmdb-tv-show' ? 'tv-series' : 'movie-series';
+                target.orderMode = 'chronological';
+              }
+              let position = collectionMembers.filter(item => item.collectionId === target.id).length;
+              for (const recordId of input.recordIds) {
+                if (collectionMembers.some(item => item.collectionId === target!.id && item.recordId === recordId)) continue;
+                collectionMembers.push({ id: `member-${target.id}-${recordId}`, collectionId: target.id, recordId, position: position++, sourceKind: 'tmdb', createdAt: now, updatedAt: now, rev: 1, revActor: 'mock-device' });
+              }
+              if (!isNew) bumpCollection(target.id);
+              snapshot.collections = collections;
+              snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('collection-suggestion-apply');
+              return structuredClone(target);
+            }
             case 'delete_collection': {
               requireKeys(command, args, ['expectedRev', 'id']);
               const collection = collections.find(item => item.id === args.id);

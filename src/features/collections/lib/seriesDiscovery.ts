@@ -34,6 +34,21 @@ function seasonOfText(value: string | null | undefined): number | null {
   return chinese ? chineseNumber(chinese[1]) : null;
 }
 
+export interface RecordSeasonIdentity {
+  seasonNumber: number | null;
+  conflicted: boolean;
+}
+
+export function recordSeasonIdentity(
+  record: Pick<WatchRecord, 'chineseName' | 'originalName' | 'progress'>,
+): RecordSeasonIdentity {
+  const values = [record.chineseName, record.originalName, record.progress]
+    .map(seasonOfText)
+    .filter((value): value is number => value !== null);
+  const unique = [...new Set(values)];
+  return { seasonNumber: unique.length === 1 ? unique[0] : null, conflicted: unique.length > 1 };
+}
+
 export function seriesBaseName(value: string | null | undefined): string {
   return (value ?? '')
     .replace(/第\s*\d+\s*季/ig, '')
@@ -44,11 +59,11 @@ export function seriesBaseName(value: string | null | undefined): string {
 }
 
 export function seasonNumberOf(record: Pick<WatchRecord, 'chineseName' | 'originalName' | 'progress'>): number | null {
-  for (const value of [record.chineseName, record.originalName, record.progress]) {
-    const season = seasonOfText(value);
-    if (season !== null) return season;
-  }
-  return null;
+  return recordSeasonIdentity(record).seasonNumber;
+}
+
+export function tvSourceKey(parentId: number): string {
+  return `tmdb:tv-show:${parentId}`;
 }
 
 export function chronologicalRecords(records: WatchRecord[]): WatchRecord[] {
@@ -64,23 +79,30 @@ export function chronologicalRecords(records: WatchRecord[]): WatchRecord[] {
   });
 }
 
-export function locallyKnownSeries(records: WatchRecord[]): Array<{ key: string; name: string; recordIds: string[]; seasons: number[] }> {
+export function locallyKnownSeries(records: WatchRecord[]): Array<{ key: string; name: string; recordIds: string[]; seasons: number[]; tmdbParentId: number | null }> {
   const groups = new Map<string, { name: string; recordIds: string[]; seasons: number[] }>();
   for (const record of records) {
-    const season = seasonNumberOf(record);
+    const identityResult = recordSeasonIdentity(record);
+    if (identityResult.conflicted) continue;
+    const season = identityResult.seasonNumber;
     if (season == null) continue;
     const chineseBase = seriesBaseName(record.chineseName);
     const originalBase = seriesBaseName(record.originalName);
     const base = chineseBase || originalBase;
     if (!base) continue;
-    const identity = record.tmdbParentId ? `tmdb:${record.tmdbParentId}` : null;
+    const identity = record.tmdbParentId ? tvSourceKey(record.tmdbParentId) : null;
     const key = identity || record.imdbId?.trim().toLowerCase() || `title:${base.toLowerCase()}\0${originalBase.toLowerCase()}`;
     const group = groups.get(key) ?? { name: base, recordIds: [], seasons: [] };
     group.recordIds.push(record.id);
     if (!group.seasons.includes(season)) group.seasons.push(season);
     groups.set(key, group);
   }
-  return [...groups.entries()].map(([key, value]) => ({ key, ...value, seasons: value.seasons.sort((a, b) => a - b) }));
+  return [...groups.entries()].map(([key, value]) => ({
+    key,
+    ...value,
+    seasons: value.seasons.sort((a, b) => a - b),
+    tmdbParentId: key.startsWith('tmdb:tv-show:') ? Number(key.slice('tmdb:tv-show:'.length)) : null,
+  }));
 }
 
 export function seasonIsAired(season: TmdbSeason, now = new Date()): boolean {
@@ -109,7 +131,7 @@ export function readIdentityCache<T>(key: string, now = Date.now()): T | undefin
   } catch { return undefined; }
 }
 
-export function writeIdentityCache<T>(key: string, value: T, found: boolean, now = Date.now()): void {
-  const days = found ? 30 : 7;
+export function writeIdentityCache<T>(key: string, value: T, found: boolean, now = Date.now(), ttlDays?: number): void {
+  const days = ttlDays ?? (found ? 30 : 7);
   try { localStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify({ value, expiresAt: now + days * 86_400_000 } satisfies CacheEntry<T>)); } catch { /* derived cache is best effort */ }
 }

@@ -92,6 +92,17 @@ pub struct UpdateCollectionInput {
     pub collection_kind: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplyCollectionSuggestionInput {
+    pub name: String,
+    pub source_kind: String,
+    pub source_key: String,
+    pub record_ids: Vec<String>,
+    pub target_collection_id: Option<String>,
+    pub expected_rev: Option<i64>,
+}
+
 fn manual_source() -> String {
     "manual".to_string()
 }
@@ -726,6 +737,133 @@ pub fn add_members(
     Ok(result)
 }
 
+pub fn apply_suggestion(
+    conn: &mut Connection,
+    input: ApplyCollectionSuggestionInput,
+    actor: &str,
+) -> Result<Collection, AppError> {
+    if !matches!(
+        input.source_kind.as_str(),
+        "tmdb-tv-show" | "tmdb-movie-collection"
+    ) {
+        return Err(AppError::General("collection_source_invalid".into()));
+    }
+    let (source_kind, source_key) = validate_source(&input.source_kind, Some(input.source_key))?;
+    let source_key =
+        source_key.ok_or_else(|| AppError::General("collection_source_invalid".into()))?;
+    let (name, normalized) = normalized_name(&input.name)?;
+    let (collection_kind, order_mode) = collection_behavior(&source_kind, None, None)?;
+    let mut seen = HashSet::new();
+    let record_ids = input
+        .record_ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect::<Vec<_>>();
+    let timestamp = now();
+    let tx = conn.transaction()?;
+    let (collection_id, is_new, mut metadata_changed) = if let Some(id) = input.target_collection_id
+    {
+        let current = get(&tx, &id)?;
+        if Some(current.rev) != input.expected_rev {
+            return Err(AppError::General("stale_collection".into()));
+        }
+        if current
+            .source_key
+            .as_deref()
+            .is_some_and(|key| key != source_key)
+            || current.source_kind != "manual" && current.source_kind != source_kind
+        {
+            return Err(AppError::General("collection_source_conflict".into()));
+        }
+        let changed = current.source_kind != source_kind
+            || current.source_key.as_deref() != Some(source_key.as_str())
+            || current.collection_kind != collection_kind
+            || current.order_mode != order_mode;
+        if changed {
+            tx.execute("UPDATE collections SET sourceKind=?2,sourceKey=?3,collectionKind=?4,orderMode=?5,updatedAt=?6,rev=rev+1,revActor=?7 WHERE id=?1", params![id,source_kind,source_key,collection_kind,order_mode,timestamp,actor])?;
+        }
+        (id, false, changed)
+    } else {
+        if tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collections WHERE normalizedName=?1 OR (sourceKind=?2 AND sourceKey=?3))",
+            params![normalized, source_kind, source_key],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(AppError::General("collection_suggestion_target_required".into()));
+        }
+        let id = Uuid::new_v4().to_string();
+        tx.execute("INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,collectionKind,orderMode,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,NULL,?4,?5,?6,?7,?8,?8,1,?9)", params![id,name,normalized,source_kind,source_key,collection_kind,order_mode,timestamp,actor])?;
+        tx.execute("DELETE FROM collection_tombstones WHERE id=?1", [&id])?;
+        (id, true, true)
+    };
+    let existing_ids = all_members(&tx)?
+        .into_iter()
+        .filter(|item| item.collection_id == collection_id)
+        .map(|item| item.record_id)
+        .collect::<HashSet<_>>();
+    let mut position = tx.query_row(
+        "SELECT COALESCE(MAX(position),-1024)+1024 FROM collection_members WHERE collectionId=?1",
+        [&collection_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let mut created_member_ids = Vec::new();
+    for record_id in record_ids
+        .into_iter()
+        .filter(|id| !existing_ids.contains(id))
+    {
+        if !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM records WHERE id=?1)",
+            [&record_id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(AppError::General("collection_reference_invalid".into()));
+        }
+        let id = member_id(&collection_id, &record_id);
+        tx.execute("INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,'tmdb',?5,?5,1,?6)", params![id,collection_id,record_id,position,timestamp,actor])?;
+        tx.execute(
+            "DELETE FROM collection_member_tombstones WHERE id=?1",
+            [&id],
+        )?;
+        created_member_ids.push(id);
+        position += 1024;
+    }
+    if !created_member_ids.is_empty() && !is_new && !metadata_changed {
+        bump_collection(&tx, &collection_id, actor, &timestamp)?;
+        metadata_changed = true;
+    }
+    if !metadata_changed && created_member_ids.is_empty() {
+        let value = get(&tx, &collection_id)?;
+        tx.commit()?;
+        return Ok(value);
+    }
+    let value = get(&tx, &collection_id)?;
+    let generation = mark_local_records_mutated(&tx, "collection-suggestion-apply")?;
+    crate::sync_staging::stage_entity_upsert(
+        &tx,
+        "collection",
+        &collection_id,
+        serde_json::to_value(&value).map_err(|error| AppError::General(error.to_string()))?,
+        generation,
+    )?;
+    for id in created_member_ids {
+        let member = tx.query_row(
+            "SELECT * FROM collection_members WHERE id=?1",
+            [&id],
+            map_member,
+        )?;
+        crate::sync_staging::stage_entity_upsert(
+            &tx,
+            "collection-member",
+            &id,
+            serde_json::to_value(member).map_err(|error| AppError::General(error.to_string()))?,
+            generation,
+        )?;
+    }
+    tx.commit()?;
+    Ok(value)
+}
+
 pub fn create_records_with_members(
     conn: &mut Connection,
     collection_id: &str,
@@ -772,6 +910,23 @@ pub fn create_records_with_members(
                 return Err(AppError::General("missing_season_duplicate".into()));
             }
         }
+        if record.tmdb_media_kind.as_deref() == Some("movie") {
+            if let Some(tmdb_id) = record.tmdb_id {
+                let duplicate = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM records r JOIN collection_members m ON m.recordId=r.id WHERE m.collectionId=?1 AND r.tmdbMediaKind='movie' AND r.tmdbId=?2)",
+                    params![collection_id, tmdb_id],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if duplicate
+                    || prepared.iter().any(|item: &WatchRecord| {
+                        item.tmdb_media_kind.as_deref() == Some("movie")
+                            && item.tmdb_id == Some(tmdb_id)
+                    })
+                {
+                    return Err(AppError::General("missing_movie_duplicate".into()));
+                }
+            }
+        }
         record.rev = 1;
         record.rev_actor = actor.to_string();
         record.updated_at = Some(timestamp.clone());
@@ -783,6 +938,7 @@ pub fn create_records_with_members(
         |row| row.get::<_, i64>(0),
     )?;
     let mut created_members = Vec::with_capacity(prepared.len());
+    let mut secondary_collections = HashSet::new();
     for record in &prepared {
         crate::db::insert_record(&tx, record.clone())?;
         let id = member_id(collection_id, &record.id);
@@ -793,16 +949,57 @@ pub fn create_records_with_members(
             map_member,
         )?);
         position += 1024;
+        if collection.collection_kind == "universe" {
+            if let Some(parent_id) = record.tmdb_parent_id {
+                let source_key = format!("tmdb:tv-show:{parent_id}");
+                let secondary_id = tx
+                    .query_row(
+                        "SELECT id FROM collections WHERE sourceKind='tmdb-tv-show' AND sourceKey=?1 AND collectionKind='tv-series' AND id<>?2",
+                        params![source_key, collection_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                if let Some(secondary_id) = secondary_id {
+                    let exists = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM collection_members WHERE collectionId=?1 AND recordId=?2)",
+                        params![secondary_id, record.id],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if !exists {
+                        let secondary_position = tx.query_row(
+                            "SELECT COALESCE(MAX(position),-1024)+1024 FROM collection_members WHERE collectionId=?1",
+                            [&secondary_id],
+                            |row| row.get::<_, i64>(0),
+                        )?;
+                        let secondary_member_id = member_id(&secondary_id, &record.id);
+                        tx.execute("INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,'tmdb',?5,?5,1,?6)", params![secondary_member_id, secondary_id, record.id, secondary_position, timestamp, actor])?;
+                        created_members.push(tx.query_row(
+                            "SELECT * FROM collection_members WHERE id=?1",
+                            [&secondary_member_id],
+                            map_member,
+                        )?);
+                        secondary_collections.insert(secondary_id);
+                    }
+                }
+            }
+        }
     }
     let collection = bump_collection(&tx, collection_id, actor, &timestamp)?;
+    let mut changed_collections = vec![collection];
+    for secondary_id in secondary_collections {
+        changed_collections.push(bump_collection(&tx, &secondary_id, actor, &timestamp)?);
+    }
     let generation = mark_local_records_mutated(&tx, "series-completion")?;
-    crate::sync_staging::stage_entity_upsert(
-        &tx,
-        "collection",
-        collection_id,
-        serde_json::to_value(collection).map_err(|error| AppError::General(error.to_string()))?,
-        generation,
-    )?;
+    for changed_collection in &changed_collections {
+        crate::sync_staging::stage_entity_upsert(
+            &tx,
+            "collection",
+            &changed_collection.id,
+            serde_json::to_value(changed_collection)
+                .map_err(|error| AppError::General(error.to_string()))?,
+            generation,
+        )?;
+    }
     for record in &prepared {
         crate::sync_staging::stage_upsert(&tx, record, generation)?;
     }
@@ -1335,5 +1532,159 @@ mod tests {
             crate::db_atomic_helpers::get_records_generation(&conn).unwrap(),
             before_generation
         );
+    }
+
+    #[test]
+    fn universe_season_creation_also_joins_an_existing_bound_tv_series() {
+        let mut conn = database();
+        let series = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "测试剧系列".into(),
+                description: None,
+                source_kind: "tmdb-tv-show".into(),
+                source_key: Some("tmdb:tv-show:42".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let universe = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "测试宇宙".into(),
+                description: None,
+                source_kind: "manual".into(),
+                source_key: None,
+                collection_kind: Some("universe".into()),
+                order_mode: Some("chronological".into()),
+            },
+            "device",
+        )
+        .unwrap();
+        let mut season = record("universe-season");
+        season.media_type = "剧集".into();
+        season.tmdb_media_kind = Some("tv-season".into());
+        season.tmdb_id = Some(102);
+        season.tmdb_parent_id = Some(42);
+        season.tmdb_season_number = Some(2);
+        season.series_record_kind = Some("season".into());
+        create_records_with_members(
+            &mut conn,
+            &universe.id,
+            vec![season],
+            universe.rev,
+            "device",
+        )
+        .unwrap();
+        let memberships = all_members(&conn)
+            .unwrap()
+            .into_iter()
+            .filter(|member| member.record_id == "universe-season")
+            .map(|member| member.collection_id)
+            .collect::<HashSet<_>>();
+        assert_eq!(memberships, HashSet::from([series.id, universe.id]));
+    }
+
+    #[test]
+    fn movie_collection_rejects_duplicate_tmdb_movie_identity() {
+        let mut conn = database();
+        let collection = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "测试电影合集".into(),
+                description: None,
+                source_kind: "tmdb-movie-collection".into(),
+                source_key: Some("tmdb:movie-collection:9".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let mut movie = record("movie-one");
+        movie.tmdb_media_kind = Some("movie".into());
+        movie.tmdb_id = Some(603);
+        movie.series_record_kind = Some("single-work".into());
+        create_records_with_members(
+            &mut conn,
+            &collection.id,
+            vec![movie],
+            collection.rev,
+            "device",
+        )
+        .unwrap();
+        let current = get(&conn, &collection.id).unwrap();
+        let mut duplicate = record("movie-copy");
+        duplicate.tmdb_media_kind = Some("movie".into());
+        duplicate.tmdb_id = Some(603);
+        duplicate.series_record_kind = Some("single-work".into());
+        let error = create_records_with_members(
+            &mut conn,
+            &collection.id,
+            vec![duplicate],
+            current.rev,
+            "device",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("missing_movie_duplicate"));
+    }
+
+    #[test]
+    fn suggestion_binding_and_membership_are_one_atomic_write() {
+        let mut conn = database();
+        let manual = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "小谢尔顿".into(),
+                description: None,
+                source_kind: "manual".into(),
+                source_key: None,
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let before_generation = crate::db_atomic_helpers::get_records_generation(&conn).unwrap();
+        let failed = apply_suggestion(
+            &mut conn,
+            ApplyCollectionSuggestionInput {
+                name: "小谢尔顿".into(),
+                source_kind: "tmdb-tv-show".into(),
+                source_key: "tmdb:tv-show:71728".into(),
+                record_ids: vec!["missing".into()],
+                target_collection_id: Some(manual.id.clone()),
+                expected_rev: Some(manual.rev),
+            },
+            "device",
+        )
+        .unwrap_err();
+        assert!(failed.to_string().contains("collection_reference_invalid"));
+        assert_eq!(get(&conn, &manual.id).unwrap().source_kind, "manual");
+        assert_eq!(
+            crate::db_atomic_helpers::get_records_generation(&conn).unwrap(),
+            before_generation
+        );
+        let applied = apply_suggestion(
+            &mut conn,
+            ApplyCollectionSuggestionInput {
+                name: "小谢尔顿".into(),
+                source_kind: "tmdb-tv-show".into(),
+                source_key: "tmdb:tv-show:71728".into(),
+                record_ids: vec!["one".into()],
+                target_collection_id: Some(manual.id.clone()),
+                expected_rev: Some(manual.rev),
+            },
+            "device",
+        )
+        .unwrap();
+        assert_eq!(applied.collection_kind, "tv-series");
+        assert_eq!(applied.source_key.as_deref(), Some("tmdb:tv-show:71728"));
+        assert!(all_members(&conn)
+            .unwrap()
+            .iter()
+            .any(|member| member.collection_id == manual.id && member.record_id == "one"));
     }
 }

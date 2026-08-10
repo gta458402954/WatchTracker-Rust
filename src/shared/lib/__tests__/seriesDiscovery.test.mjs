@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, seasonNumberOf } from '../../../features/collections/lib/seriesDiscovery.ts';
+import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, recordSeasonIdentity, seasonNumberOf } from '../../../features/collections/lib/seriesDiscovery.ts';
 
 const record = (id, chineseName, releaseYear = null) => ({ id, chineseName, originalName: '', progress: '', releaseYear, imdbId: null });
 
@@ -31,6 +31,21 @@ test('local discovery groups Arabic and Chinese season names under the same base
   assert.equal(values.length, 1);
   assert.equal(values[0].name, '小谢尔顿');
   assert.deepEqual(values[0].seasons, [1, 5]);
+});
+
+test('stable parent IDs use the same canonical source key as collections', () => {
+  const values = locallyKnownSeries([
+    { ...record('3', '黑镜 第 3 季'), originalName: 'Black Mirror Season 3', tmdbParentId: 42009 },
+    { ...record('7', '黑镜 第 7 季'), originalName: 'Black Mirror Season 7', tmdbParentId: 42009 },
+  ]);
+  assert.equal(values[0].key, 'tmdb:tv-show:42009');
+  assert.equal(values[0].tmdbParentId, 42009);
+});
+
+test('conflicting localized and original season numbers require confirmation', () => {
+  const value = { chineseName: '示例剧 第 2 季', originalName: 'Example Season 3', progress: '' };
+  assert.deepEqual(recordSeasonIdentity(value), { seasonNumber: null, conflicted: true });
+  assert.equal(locallyKnownSeries([{ ...record('conflict', value.chineseName), originalName: value.originalName }]).length, 0);
 });
 
 test('missing season defaults include only aired regular seasons', () => {

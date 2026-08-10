@@ -1808,7 +1808,8 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Priority: R1
 - Approved Design: `docs/COLLECTION_DISCOVERY_REWORK_DESIGN.md`。用户要求修正全库 350 项误扫描、已有系列重复建议、中文季数拆组、手工系列无法检查缺失内容、影视宇宙功能互斥、记录内无法新建收藏集，以及自动补充季元数据不完整。
 - Data Boundary: 数据库主版本继续为 V18；扫描和预览零业务写入；旧数据不在启动时自动整理；新记录只填 TMDB 可用字段，已有记录只填缺失字段。
-- Implementation Progress: 已实现中文季数归一、统一季元数据映射、全局扫描入口、已有集合差异过滤、四类收藏集创建、手工电视剧系列稳定来源绑定、影视宇宙缺失条目入口、多父剧选择、记录内收藏集草稿，以及收藏集与当前记录成员关系的 Rust 原子创建命令。完整门禁与便携版验收完成后再改为 IMPLEMENTED。
+- Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、7 天详情缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。保持 IN-PROGRESS，便携版真实数据验收完成后再改为 IMPLEMENTED。
+- Acceptance Evidence: Node 119/119、Rust 83/83（单线程避免既有恢复点测试临时目录碰撞）、typecheck、lint、rustfmt 与生产 build 通过。新增黑镜完整集合不再建议、小谢尔顿手工集合按需绑定、季编号冲突、电影元数据、电影重复阻止、影视宇宙双重归属和建议原子回滚测试；Playwright 调试轨迹确认小谢尔顿流程完成且浏览器正常关闭，Windows runner 仍被既有 Vite 子进程退出问题拖住。
 
 ### TASK-D-ARCH-001：跨语言类型生成
 

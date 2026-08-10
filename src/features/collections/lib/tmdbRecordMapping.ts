@@ -48,3 +48,31 @@ export function seasonRecordMetadata(
   if (existing?.episodeRuntime == null && runtime !== null) next.episodeRuntime = runtime;
   return next;
 }
+
+export function movieRecordMetadata(movie: TmdbMedia): Partial<WatchRecord> {
+  const classification = classifyTmdb(movie, false, '电影');
+  const platform = inferPlatformFromTmdb(
+    classification.originCountry,
+    movie.production_companies?.[0]?.name,
+  );
+  return {
+    chineseName: movie.title || movie.name || '',
+    originalName: movie.original_title || movie.original_name || movie.title || movie.name || '',
+    releaseYear: movie.release_date?.slice(0, 4) || null,
+    posterPath: movie.poster_path || null,
+    imdbId: movie.external_ids?.imdb_id || movie.imdb_id || null,
+    imdbRating: movie.vote_average || null,
+    tmdbStatus: movie.status || null,
+    mediaType: classification.mediaType,
+    genres: classification.genres,
+    originCountry: classification.originCountry,
+    contentTags: classification.contentTags,
+    platform: platform || '',
+    movieDuration: movie.runtime ? movie.runtime * 60 : null,
+    tmdbMediaKind: 'movie',
+    tmdbId: movie.id ?? null,
+    tmdbParentId: null,
+    tmdbSeasonNumber: null,
+    seriesRecordKind: 'single-work',
+  };
+}

@@ -84,6 +84,8 @@ React UI
 
 收藏集不提升数据库主版本。当前由 `collections_schema_version=2` 和 `tmdb_identity_schema_version=1` 幂等功能迁移维护集合、成员、两类 tombstone、集合类型/排序模式及记录的稳定 TMDB 身份；迁移前创建 `series-identity-migration` 恢复点。成员 ID 由 collection ID 与 record ID 确定性生成；普通增删、排序、删除记录及缺失季批量创建均与 generation、staging 和 outbox 同事务，缺失季还会按 TMDB parent ID 与 season number 复查重复。
 
+R2 发现链路将本地父剧与收藏集统一为 `tmdb:tv-show:<id>`，完整已有系列不会再次建议；手工集合可在唯一父剧确认后按需升级。电视剧全部季与电影合集均采用 7 天派生缓存和显式刷新，多结果必须选择。电影按 TMDB ID、剧集按父剧与季编号在 Rust 提交时二次去重；影视宇宙新增季会同事务加入已绑定的对应电视剧系列。建议绑定和成员添加也由单一 Rust 命令原子提交。
+
 ## 5. 当前同步边界
 
 已经实现：

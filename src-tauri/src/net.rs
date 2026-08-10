@@ -291,7 +291,7 @@ pub async fn get_tmdb_detail(
     language: String,
     proxy: Option<String>,
 ) -> Result<Value, String> {
-    if !matches!(media_type.as_str(), "movie" | "tv") {
+    if !matches!(media_type.as_str(), "movie" | "tv" | "collection") {
         return Err("Unsupported TMDB media type".to_string());
     }
     if id <= 0 {
@@ -304,15 +304,20 @@ pub async fn get_tmdb_detail(
 
     let is_jwt = api_key.contains('.') || api_key.len() > 40;
 
+    let append = if media_type == "collection" {
+        ""
+    } else {
+        "&append_to_response=external_ids"
+    };
     let url = if is_jwt {
         format!(
-            "https://api.themoviedb.org/3/{}/{}?append_to_response=external_ids&language={}",
-            media_type, id, language
+            "https://api.themoviedb.org/3/{}/{}?language={}{}",
+            media_type, id, language, append
         )
     } else {
         format!(
-            "https://api.themoviedb.org/3/{}/{}?api_key={}&append_to_response=external_ids&language={}",
-            media_type, id, api_key, language
+            "https://api.themoviedb.org/3/{}/{}?api_key={}&language={}{}",
+            media_type, id, api_key, language, append
         )
     };
 

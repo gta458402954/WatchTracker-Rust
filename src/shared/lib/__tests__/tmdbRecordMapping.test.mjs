@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seasonRecordMetadata } from '../../../features/collections/lib/tmdbRecordMapping.ts';
+import { movieRecordMetadata, seasonRecordMetadata } from '../../../features/collections/lib/tmdbRecordMapping.ts';
 
 const blackMirror = {
   id: 42009,
@@ -39,4 +39,17 @@ test('metadata completion does not replace existing manually maintained fields',
   assert.equal(result.genres, undefined);
   assert.equal(result.episodeRuntime, undefined);
   assert.equal(result.contentTags, '自定义标签,英国');
+});
+
+test('movie collection parts become stable movie records with complete detail metadata', () => {
+  const result = movieRecordMetadata({
+    id: 603, title: '黑客帝国', original_title: 'The Matrix', release_date: '1999-03-30',
+    poster_path: '/matrix.jpg', external_ids: { imdb_id: 'tt0133093' }, runtime: 136,
+    production_countries: [{ iso_3166_1: 'US' }], genres: [{ name: '科幻' }], vote_average: 8.2,
+  });
+  assert.equal(result.tmdbMediaKind, 'movie');
+  assert.equal(result.tmdbId, 603);
+  assert.equal(result.imdbId, 'tt0133093');
+  assert.equal(result.movieDuration, 8160);
+  assert.equal(result.originCountry, 'US');
 });

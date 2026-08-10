@@ -33,6 +33,8 @@ export const deleteCollection = (id: string, expectedRev: number): Promise<void>
   invoke('delete_collection', { id, expectedRev });
 export const addCollectionMembers = (collectionId: string, recordIds: string[], expectedRev: number, sourceKind: 'manual' | 'tmdb' = 'manual'): Promise<CollectionMember[]> =>
   invoke('add_collection_members', { collectionId, recordIds, sourceKind, expectedRev });
+export const applyCollectionSuggestion = (input: { name: string; sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show'; sourceKey: string; recordIds: string[]; targetCollectionId: string | null; expectedRev: number | null }): Promise<WatchCollection> =>
+  invoke('apply_collection_suggestion', { input });
 export const createMissingSeasons = (collectionId: string, records: WatchRecord[], expectedRev: number): Promise<WatchRecord[]> =>
   invoke('create_missing_seasons', { collectionId, records, expectedRev });
 export const removeCollectionMember = (collectionId: string, recordId: string, expectedRev: number): Promise<void> =>
@@ -316,7 +318,7 @@ export async function searchTmdbAsync(args: TmdbRequest & { query: string }): Pr
   }
 }
 
-export async function getTmdbDetailAsync(args: TmdbRequest & { id: number; mediaType: 'movie' | 'tv' }): Promise<TmdbSearchResponse> {
+export async function getTmdbDetailAsync(args: TmdbRequest & { id: number; mediaType: 'movie' | 'tv' | 'collection' }): Promise<TmdbSearchResponse> {
   try {
     const proxy = await getSettingAsync('network_proxy');
     const data = await invoke<TmdbMedia>('get_tmdb_detail', {

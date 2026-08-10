@@ -19,9 +19,9 @@ const collection: WatchCollection = {
   updatedAt: '2026-08-09T00:00:00.000Z', rev: 1, revActor: 'mock-device',
 };
 
-function member(recordId: string, position: number): CollectionMember {
+function member(recordId: string, position: number, collectionId = collection.id): CollectionMember {
   return {
-    id: `member-${recordId}`, collectionId: collection.id, recordId, position, sourceKind: 'manual',
+    id: `member-${recordId}`, collectionId, recordId, position, sourceKind: 'manual',
     createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z',
     rev: 1, revActor: 'mock-device',
   };
@@ -112,4 +112,55 @@ test('@collections creates a staged collection from record editing only when the
   expect(snapshot.collections).toHaveLength(1);
   expect(snapshot.collections[0].collectionKind).toBe('tv-series');
   expect(snapshot.collectionMembers).toHaveLength(1);
+});
+
+test('@collections suppresses an already complete canonical TMDB series suggestion', async ({ page }) => {
+  const blackMirror: WatchCollection = {
+    ...collection, id: 'black-mirror', name: '黑镜', normalizedName: '黑镜', sourceKind: 'tmdb-tv-show',
+    sourceKey: 'tmdb:tv-show:42009', collectionKind: 'tv-series', orderMode: 'chronological',
+  };
+  const records = [3, 4, 5, 6, 7].map(season => ({
+    ...record(`black-mirror-${season}`), chineseName: `黑镜 第 ${season} 季`, originalName: `Black Mirror Season ${season}`,
+    imdbId: `tt-black-mirror-${season}`, mediaType: '剧集' as const, tmdbMediaKind: 'tv-season' as const,
+    tmdbParentId: 42009, tmdbSeasonNumber: season,
+  }));
+  await setupMockIpc(page, {
+    records,
+    collections: [blackMirror],
+    collectionMembers: records.map((item, index) => member(item.id, index * 1024, blackMirror.id)),
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByText('TMDB 只读建议 · 确认前不会修改数据')).toHaveCount(0);
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'search_tmdb')).toHaveLength(0);
+});
+
+test('@collections upgrades a manual single-parent series before checking missing seasons', async ({ page }) => {
+  const youngSheldon: WatchCollection = { ...collection, id: 'young-sheldon', name: '小谢尔顿', normalizedName: '小谢尔顿' };
+  const records = [1, 5].map(season => ({
+    ...record(`young-sheldon-${season}`), chineseName: `小谢尔顿 第 ${season} 季`, originalName: `Young Sheldon Season ${season}`,
+    mediaType: '剧集' as const, tmdbMediaKind: 'tv-season' as const, tmdbId: 88000 + season,
+    tmdbParentId: 71728, tmdbSeasonNumber: season,
+  }));
+  await setupMockIpc(page, {
+    records,
+    collections: [youngSheldon],
+    collectionMembers: records.map((item, index) => member(item.id, index * 1024, youngSheldon.id)),
+    tmdbDetail: {
+      id: 71728, name: '小谢尔顿', original_name: 'Young Sheldon',
+      seasons: [1, 2, 3, 4, 5, 6, 7].map(season => ({ id: 90000 + season, season_number: season, name: `第 ${season} 季`, air_date: `20${16 + season}-09-01`, episode_count: 22 })),
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '检查缺失季' }).click();
+  const missingDialog = page.getByRole('dialog', { name: '检查缺失季' });
+  await expect(missingDialog).toBeVisible();
+  await expect(missingDialog.getByText('第 2 季 · 2018')).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.collections[0]).toMatchObject({
+    sourceKind: 'tmdb-tv-show', sourceKey: 'tmdb:tv-show:71728', collectionKind: 'tv-series', orderMode: 'chronological',
+  });
 });
