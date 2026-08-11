@@ -657,7 +657,7 @@ test('@expected-sync-v3 rejects an unknown future payload without PUT or local c
       webdav_creds: 'encrypted:fixture-user:fixture-password',
       webdav_url: 'https://mock.invalid/dav/',
     },
-    webdavV3Remote: { schemaVersion: 6, records: [], tombstones: [] } as unknown as SyncPayloadV3,
+    webdavV3Remote: { schemaVersion: 7, records: [], tombstones: [] } as unknown as SyncPayloadV3,
   });
   await page.goto('/');
   const result = await page.evaluate(async () => (await import('/src/shared/lib/webdav.ts')).syncToWebDAV());
