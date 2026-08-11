@@ -239,6 +239,16 @@ pub fn create_missing_seasons(
 }
 
 #[tauri::command]
+pub fn complete_movie_collection(
+    state: State<DbState>,
+    input: crate::collections::CompleteMovieCollectionInput,
+) -> Result<crate::collections::CompleteMovieCollectionResult, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor = sync_state::device_id(&conn)?;
+    crate::collections::complete_movie_collection(&mut conn, input, &actor)
+}
+
+#[tauri::command]
 pub fn remove_collection_member(
     state: State<DbState>,
     collection_id: String,

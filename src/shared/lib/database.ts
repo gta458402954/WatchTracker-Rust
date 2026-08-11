@@ -37,6 +37,17 @@ export const applyCollectionSuggestion = (input: { name: string; sourceKind: 'tm
   invoke('apply_collection_suggestion', { input });
 export const createMissingSeasons = (collectionId: string, records: WatchRecord[], expectedRev: number): Promise<WatchRecord[]> =>
   invoke('create_missing_seasons', { collectionId, records, expectedRev });
+export interface ConfirmedMovieMatchInput { recordId: string; expectedRev: number; tmdbId: number; imdbId: string | null }
+export interface CompleteMovieCollectionInput {
+  collectionId: string;
+  expectedRev: number;
+  matches: ConfirmedMovieMatchInput[];
+  newRecords: WatchRecord[];
+  fillMissingIdentity: boolean;
+}
+export interface CompleteMovieCollectionResult { createdRecordIds: string[]; reusedRecordIds: string[]; identityUpdatedRecordIds: string[] }
+export const completeMovieCollection = (input: CompleteMovieCollectionInput): Promise<CompleteMovieCollectionResult> =>
+  invoke('complete_movie_collection', { input });
 export const removeCollectionMember = (collectionId: string, recordId: string, expectedRev: number): Promise<void> =>
   invoke('remove_collection_member', { collectionId, recordId, expectedRev });
 export const reorderCollectionMembers = (collectionId: string, recordIds: string[], expectedRev: number): Promise<CollectionMember[]> =>

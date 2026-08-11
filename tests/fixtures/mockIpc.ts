@@ -297,6 +297,38 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               recordsGeneration += 1; queueOutbox('collection-suggestion-apply');
               return structuredClone(target);
             }
+            case 'complete_movie_collection': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as { collectionId: string; expectedRev: number; matches: Array<{ recordId: string; expectedRev: number; tmdbId: number; imdbId: string | null }>; newRecords: WatchRecord[]; fillMissingIdentity: boolean };
+              const collection = collections.find(item => item.id === input.collectionId);
+              if (!collection || collection.rev !== input.expectedRev) throw new Error('stale_collection');
+              const normalizeImdb = (value: string | null | undefined) => /^tt\d+$/.test(value?.trim().toLowerCase() ?? '') ? value!.trim().toLowerCase() : null;
+              const memberIds = new Set(collectionMembers.filter(item => item.collectionId === collection.id).map(item => item.recordId));
+              const createdRecordIds: string[] = [];
+              const reusedRecordIds: string[] = [];
+              const identityUpdatedRecordIds: string[] = [];
+              const now = new Date().toISOString();
+              for (const match of input.matches) {
+                const record = snapshot.records.find(item => item.id === match.recordId);
+                if (!record || (record.rev ?? 0) !== match.expectedRev) throw new Error('stale_record');
+                if (input.fillMissingIdentity && (!record.tmdbMediaKind || !record.tmdbId || !record.seriesRecordKind)) {
+                  record.tmdbMediaKind ||= 'movie'; record.tmdbId ||= match.tmdbId; record.seriesRecordKind ||= 'single-work';
+                  record.rev = (record.rev ?? 0) + 1; record.updatedAt = now; identityUpdatedRecordIds.push(record.id);
+                }
+                if (!memberIds.has(record.id)) { memberIds.add(record.id); reusedRecordIds.push(record.id); }
+              }
+              for (const proposed of input.newRecords) {
+                const imdb = normalizeImdb(proposed.imdbId);
+                const existing = snapshot.records.find(item => item.tmdbMediaKind === 'movie' && item.tmdbId === proposed.tmdbId || item.mediaType === '电影' && imdb && normalizeImdb(item.imdbId) === imdb);
+                if (existing) { memberIds.add(existing.id); reusedRecordIds.push(existing.id); }
+                else { snapshot.records.push(proposed); memberIds.add(proposed.id); createdRecordIds.push(proposed.id); }
+              }
+              let position = collectionMembers.filter(item => item.collectionId === collection.id).length;
+              for (const recordId of memberIds) if (!collectionMembers.some(item => item.collectionId === collection.id && item.recordId === recordId)) collectionMembers.push({ id: `member-${collection.id}-${recordId}`, collectionId: collection.id, recordId, position: position++, sourceKind: 'tmdb', createdAt: now, updatedAt: now, rev: 1, revActor: 'mock-device' });
+              bumpCollection(collection.id); snapshot.collections = collections; snapshot.collectionMembers = collectionMembers;
+              recordsGeneration += 1; queueOutbox('movie-collection-completion');
+              return { createdRecordIds, reusedRecordIds, identityUpdatedRecordIds };
+            }
             case 'delete_collection': {
               requireKeys(command, args, ['expectedRev', 'id']);
               const collection = collections.find(item => item.id === args.id);

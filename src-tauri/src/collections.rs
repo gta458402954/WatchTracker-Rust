@@ -103,6 +103,34 @@ pub struct ApplyCollectionSuggestionInput {
     pub expected_rev: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConfirmedMovieMatchInput {
+    pub record_id: String,
+    pub expected_rev: i64,
+    pub tmdb_id: i64,
+    pub imdb_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompleteMovieCollectionInput {
+    pub collection_id: String,
+    pub expected_rev: i64,
+    pub matches: Vec<ConfirmedMovieMatchInput>,
+    pub new_records: Vec<WatchRecord>,
+    #[serde(default)]
+    pub fill_missing_identity: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompleteMovieCollectionResult {
+    pub created_record_ids: Vec<String>,
+    pub reused_record_ids: Vec<String>,
+    pub identity_updated_record_ids: Vec<String>,
+}
+
 fn manual_source() -> String {
     "manual".to_string()
 }
@@ -1016,6 +1044,294 @@ pub fn create_records_with_members(
     Ok(prepared)
 }
 
+fn normalize_imdb_id(value: Option<&str>) -> Option<String> {
+    let value = value?.trim().to_ascii_lowercase();
+    (value.len() > 2
+        && value.starts_with("tt")
+        && value[2..]
+            .chars()
+            .all(|character| character.is_ascii_digit()))
+    .then_some(value)
+}
+
+fn movie_identity_matches(
+    conn: &Connection,
+    tmdb_id: i64,
+    imdb_id: Option<&str>,
+) -> Result<HashSet<String>, AppError> {
+    let mut ids = HashSet::new();
+    let mut tmdb = conn.prepare(
+        "SELECT id FROM records WHERE (tmdbMediaKind='movie' OR mediaType='电影') AND tmdbId=?1",
+    )?;
+    for id in tmdb.query_map([tmdb_id], |row| row.get::<_, String>(0))? {
+        ids.insert(id?);
+    }
+    if let Some(imdb_id) = imdb_id {
+        let mut imdb = conn.prepare(
+            "SELECT id FROM records WHERE (tmdbMediaKind='movie' OR mediaType='电影') AND lower(trim(imdbId))=?1",
+        )?;
+        for id in imdb.query_map([imdb_id], |row| row.get::<_, String>(0))? {
+            ids.insert(id?);
+        }
+    }
+    Ok(ids)
+}
+
+fn add_movie_member_if_missing(
+    conn: &Connection,
+    collection_id: &str,
+    record_id: &str,
+    position: &mut i64,
+    timestamp: &str,
+    actor: &str,
+) -> Result<Option<CollectionMember>, AppError> {
+    let exists = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM collection_members WHERE collectionId=?1 AND recordId=?2)",
+        params![collection_id, record_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if exists {
+        return Ok(None);
+    }
+    let id = member_id(collection_id, record_id);
+    conn.execute("INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor) VALUES(?1,?2,?3,?4,'tmdb',?5,?5,1,?6)", params![id, collection_id, record_id, *position, timestamp, actor])?;
+    conn.execute(
+        "DELETE FROM collection_member_tombstones WHERE id=?1",
+        [&id],
+    )?;
+    *position += 1024;
+    Ok(Some(conn.query_row(
+        "SELECT * FROM collection_members WHERE id=?1",
+        [&id],
+        map_member,
+    )?))
+}
+
+pub fn complete_movie_collection(
+    conn: &mut Connection,
+    input: CompleteMovieCollectionInput,
+    actor: &str,
+) -> Result<CompleteMovieCollectionResult, AppError> {
+    if input.matches.len() + input.new_records.len() > 100 {
+        return Err(AppError::General("movie_completion_batch_invalid".into()));
+    }
+    let timestamp = now();
+    let tx = conn.transaction()?;
+    let collection = get(&tx, &input.collection_id)?;
+    if collection.rev != input.expected_rev {
+        return Err(AppError::General("stale_collection".into()));
+    }
+    if collection.collection_kind != "movie-series" {
+        return Err(AppError::General("movie_collection_required".into()));
+    }
+
+    let mut position = tx.query_row(
+        "SELECT COALESCE(MAX(position),-1024)+1024 FROM collection_members WHERE collectionId=?1",
+        [&input.collection_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let mut changed_records = Vec::new();
+    let mut changed_members = Vec::new();
+    let mut created_record_ids = Vec::new();
+    let mut reused_record_ids = Vec::new();
+    let mut identity_updated_record_ids = Vec::new();
+    let mut handled_records = HashSet::new();
+
+    for matched in input.matches {
+        if matched.tmdb_id <= 0 || !handled_records.insert(matched.record_id.clone()) {
+            return Err(AppError::General("movie_identity_invalid".into()));
+        }
+        let imdb_id = normalize_imdb_id(matched.imdb_id.as_deref());
+        let mut record = crate::db::get_record(&tx, &matched.record_id)?
+            .ok_or_else(|| AppError::General("collection_reference_invalid".into()))?;
+        if record.rev != matched.expected_rev {
+            return Err(AppError::General("stale_record".into()));
+        }
+        if record.media_type != "电影" && record.tmdb_media_kind.as_deref() != Some("movie") {
+            return Err(AppError::General("movie_identity_invalid".into()));
+        }
+        if record.tmdb_id.is_some_and(|value| value != matched.tmdb_id)
+            || normalize_imdb_id(record.imdb_id.as_deref())
+                .is_some_and(|value| Some(value.as_str()) != imdb_id.as_deref())
+        {
+            return Err(AppError::General("movie_identity_conflict".into()));
+        }
+        let identity_matches = movie_identity_matches(&tx, matched.tmdb_id, imdb_id.as_deref())?;
+        if identity_matches.iter().any(|id| id != &record.id) {
+            return Err(AppError::General("movie_identity_conflict".into()));
+        }
+        let mut identity_changed = false;
+        if input.fill_missing_identity && !record.is_locked.unwrap_or(false) {
+            if record.tmdb_media_kind.is_none() {
+                record.tmdb_media_kind = Some("movie".into());
+                identity_changed = true;
+            }
+            if record.tmdb_id.is_none() {
+                record.tmdb_id = Some(matched.tmdb_id);
+                identity_changed = true;
+            }
+            if record.series_record_kind.is_none() {
+                record.series_record_kind = Some("single-work".into());
+                identity_changed = true;
+            }
+        }
+        if identity_changed {
+            record.rev += 1;
+            record.rev_actor = actor.to_string();
+            record.updated_at = Some(timestamp.clone());
+            crate::db::insert_record(&tx, record.clone())?;
+            identity_updated_record_ids.push(record.id.clone());
+            changed_records.push(record.clone());
+        }
+        if let Some(member) = add_movie_member_if_missing(
+            &tx,
+            &input.collection_id,
+            &record.id,
+            &mut position,
+            &timestamp,
+            actor,
+        )? {
+            reused_record_ids.push(record.id.clone());
+            changed_members.push(member);
+        }
+    }
+
+    for raw_record in input.new_records {
+        let mut record = prepare_record(raw_record, RecordWriteContext::Local)?;
+        if record.tmdb_media_kind.as_deref() != Some("movie")
+            || !record.tmdb_id.is_some_and(|id| id > 0)
+        {
+            return Err(AppError::General("movie_identity_invalid".into()));
+        }
+        let tmdb_id = record.tmdb_id.unwrap();
+        let imdb_id = normalize_imdb_id(record.imdb_id.as_deref());
+        let matches = movie_identity_matches(&tx, tmdb_id, imdb_id.as_deref())?;
+        if matches.len() > 1 {
+            return Err(AppError::General("movie_identity_conflict".into()));
+        }
+        if let Some(record_id) = matches.into_iter().next() {
+            let mut existing = crate::db::get_record(&tx, &record_id)?
+                .ok_or_else(|| AppError::General("collection_reference_invalid".into()))?;
+            if existing.tmdb_id.is_some_and(|value| value != tmdb_id)
+                || normalize_imdb_id(existing.imdb_id.as_deref())
+                    .is_some_and(|value| Some(value.as_str()) != imdb_id.as_deref())
+            {
+                return Err(AppError::General("movie_identity_conflict".into()));
+            }
+            let mut identity_changed = false;
+            if input.fill_missing_identity && !existing.is_locked.unwrap_or(false) {
+                if existing.tmdb_media_kind.is_none() {
+                    existing.tmdb_media_kind = Some("movie".into());
+                    identity_changed = true;
+                }
+                if existing.tmdb_id.is_none() {
+                    existing.tmdb_id = Some(tmdb_id);
+                    identity_changed = true;
+                }
+                if existing.series_record_kind.is_none() {
+                    existing.series_record_kind = Some("single-work".into());
+                    identity_changed = true;
+                }
+            }
+            if identity_changed {
+                existing.rev += 1;
+                existing.rev_actor = actor.to_string();
+                existing.updated_at = Some(timestamp.clone());
+                crate::db::insert_record(&tx, existing.clone())?;
+                identity_updated_record_ids.push(existing.id.clone());
+                changed_records.push(existing);
+            }
+            if handled_records.insert(record_id.clone()) {
+                if let Some(member) = add_movie_member_if_missing(
+                    &tx,
+                    &input.collection_id,
+                    &record_id,
+                    &mut position,
+                    &timestamp,
+                    actor,
+                )? {
+                    changed_members.push(member);
+                }
+                reused_record_ids.push(record_id);
+            }
+            continue;
+        }
+        if !handled_records.insert(record.id.clone())
+            || tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM records WHERE id=?1)",
+                [&record.id],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            return Err(AppError::General("movie_identity_conflict".into()));
+        }
+        record.rev = 1;
+        record.rev_actor = actor.to_string();
+        record.updated_at = Some(timestamp.clone());
+        crate::db::insert_record(&tx, record.clone())?;
+        let member = add_movie_member_if_missing(
+            &tx,
+            &input.collection_id,
+            &record.id,
+            &mut position,
+            &timestamp,
+            actor,
+        )?
+        .ok_or_else(|| AppError::General("movie_identity_conflict".into()))?;
+        created_record_ids.push(record.id.clone());
+        changed_records.push(record);
+        changed_members.push(member);
+    }
+
+    if changed_records.is_empty() && changed_members.is_empty() {
+        tx.commit()?;
+        return Ok(CompleteMovieCollectionResult {
+            created_record_ids,
+            reused_record_ids,
+            identity_updated_record_ids,
+        });
+    }
+    let changed_collection = if changed_members.is_empty() {
+        None
+    } else {
+        Some(bump_collection(
+            &tx,
+            &input.collection_id,
+            actor,
+            &timestamp,
+        )?)
+    };
+    let generation = mark_local_records_mutated(&tx, "movie-collection-completion")?;
+    if let Some(collection) = changed_collection {
+        crate::sync_staging::stage_entity_upsert(
+            &tx,
+            "collection",
+            &collection.id,
+            serde_json::to_value(&collection)
+                .map_err(|error| AppError::General(error.to_string()))?,
+            generation,
+        )?;
+    }
+    for record in &changed_records {
+        crate::sync_staging::stage_upsert(&tx, record, generation)?;
+    }
+    for member in &changed_members {
+        crate::sync_staging::stage_entity_upsert(
+            &tx,
+            "collection-member",
+            &member.id,
+            serde_json::to_value(member).map_err(|error| AppError::General(error.to_string()))?,
+            generation,
+        )?;
+    }
+    tx.commit()?;
+    Ok(CompleteMovieCollectionResult {
+        created_record_ids,
+        reused_record_ids,
+        identity_updated_record_ids,
+    })
+}
+
 pub fn remove_member(
     conn: &mut Connection,
     collection_id: &str,
@@ -1629,6 +1945,155 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("missing_movie_duplicate"));
+    }
+
+    #[test]
+    fn movie_completion_reuses_legacy_imdb_identity_and_only_fills_missing_identity() {
+        let mut conn = database();
+        conn.execute(
+            "UPDATE records SET imdbId=' TT0088247 ', platform='手工平台' WHERE id='one'",
+            [],
+        )
+        .unwrap();
+        let collection = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "终结者（系列）".into(),
+                description: None,
+                source_kind: "tmdb-movie-collection".into(),
+                source_key: Some("tmdb:movie-collection:528".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        add_members(
+            &mut conn,
+            &collection.id,
+            vec!["one".into()],
+            "manual",
+            collection.rev,
+            "device",
+        )
+        .unwrap();
+        let collection = get(&conn, &collection.id).unwrap();
+        let result = complete_movie_collection(
+            &mut conn,
+            CompleteMovieCollectionInput {
+                collection_id: collection.id,
+                expected_rev: collection.rev,
+                matches: vec![ConfirmedMovieMatchInput {
+                    record_id: "one".into(),
+                    expected_rev: 1,
+                    tmdb_id: 218,
+                    imdb_id: Some("tt0088247".into()),
+                }],
+                new_records: vec![],
+                fill_missing_identity: true,
+            },
+            "device",
+        )
+        .unwrap();
+        assert!(result.created_record_ids.is_empty());
+        assert_eq!(result.identity_updated_record_ids, vec!["one"]);
+        let updated = crate::db::get_record(&conn, "one").unwrap().unwrap();
+        assert_eq!(updated.tmdb_media_kind.as_deref(), Some("movie"));
+        assert_eq!(updated.tmdb_id, Some(218));
+        assert_eq!(updated.series_record_kind.as_deref(), Some("single-work"));
+        assert_eq!(updated.platform, "手工平台");
+    }
+
+    #[test]
+    fn movie_completion_reuses_library_record_instead_of_creating_duplicate() {
+        let mut conn = database();
+        conn.execute("UPDATE records SET imdbId='tt0133093' WHERE id='one'", [])
+            .unwrap();
+        let collection = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "黑客帝国".into(),
+                description: None,
+                source_kind: "tmdb-movie-collection".into(),
+                source_key: Some("tmdb:movie-collection:2344".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let mut proposed = record("new-matrix");
+        proposed.tmdb_media_kind = Some("movie".into());
+        proposed.tmdb_id = Some(603);
+        proposed.imdb_id = Some("tt0133093".into());
+        proposed.series_record_kind = Some("single-work".into());
+        let result = complete_movie_collection(
+            &mut conn,
+            CompleteMovieCollectionInput {
+                collection_id: collection.id.clone(),
+                expected_rev: collection.rev,
+                matches: vec![],
+                new_records: vec![proposed],
+                fill_missing_identity: true,
+            },
+            "device",
+        )
+        .unwrap();
+        assert!(result.created_record_ids.is_empty());
+        assert_eq!(result.reused_record_ids, vec!["one"]);
+        assert_eq!(crate::db::get_all_records(&conn).unwrap().len(), 2);
+        assert!(all_members(&conn)
+            .unwrap()
+            .iter()
+            .any(|member| member.collection_id == collection.id && member.record_id == "one"));
+    }
+
+    #[test]
+    fn movie_completion_identity_conflict_rolls_back_the_whole_batch() {
+        let mut conn = database();
+        conn.execute("UPDATE records SET tmdbMediaKind='movie', tmdbId=218, imdbId='tt0088247' WHERE id='one'", []).unwrap();
+        conn.execute("UPDATE records SET imdbId='tt0103064' WHERE id='two'", [])
+            .unwrap();
+        let collection = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "冲突合集".into(),
+                description: None,
+                source_kind: "tmdb-movie-collection".into(),
+                source_key: Some("tmdb:movie-collection:528".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let generation = crate::db_atomic_helpers::get_records_generation(&conn).unwrap();
+        let error = complete_movie_collection(
+            &mut conn,
+            CompleteMovieCollectionInput {
+                collection_id: collection.id.clone(),
+                expected_rev: collection.rev,
+                matches: vec![ConfirmedMovieMatchInput {
+                    record_id: "one".into(),
+                    expected_rev: 1,
+                    tmdb_id: 218,
+                    imdb_id: Some("tt0103064".into()),
+                }],
+                new_records: vec![],
+                fill_missing_identity: true,
+            },
+            "device",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("movie_identity_conflict"));
+        assert!(all_members(&conn)
+            .unwrap()
+            .iter()
+            .all(|member| member.collection_id != collection.id));
+        assert_eq!(
+            crate::db_atomic_helpers::get_records_generation(&conn).unwrap(),
+            generation
+        );
     }
 
     #[test]

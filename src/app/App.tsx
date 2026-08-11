@@ -39,7 +39,7 @@ import {
 import type { SavedWatchlistViewV1 } from '../shared/lib/savedViews';
 import { useCollections } from '../features/collections/hooks/useCollections';
 import CollectionCenter from '../features/collections/components/CollectionCenter';
-import { createMissingSeasons, createRecoveryPoint } from '../shared/lib/database';
+import { completeMovieCollection, createMissingSeasons, createRecoveryPoint } from '../shared/lib/database';
 
 type InitializationState = 'loading' | 'ready' | 'error';
 
@@ -670,6 +670,12 @@ export default function App() {
             await createRecoveryPoint('series-completion');
             await createMissingSeasons(collection.id, newRecords, collection.rev);
             await Promise.all([loadRecords(), collectionState.refresh()]);
+          }}
+          onCompleteMovieCollection={async input => {
+            await createRecoveryPoint('series-completion');
+            const result = await completeMovieCollection(input);
+            await Promise.all([loadRecords(), collectionState.refresh()]);
+            return result;
           }}
           onEditRecord={record => { setShowCollections(false); handleEdit(record); }}
           onNotify={notify}

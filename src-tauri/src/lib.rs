@@ -139,6 +139,7 @@ pub fn run() {
             commands::add_collection_members,
             commands::apply_collection_suggestion,
             commands::create_missing_seasons,
+            commands::complete_movie_collection,
             commands::remove_collection_member,
             commands::reorder_collection_members,
             commands::get_episode_tracking,

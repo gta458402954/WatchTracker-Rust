@@ -3,11 +3,12 @@ import type { CollectionMember, WatchCollection, WatchRecord } from '../../../sh
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import SafePosterImage from '../../watchlist/components/SafePosterImage';
-import { getTmdbDetailAsync, searchTmdbAsync } from '../../../shared/lib/database';
+import { getTmdbDetailAsync, searchTmdbAsync, type CompleteMovieCollectionInput, type CompleteMovieCollectionResult } from '../../../shared/lib/database';
 import type { TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
 import { getEmptyRecord } from '../../../shared/lib/constants';
 import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, readIdentityCache, seasonNumberOf, seriesBaseName, tvSourceKey, writeIdentityCache } from '../lib/seriesDiscovery';
 import { movieRecordMetadata, seasonRecordMetadata } from '../lib/tmdbRecordMapping';
+import { classifyMovieCollectionPart, type MovieCollectionCandidate } from '../lib/movieCollectionIdentity';
 
 interface Props {
   records: WatchRecord[];
@@ -23,6 +24,7 @@ interface Props {
   onReorder: (collection: WatchCollection, recordIds: string[]) => Promise<void>;
   onApplySuggestion: (name: string, sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show', sourceKey: string, recordIds: string[], targetCollectionId?: string) => Promise<void>;
   onCreateMissingSeasons: (collection: WatchCollection, records: WatchRecord[]) => Promise<void>;
+  onCompleteMovieCollection: (input: CompleteMovieCollectionInput) => Promise<CompleteMovieCollectionResult>;
   onEditRecord: (record: WatchRecord) => void;
   onClose: () => void;
   onNotify: (tone: 'success' | 'warning' | 'error' | 'info', message: string) => void;
@@ -38,6 +40,19 @@ interface CollectionSuggestion {
 }
 interface ScanMatchChoice { id: number; mediaType: 'movie' | 'tv'; label: string }
 interface ScanAmbiguity { imdbId: string; recordIds: string[]; choices: ScanMatchChoice[] }
+
+async function mapWithConcurrency<T, R>(values: T[], limit: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(values[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker));
+  return results;
+}
 
 function errorText(error: unknown): string {
   const value = String(error);
@@ -69,7 +84,9 @@ export default function CollectionCenter(props: Props) {
   const [selectedSeasonNumbers, setSelectedSeasonNumbers] = useState<Set<number>>(() => new Set());
   const [showSpecials, setShowSpecials] = useState(false);
   const [movieCollectionDetail, setMovieCollectionDetail] = useState<TmdbMedia | null>(null);
+  const [movieCandidates, setMovieCandidates] = useState<MovieCollectionCandidate[]>([]);
   const [selectedMovieIds, setSelectedMovieIds] = useState<Set<number>>(() => new Set());
+  const [fillMissingMovieIdentity, setFillMissingMovieIdentity] = useState(true);
   const [parentChoices, setParentChoices] = useState<Array<{ id: number; name: string }>>([]);
   const [linkingRelated, setLinkingRelated] = useState(false);
   const [relatedSearch, setRelatedSearch] = useState('');
@@ -385,14 +402,27 @@ export default function CollectionCenter(props: Props) {
       const result = cached ?? await getTmdbDetailAsync({ id: collectionId, mediaType: 'collection', language: 'zh-CN' });
       if (!result.success || !result.data?.parts) throw new Error('missing collection parts');
       if (!cached) writeIdentityCache(cacheKey, result, true, undefined, 7);
-      const existing = new Set(selectedMembers.map(member => recordById.get(member.recordId)?.tmdbId).filter((id): id is number => Number.isInteger(id) && (id ?? 0) > 0));
+      const memberIds = new Set(selectedMembers.map(member => member.recordId));
+      const detailed = await mapWithConcurrency(result.data.parts, 4, async movie => {
+        if (!movie.id) return { movie, resolved: false };
+        const detailKey = `movie-detail:${movie.id}:zh-CN`;
+        const detailCached = forceRefresh ? undefined : readIdentityCache<Awaited<ReturnType<typeof getTmdbDetailAsync>>>(detailKey);
+        const detailResult = detailCached ?? await getTmdbDetailAsync({ id: movie.id, mediaType: 'movie', language: 'zh-CN' });
+        if (!detailCached && detailResult.success && detailResult.data) writeIdentityCache(detailKey, detailResult, true, undefined, 30);
+        return { movie: detailResult.success && detailResult.data ? { ...movie, ...detailResult.data } : movie, resolved: !!(detailResult.success && detailResult.data) };
+      });
+      const candidates = detailed.map(item => item.resolved
+        ? classifyMovieCollectionPart(item.movie, records, memberIds)
+        : ({ movie: item.movie, status: 'unresolved' } as MovieCollectionCandidate));
       const today = new Date();
-      setMovieCollectionDetail(result.data);
-      setSelectedMovieIds(new Set(result.data.parts.filter(movie => {
-        if (movie.id == null || existing.has(movie.id) || !movie.release_date) return false;
+      setMovieCollectionDetail({ ...result.data, parts: detailed.map(item => item.movie) });
+      setMovieCandidates(candidates);
+      setSelectedMovieIds(new Set(candidates.filter(candidate => {
+        const movie = candidate.movie;
+        if (movie.id == null || !['library', 'missing'].includes(candidate.status) || !movie.release_date) return false;
         const release = new Date(`${movie.release_date}T00:00:00Z`);
         return !Number.isNaN(release.valueOf()) && release <= today;
-      }).map(movie => movie.id as number)));
+      }).map(candidate => candidate.movie.id as number)));
     } catch {
       onNotify('error', '读取 TMDB 电影合集失败，请稍后重试。');
     } finally { setBusy(false); }
@@ -402,22 +432,38 @@ export default function CollectionCenter(props: Props) {
     if (!selected || !movieCollectionDetail?.parts || selectedMovieIds.size === 0) return;
     setBusy(true);
     try {
-      const chosen = movieCollectionDetail.parts.filter(movie => movie.id != null && selectedMovieIds.has(movie.id));
-      const details = await Promise.all(chosen.map(movie => getTmdbDetailAsync({ id: movie.id!, mediaType: 'movie', language: 'zh-CN' })));
-      if (details.some(result => !result.success || !result.data)) throw new Error('missing movie detail');
+      const chosen = movieCandidates.filter(candidate => candidate.movie.id != null && selectedMovieIds.has(candidate.movie.id));
+      if (chosen.some(candidate => !['library', 'missing'].includes(candidate.status))) throw new Error('movie identity unresolved');
       const now = new Date().toISOString();
-      const recordsToCreate = details.map(result => ({
+      const newRecords = chosen.filter(candidate => candidate.status === 'missing').map(candidate => ({
         ...getEmptyRecord(),
-        ...movieRecordMetadata(result.data!),
+        ...movieRecordMetadata(candidate.movie),
         id: crypto.randomUUID(),
         createdAt: now,
         updatedAt: now,
       }));
-      await props.onCreateMissingSeasons(selected, recordsToCreate);
+      const matchedCandidates = [
+        ...movieCandidates.filter(candidate => candidate.status === 'member'),
+        ...chosen.filter(candidate => candidate.status === 'library'),
+      ];
+      const matches = [...new Map(matchedCandidates.filter(candidate => candidate.recordId).map(candidate => [candidate.recordId!, candidate])).values()].flatMap(candidate => {
+        const record = candidate.recordId ? recordById.get(candidate.recordId) : undefined;
+        const tmdbId = candidate.movie.id;
+        if (!record || !tmdbId) return [];
+        return [{ recordId: record.id, expectedRev: record.rev ?? 0, tmdbId, imdbId: candidate.movie.external_ids?.imdb_id || candidate.movie.imdb_id || null }];
+      });
+      const completion = await props.onCompleteMovieCollection({
+        collectionId: selected.id,
+        expectedRev: selected.rev,
+        matches,
+        newRecords,
+        fillMissingIdentity: fillMissingMovieIdentity,
+      });
       setMovieCollectionDetail(null);
-      onNotify('success', `已补充 ${recordsToCreate.length} 部缺少的电影，已有条目未被覆盖。`);
-    } catch {
-      onNotify('error', '补充电影失败；片库与收藏集均未更改。');
+      setMovieCandidates([]);
+      onNotify('success', `已新增 ${completion.createdRecordIds.length} 部、复用 ${completion.reusedRecordIds.length} 部${completion.identityUpdatedRecordIds.length ? `，补全 ${completion.identityUpdatedRecordIds.length} 条旧身份` : ''}。`);
+    } catch (error) {
+      onNotify('error', String(error).includes('movie_identity_conflict') ? '检测到电影身份冲突，请先修正对应条目的 TMDB/IMDb 信息；本次没有写入。' : '补充电影失败；片库与收藏集均未更改。');
     } finally { setBusy(false); }
   }
 
@@ -551,15 +597,18 @@ export default function CollectionCenter(props: Props) {
       <div className="mt-4 flex items-center justify-between border-t pt-4"><span className="text-xs text-gray-500">已选择 {selectedSeasonNumbers.size} 季</span><div className="flex gap-2"><button onClick={() => setSeasonDetail(null)} className="rounded-xl border px-4 py-2 text-sm">取消</button><button disabled={busy || selectedSeasonNumbers.size === 0} onClick={() => void createSelectedSeasons()} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-300">补充到片库</button></div></div>
     </div></div>}
     {movieCollectionDetail?.parts && selected && <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="检查缺失电影" className="flex max-h-[86vh] w-full max-w-2xl flex-col rounded-3xl bg-white p-5 shadow-2xl">
-      <div className="flex items-start justify-between gap-4"><div><h3 className="text-xl font-black text-gray-900">查看 TMDB 电影合集</h3><p className="mt-1 text-xs text-gray-400">只会新增勾选的缺少电影，不覆盖片库已有条目</p></div><div className="flex items-center gap-2"><button disabled={busy} onClick={() => void inspectMissingMovies(true)} className="rounded-lg border px-3 py-1.5 text-xs font-bold text-indigo-600 disabled:opacity-50">刷新 TMDB</button><button onClick={() => setMovieCollectionDetail(null)} className="text-xl text-gray-400">×</button></div></div>
-      <div className="mt-4 flex-1 space-y-2 overflow-y-auto">{movieCollectionDetail.parts.map(movie => {
+      <div className="flex items-start justify-between gap-4"><div><h3 className="text-xl font-black text-gray-900">查看 TMDB 电影合集</h3><p className="mt-1 text-xs text-gray-400">按 TMDB 与 IMDb 双身份核验；确认前不会修改片库</p></div><div className="flex items-center gap-2"><button disabled={busy} onClick={() => void inspectMissingMovies(true)} className="rounded-lg border px-3 py-1.5 text-xs font-bold text-indigo-600 disabled:opacity-50">刷新 TMDB</button><button onClick={() => { setMovieCollectionDetail(null); setMovieCandidates([]); }} className="text-xl text-gray-400">×</button></div></div>
+      <label className="mt-4 flex items-center gap-2 rounded-xl bg-indigo-50 px-3 py-2 text-xs text-indigo-700"><input type="checkbox" checked={fillMissingMovieIdentity} onChange={event => setFillMissingMovieIdentity(event.target.checked)} />为已确认的旧电影仅补全缺失的 TMDB 身份（不覆盖已有值）</label>
+      <div className="mt-3 flex-1 space-y-2 overflow-y-auto">{movieCandidates.map(candidate => {
+        const movie = candidate.movie;
         const id = movie.id ?? 0;
-        const existing = selectedMembers.some(member => recordById.get(member.recordId)?.tmdbId === id);
         const checked = selectedMovieIds.has(id);
         const future = !!movie.release_date && new Date(`${movie.release_date}T00:00:00Z`) > new Date();
-        return <label key={id} className={`flex items-center gap-3 rounded-2xl border p-3 ${existing ? 'bg-gray-50 opacity-60' : 'cursor-pointer hover:border-indigo-200'}`}><input type="checkbox" disabled={existing || !id} checked={checked} onChange={() => setSelectedMovieIds(current => { const next = new Set(current); if (checked) next.delete(id); else next.add(id); return next; })} /><SafePosterImage posterPath={movie.poster_path || ''} alt="" compact className="h-16 w-11 rounded-lg object-cover" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-gray-800">{movie.title || movie.name || '未命名电影'} · {movie.release_date?.slice(0, 4) || '年份未知'}</p><p className="mt-1 text-xs text-gray-400">{existing ? '已在片库' : future ? '尚未上映' : !movie.release_date ? '上映日期未知' : '可补充'}</p></div></label>;
+        const selectable = ['library', 'missing'].includes(candidate.status);
+        const statusText = candidate.status === 'member' ? '已在当前收藏集' : candidate.status === 'library' ? '已在片库，可加入收藏集' : candidate.status === 'conflict' ? '身份冲突，需要先修正条目' : candidate.status === 'unresolved' ? '无法确认身份，请刷新重试' : future ? '尚未上映' : !movie.release_date ? '上映日期未知' : '片库缺失';
+        return <label key={id} className={`flex items-center gap-3 rounded-2xl border p-3 ${selectable ? 'cursor-pointer hover:border-indigo-200' : 'bg-gray-50 opacity-70'}`}><input type="checkbox" disabled={!selectable || !id} checked={checked} onChange={() => setSelectedMovieIds(current => { const next = new Set(current); if (checked) next.delete(id); else next.add(id); return next; })} /><SafePosterImage posterPath={movie.poster_path || ''} alt="" compact className="h-16 w-11 rounded-lg object-cover" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-gray-800">{movie.title || movie.name || '未命名电影'} · {movie.release_date?.slice(0, 4) || '年份未知'}</p><p className={`mt-1 text-xs ${candidate.status === 'conflict' ? 'font-semibold text-red-500' : 'text-gray-400'}`}>{statusText}</p></div></label>;
       })}</div>
-      <div className="mt-4 flex items-center justify-between border-t pt-4"><span className="text-xs text-gray-500">已选择 {selectedMovieIds.size} 部</span><div className="flex gap-2"><button onClick={() => setMovieCollectionDetail(null)} className="rounded-xl border px-4 py-2 text-sm">取消</button><button disabled={busy || selectedMovieIds.size === 0} onClick={() => void createSelectedMovies()} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-300">补充到片库</button></div></div>
+      <div className="mt-4 flex items-center justify-between border-t pt-4"><span className="text-xs text-gray-500">已选择 {selectedMovieIds.size} 部</span><div className="flex gap-2"><button onClick={() => { setMovieCollectionDetail(null); setMovieCandidates([]); }} className="rounded-xl border px-4 py-2 text-sm">取消</button><button disabled={busy || selectedMovieIds.size === 0} onClick={() => void createSelectedMovies()} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white disabled:bg-gray-300">补充到片库</button></div></div>
     </div></div>}
     {linkingRelated && selected && <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="关联相关作品" className="flex max-h-[82vh] w-full max-w-xl flex-col rounded-3xl bg-white p-5 shadow-2xl">
       <div className="flex items-start justify-between"><div><h3 className="text-xl font-black">关联相关作品</h3><p className="mt-1 text-xs text-gray-400">搜索电影、衍生剧或特别篇；只有点击加入后才会写入</p></div><button onClick={() => setLinkingRelated(false)} className="text-xl text-gray-400">×</button></div>
