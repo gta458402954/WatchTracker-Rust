@@ -446,6 +446,24 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               queueOutbox('record-update');
               return structuredClone(persisted);
             }
+            case 'complete_missing_tmdb_identity': {
+              requireKeys(command, args, ['input']);
+              const input = args.input as { recordId: string; expectedRev: number; expectedImdbId: string; tmdbMediaKind: WatchRecord['tmdbMediaKind']; tmdbId: number; tmdbParentId: number | null; tmdbSeasonNumber: number | null; seriesRecordKind: WatchRecord['seriesRecordKind'] };
+              const index = snapshot.records.findIndex(record => record.id === input.recordId);
+              if (index < 0) throw new Error('record_not_found');
+              const previous = snapshot.records[index];
+              if ((previous.rev ?? 0) !== input.expectedRev) throw new Error('stale_record');
+              if (previous.isLocked) throw new Error('record_locked');
+              if (previous.imdbId?.trim().toLowerCase() !== input.expectedImdbId.trim().toLowerCase()) throw new Error('tmdb_identity_imdb_changed');
+              const pairs = [['tmdbMediaKind', input.tmdbMediaKind], ['tmdbId', input.tmdbId], ['tmdbParentId', input.tmdbParentId], ['tmdbSeasonNumber', input.tmdbSeasonNumber], ['seriesRecordKind', input.seriesRecordKind]] as const;
+              if (pairs.some(([field, value]) => previous[field] != null && previous[field] !== value)) throw new Error('tmdb_identity_conflict');
+              const persisted = { ...previous };
+              for (const [field, value] of pairs) if (persisted[field] == null && value != null) Object.assign(persisted, { [field]: value });
+              persisted.rev = (previous.rev ?? 0) + 1; persisted.revActor = 'mock-device'; persisted.updatedAt = new Date().toISOString();
+              snapshot.records[index] = persisted;
+              recordsGeneration += 1; queueOutbox('tmdb-identity-completion');
+              return structuredClone(persisted);
+            }
             case 'delete_record':
               requireKeys(command, args, ['id']);
               snapshot.records = snapshot.records.filter((record) => record.id !== args.id);

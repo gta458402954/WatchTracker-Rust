@@ -98,6 +98,10 @@ test('@expected-settings-modal batch metadata previews and only fills missing mo
   expect(update?.args.updates).not.toHaveProperty('mediaType');
   expect(update?.args.updates).not.toHaveProperty('episodeRuntime');
   expect(snapshot.records[0].contentTags).toBe('美国,律政,自定义');
+  expect(snapshot.calls.filter(call => call.command === 'complete_missing_tmdb_identity')).toHaveLength(1);
+  expect(snapshot.records[0]).toMatchObject({
+    tmdbMediaKind: 'movie', tmdbId: 301, seriesRecordKind: 'single-work',
+  });
 });
 
 test('@expected-settings-modal multiple TMDB matches require an explicit user choice', async ({ page }) => {
@@ -171,7 +175,7 @@ test('@expected-settings-modal shared IMDb seasons keep distinct episode totals'
     tmdbDetail: {
       id: 510, name: 'Example', origin_country: ['US'], genres: [{ name: 'Drama' }],
       episode_run_time: [48], number_of_episodes: 23,
-      seasons: [{ season_number: 1, episode_count: 10 }, { season_number: 2, episode_count: 13 }],
+      seasons: [{ id: 51001, season_number: 1, episode_count: 10 }, { id: 51002, season_number: 2, episode_count: 13 }],
     },
   });
   await page.goto('/');
@@ -196,6 +200,12 @@ test('@expected-settings-modal shared IMDb seasons keep distinct episode totals'
   const firstWriteIndex = batchCalls.findIndex(call => call.command === 'update_record');
   expect(recoveryIndex).toBeGreaterThanOrEqual(0);
   expect(recoveryIndex).toBeLessThan(firstWriteIndex);
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'complete_missing_tmdb_identity')).toHaveLength(2);
+  expect(snapshot.records).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: first.id, tmdbMediaKind: 'tv-season', tmdbId: 51001, tmdbParentId: 510, tmdbSeasonNumber: 1, seriesRecordKind: 'season' }),
+    expect.objectContaining({ id: second.id, tmdbMediaKind: 'tv-season', tmdbId: 51002, tmdbParentId: 510, tmdbSeasonNumber: 2, seriesRecordKind: 'season' }),
+  ]));
 });
 
 test('@expected-settings-modal partial write failure is visible and retryable', async ({ page }) => {

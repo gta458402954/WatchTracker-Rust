@@ -138,13 +138,46 @@ describe('field-level safe patch', () => {
     assert.deepEqual(retained.updates, { movieDuration: 7200 });
   });
 
+  test('plans missing movie TMDB identity without mixing it into ordinary overwrites', () => {
+    const patch = buildBatchMetadataPatch(record(), { id: 101, runtime: 90 }, 'movie');
+    assert.deepEqual(patch.identityPlan, {
+      tmdbMediaKind: 'movie', tmdbId: 101, tmdbParentId: null,
+      tmdbSeasonNumber: null, seriesRecordKind: 'single-work',
+    });
+    assert.deepEqual(patch.updates, {
+      movieDuration: 5400, tmdbMediaKind: 'movie', tmdbId: 101, seriesRecordKind: 'single-work',
+    });
+  });
+
+  test('plans a concrete TV season identity from the parent and season detail ids', () => {
+    const patch = buildBatchMetadataPatch(record({ originalName: 'Example Season 2', mediaType: '剧集' }), {
+      id: 46511, seasons: [{ id: 62090, season_number: 2, episode_count: 13 }],
+    }, 'tv');
+    assert.deepEqual(patch.identityPlan, {
+      tmdbMediaKind: 'tv-season', tmdbId: 62090, tmdbParentId: 46511,
+      tmdbSeasonNumber: 2, seriesRecordKind: 'season',
+    });
+    assert.equal(patch.updates.tmdbParentId, 46511);
+    assert.equal(patch.updates.tmdbSeasonNumber, 2);
+  });
+
+  test('reports an existing identity conflict instead of replacing it', () => {
+    const patch = buildBatchMetadataPatch(record({ tmdbMediaKind: 'movie', tmdbId: 999 }), {
+      id: 101, runtime: 90,
+    }, 'movie');
+    assert.equal(patch.identityPlan, undefined);
+    assert.match(patch.identityConflict, /TMDB ID/);
+    assert.deepEqual(patch.updates, { movieDuration: 5400 });
+  });
+
   test('candidate selection excludes locked, unidentified and already complete records', () => {
     assert.equal(isBatchMetadataCandidate(record({ isLocked: true })), false);
     assert.equal(isBatchMetadataCandidate(record({ imdbId: null })), false);
     assert.equal(isBatchMetadataCandidate(record({
       releaseYear: '2024', posterPath: '/poster.jpg', platform: 'Netflix',
       genres: 'Drama', originCountry: 'US', contentTags: '美国', imdbRating: 8,
-      tmdbStatus: 'Released', movieDuration: 6000,
+      tmdbStatus: 'Released', movieDuration: 6000, tmdbMediaKind: 'movie',
+      tmdbId: 9, seriesRecordKind: 'single-work',
     })), false);
   });
 });

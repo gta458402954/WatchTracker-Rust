@@ -78,6 +78,59 @@ test('@collections opening is read-only until an explicit action', async ({ page
   expect(after.calls.filter(call => writes.has(call.command))).toHaveLength(before.calls.filter(call => writes.has(call.command)).length);
 });
 
+test('@collections arrow keys switch the focused collection and search can enter the list', async ({ page }) => {
+  const second: WatchCollection = {
+    ...collection,
+    id: 'collection-2',
+    name: '第二系列',
+    normalizedName: '第二系列',
+  };
+  await setupMockIpc(page, { collections: [collection, second] });
+  await page.goto('/');
+  await openCenter(page);
+  const dialog = page.getByRole('dialog', { name: '系列与收藏集' });
+  const firstButton = dialog.getByRole('button', { name: /测试系列.*0 部/ });
+  const secondButton = dialog.getByRole('button', { name: /第二系列.*0 部/ });
+
+  await firstButton.focus();
+  await firstButton.press('ArrowDown');
+  await expect(secondButton).toBeFocused();
+  await expect(dialog.getByRole('heading', { name: '第二系列' })).toBeVisible();
+  await secondButton.press('Home');
+  await expect(firstButton).toBeFocused();
+  await expect(dialog.getByRole('heading', { name: '测试系列' })).toBeVisible();
+
+  const search = dialog.getByPlaceholder('搜索收藏集');
+  await search.fill('第二');
+  await search.press('ArrowDown');
+  await expect(secondButton).toBeFocused();
+  await expect(dialog.getByRole('heading', { name: '第二系列' })).toBeVisible();
+});
+
+test('@collections record editing returns to the originating collection after cancel and save', async ({ page }) => {
+  const inside = record('集合内条目');
+  await setupMockIpc(page, {
+    records: [inside],
+    collections: [collection],
+    collectionMembers: [member(inside.id, 0)],
+  });
+  await page.goto('/');
+  await openCenter(page);
+
+  await page.getByRole('button', { name: /集合内条目.*original/ }).click();
+  await expect(page.getByRole('heading', { name: '编辑记录' })).toBeVisible();
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '系列与收藏集' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '测试系列' })).toBeVisible();
+
+  await page.getByRole('button', { name: /集合内条目.*original/ }).click();
+  await page.getByPlaceholder('请输入中文名称').fill('集合内条目（已编辑）');
+  await page.getByRole('button', { name: '保存修改' }).click();
+  await expect(page.getByRole('dialog', { name: '系列与收藏集' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '测试系列' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^集合内条目（已编辑） · 2026/ })).toBeVisible();
+});
+
 test('@collections remains page-safe at 360px', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 740 });
   await setupMockIpc(page, {
@@ -163,4 +216,59 @@ test('@collections upgrades a manual single-parent series before checking missin
   expect(snapshot.collections[0]).toMatchObject({
     sourceKind: 'tmdb-tv-show', sourceKey: 'tmdb:tv-show:71728', collectionKind: 'tv-series', orderMode: 'chronological',
   });
+});
+
+test('@collections identifies a legacy shared-IMDb series without scanning the library', async ({ page }) => {
+  const legacy: WatchCollection = { ...collection, id: 'legacy-show', name: '高堡奇人', normalizedName: '高堡奇人' };
+  const records = [1, 2].map(season => ({
+    ...record(`legacy-show-${season}`), chineseName: `高堡奇人 第 ${season} 季`, originalName: `The Man in the High Castle Season ${season}`,
+    imdbId: 'tt1740299', mediaType: '剧集' as const,
+  }));
+  await setupMockIpc(page, {
+    records,
+    collections: [legacy],
+    collectionMembers: records.map((item, index) => member(item.id, index * 1024, legacy.id)),
+    tmdbSearchResults: [{ id: 62017, name: '高堡奇人', original_name: 'The Man in the High Castle', first_air_date: '2015-01-15', media_type: 'tv' }],
+    tmdbDetail: {
+      id: 62017, name: '高堡奇人', original_name: 'The Man in the High Castle',
+      seasons: [1, 2, 3, 4].map(season => ({ id: 92000 + season, season_number: season, name: `第 ${season} 季`, air_date: `201${4 + season}-01-01`, episode_count: 10 })),
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '确认 TMDB 系列' }).click();
+  const missingDialog = page.getByRole('dialog', { name: '检查缺失季' });
+  await expect(missingDialog).toBeVisible();
+  await expect(missingDialog.getByText('第 3 季 · 2017')).toBeVisible();
+
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.collections[0]).toMatchObject({
+    sourceKind: 'tmdb-tv-show', sourceKey: 'tmdb:tv-show:62017', collectionKind: 'tv-series', orderMode: 'chronological',
+  });
+  expect(snapshot.records.every(item => item.tmdbParentId == null)).toBe(true);
+  expect(snapshot.calls.filter(call => call.command === 'search_tmdb')).toHaveLength(1);
+});
+
+test('@collections requires an explicit choice when legacy IMDb matches multiple TV series', async ({ page }) => {
+  const legacy: WatchCollection = { ...collection, id: 'legacy-choice', name: '旧系列', normalizedName: '旧系列' };
+  const records = [1, 2].map(season => ({
+    ...record(`legacy-choice-${season}`), chineseName: `旧系列 第 ${season} 季`, originalName: `Legacy Show Season ${season}`,
+    imdbId: 'tt1234567', mediaType: '剧集' as const,
+  }));
+  await setupMockIpc(page, {
+    records,
+    collections: [legacy],
+    collectionMembers: records.map((item, index) => member(item.id, index * 1024, legacy.id)),
+    tmdbSearchResults: [
+      { id: 100, name: '候选一', first_air_date: '2010-01-01', media_type: 'tv' },
+      { id: 200, name: '候选二', first_air_date: '2020-01-01', media_type: 'tv' },
+    ],
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '确认 TMDB 系列' }).click();
+  await expect(page.getByRole('dialog', { name: '选择 TMDB 电视剧系列' })).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'update_collection')).toHaveLength(0);
 });

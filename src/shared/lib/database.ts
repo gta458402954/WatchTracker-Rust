@@ -21,6 +21,20 @@ export async function deleteRecord(id: string): Promise<void> {
   await invoke('delete_record', { id });
 }
 
+export interface CompleteMissingTmdbIdentityInput {
+  recordId: string;
+  expectedRev: number;
+  expectedImdbId: string;
+  tmdbMediaKind: 'movie' | 'tv' | 'tv-season';
+  tmdbId: number;
+  tmdbParentId: number | null;
+  tmdbSeasonNumber: number | null;
+  seriesRecordKind: 'season' | 'whole-series' | 'single-work';
+}
+
+export const completeMissingTmdbIdentity = (input: CompleteMissingTmdbIdentityInput): Promise<WatchRecord> =>
+  invoke('complete_missing_tmdb_identity', { input });
+
 export const getCollections = (): Promise<WatchCollection[]> => invoke('get_collections');
 export const getCollectionMembers = (): Promise<CollectionMember[]> => invoke('get_collection_members');
 export const createCollection = (input: { name: string; description: string | null; sourceKind?: WatchCollection['sourceKind']; sourceKey?: string | null; collectionKind?: WatchCollection['collectionKind']; orderMode?: WatchCollection['orderMode'] }): Promise<WatchCollection> =>

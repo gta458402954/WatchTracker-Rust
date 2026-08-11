@@ -17,6 +17,7 @@ import {
   getTmdbCredentialStatus,
   getPosterCacheStats,
   cleanPosterCache,
+  completeMissingTmdbIdentity,
   listRecoveryPoints,
   openBackupDirectory,
   restoreRecoveryPoint,
@@ -53,6 +54,7 @@ import {
   type BatchMetadataField,
   type BatchMetadataNoDataState,
   type TmdbMatch,
+  type TmdbIdentityPlan,
 } from '../../../shared/lib/batchMetadata';
 import { notifyOperationFailure, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
@@ -79,6 +81,7 @@ interface SettingsModalProps {
 
 type BatchPhase = 'idle' | 'planning' | 'preview' | 'applying' | 'done';
 type BatchPlanStatus = 'ready' | 'choice' | 'skipped' | 'failed';
+const TMDB_IDENTITY_FIELDS = new Set<BatchMetadataField>(['tmdbMediaKind', 'tmdbId', 'tmdbParentId', 'tmdbSeasonNumber', 'seriesRecordKind']);
 
 interface BatchCandidate {
   match: TmdbMatch;
@@ -94,6 +97,8 @@ interface BatchPlanRow {
   noDataFields?: BatchMetadataField[];
   candidates?: BatchCandidate[];
   remoteIdentity?: string;
+  identityPlan?: TmdbIdentityPlan;
+  identityConflict?: string;
   reason?: string;
 }
 
@@ -679,7 +684,7 @@ export default function SettingsModal({
         missingBatchMetadataFields(record, match.type).filter(field => !priorNoData.has(field)),
       );
       const patch = selectBatchMetadataPatch(buildBatchMetadataPatch(record, detail, match.type), allowedFields);
-      const noDataFields = [...allowedFields].filter(field => !patch.fields.includes(field));
+      const noDataFields = [...allowedFields].filter(field => !patch.fields.includes(field) && !(patch.identityConflict && TMDB_IDENTITY_FIELDS.has(field)));
       noDataState = recordNoDataFields(noDataState, record, noDataFields);
       await setSettingAsync(BATCH_METADATA_STATE_KEY, JSON.stringify(noDataState));
       setBatchNoDataState(noDataState);
@@ -691,7 +696,9 @@ export default function SettingsModal({
         noDataFields,
         candidates: undefined,
         remoteIdentity: remoteIdentityKey(match, patch.seasonNumber),
-        reason: patch.fields.length ? undefined : '所选 TMDB 条目没有可用于缺失字段的有效值，已记为无需再查',
+        identityPlan: patch.identityPlan,
+        identityConflict: patch.identityConflict,
+        reason: patch.fields.length ? patch.identityConflict : patch.identityConflict || '所选 TMDB 条目没有可用于缺失字段的有效值，已记为无需再查',
       } : item));
       setBatchStatus(patch.fields.length ? '已生成所选条目的写入预览。' : '所选条目没有可补字段。');
     } catch (error) {
@@ -781,7 +788,7 @@ export default function SettingsModal({
           buildBatchMetadataPatch(record, detail, matchResult.match.type),
           allowedFields,
         );
-        const noDataFields = [...allowedFields].filter(field => !patch.fields.includes(field));
+        const noDataFields = [...allowedFields].filter(field => !patch.fields.includes(field) && !(patch.identityConflict && TMDB_IDENTITY_FIELDS.has(field)));
         noDataState = recordNoDataFields(noDataState, record, noDataFields);
         rows.push({
           recordId: record.id,
@@ -791,7 +798,9 @@ export default function SettingsModal({
           fields: patch.fields,
           noDataFields,
           remoteIdentity: remoteIdentityKey(matchResult.match, patch.seasonNumber),
-          reason: patch.fields.length ? undefined : 'TMDB 没有返回可用于缺失字段的有效值，已记为无需再查',
+          identityPlan: patch.identityPlan,
+          identityConflict: patch.identityConflict,
+          reason: patch.fields.length ? patch.identityConflict : patch.identityConflict || 'TMDB 没有返回可用于缺失字段的有效值，已记为无需再查',
         });
       } catch (error) {
         if (batchCancelRef.current) break;
@@ -852,6 +861,7 @@ export default function SettingsModal({
     const results: BatchApplyResult[] = plans
       ? batchResults.filter(result => !retriedIds.has(result.plan.recordId))
       : [];
+    let identityUpdated = false;
 
     for (let index = 0; index < selected.length; index++) {
       if (batchCancelRef.current) break;
@@ -872,14 +882,52 @@ export default function SettingsModal({
         continue;
       }
 
+      const ordinaryFields = safePatch.fields.filter(field => !TMDB_IDENTITY_FIELDS.has(field));
+      const identityFields = safePatch.fields.filter(field => TMDB_IDENTITY_FIELDS.has(field));
+      const ordinaryUpdates: UpdateWatchRecord = {};
+      for (const field of ordinaryFields) Object.assign(ordinaryUpdates, { [field]: safePatch.updates[field] });
+      let ordinaryWritten = false;
       try {
-        await onUpdateRecord(plan.recordId, safePatch.updates);
-        results.push({ plan: { ...plan, fields: safePatch.fields, updates: safePatch.updates }, status: 'updated' });
+        if (ordinaryFields.length) {
+          await onUpdateRecord(plan.recordId, ordinaryUpdates);
+          ordinaryWritten = true;
+        }
+        let identityFailure: string | undefined;
+        if (identityFields.length && plan.identityPlan) {
+          try {
+            await completeMissingTmdbIdentity({
+              recordId: plan.recordId,
+              expectedRev: (current.rev ?? 0) + (ordinaryWritten ? 1 : 0),
+              expectedImdbId: current.imdbId!,
+              ...plan.identityPlan,
+            });
+            identityUpdated = true;
+          } catch (error) {
+            reportOperationFailure('Settings.BatchTmdbIdentityWrite', error);
+            identityFailure = String(error).includes('tmdb_identity_conflict') || String(error).includes('tmdb_identity_duplicate')
+              ? 'TMDB 身份与现有记录冲突，身份字段未写入'
+              : 'TMDB 身份写入失败，可重新分析后重试';
+          }
+        }
+        const writtenFields = identityFailure ? ordinaryFields : safePatch.fields;
+        if (writtenFields.length) {
+          results.push({ plan: { ...plan, fields: writtenFields, updates: safePatch.updates }, status: 'updated', reason: identityFailure });
+        } else {
+          results.push({ plan, status: 'failed', reason: identityFailure || '没有可安全写入的字段' });
+        }
       } catch (error) {
         reportOperationFailure('Settings.BatchMetadataWrite', error);
         results.push({ plan, status: 'failed', reason: '数据库写入失败，可重试此条' });
       }
       setBatchResults([...results]);
+    }
+    if (identityUpdated) {
+      try {
+        await onDatabaseRestored();
+      } catch (error) {
+        reportOperationFailure('Settings.BatchMetadataReload', error);
+        onNotify?.('warning', 'TMDB 身份已写入，但界面刷新失败；重新打开程序后即可显示。');
+      }
     }
 
     if (batchCancelRef.current) {
@@ -1644,7 +1692,7 @@ export default function SettingsModal({
                   </div>
                 </div>
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-xs leading-5 text-emerald-800">
-                  检查 TMDB 可提供的名称、年份、海报、平台、分类、国家、评分、状态及片长/集数等字段，只填空值且绝不覆盖已有内容。TMDB 已确认没有的数据会按“条目 + IMDb 编号 + 字段”记住，下次不再重复查询；IMDb 编号变化后会重新检查。
+                  检查 TMDB 可提供的名称、年份、海报、平台、分类、国家、评分、状态、片长/集数及稳定 TMDB 身份。电影补电影 ID，明确分季记录补父剧 ID、季号和季 ID；只填空值且绝不覆盖已有内容，身份冲突会单独阻止。TMDB 已确认没有的数据会按“条目 + IMDb 编号 + 字段”记住，下次不再重复查询；IMDb 编号变化后会重新检查。
                   {Object.keys(batchNoDataState.records).length > 0 && ` 当前已记住 ${Object.keys(batchNoDataState.records).length} 个条目的无数据状态。`}
                 </div>
                 {Object.keys(batchNoDataState.records).length > 0 && (batchPhase === 'idle' || batchPhase === 'done') && (
@@ -1704,6 +1752,7 @@ export default function SettingsModal({
                           {row.noDataFields && row.noDataFields.length > 0 && (
                             <p className="mt-1 text-[10px] text-amber-600">TMDB 无数据：{row.noDataFields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')}（下次不再查询）</p>
                           )}
+                          {row.identityConflict && <p className="mt-1 text-[10px] font-semibold text-red-500">身份冲突：{row.identityConflict}（普通缺失字段仍可补充）</p>}
                           {row.status === 'choice' && row.candidates && (
                             <div className="mt-2 space-y-1.5">
                               {row.candidates.map(candidate => (
@@ -1755,7 +1804,7 @@ export default function SettingsModal({
                             <p className="truncate font-bold text-gray-800">{result.plan.recordName}</p>
                             <p className="mt-1 text-[10px] text-gray-500">
                               {result.status === 'updated'
-                                ? result.plan.fields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')
+                                ? `${result.plan.fields.map(field => BATCH_METADATA_FIELD_LABELS[field]).join('、')}${result.reason ? `；${result.reason}` : ''}`
                                 : result.reason}
                             </p>
                           </div>

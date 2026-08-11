@@ -8,6 +8,7 @@ mod db_atomic_helpers;
 mod db_atomic_update;
 mod episode_history;
 mod error;
+mod metadata_identity;
 mod models;
 mod net;
 mod poster_cache;
@@ -129,6 +130,7 @@ pub fn run() {
             commands::get_database_compatibility,
             commands::insert_record,
             commands::update_record,
+            commands::complete_missing_tmdb_identity,
             commands::delete_record,
             commands::get_collections,
             commands::get_collection_members,

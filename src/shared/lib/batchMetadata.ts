@@ -22,7 +22,20 @@ export type BatchMetadataField = keyof Pick<UpdateWatchRecord,
   | 'movieDuration'
   | 'episodeRuntime'
   | 'totalEpisodes'
+  | 'tmdbMediaKind'
+  | 'tmdbId'
+  | 'tmdbParentId'
+  | 'tmdbSeasonNumber'
+  | 'seriesRecordKind'
 >;
+
+export interface TmdbIdentityPlan {
+  tmdbMediaKind: 'movie' | 'tv' | 'tv-season';
+  tmdbId: number;
+  tmdbParentId: number | null;
+  tmdbSeasonNumber: number | null;
+  seriesRecordKind: 'season' | 'whole-series' | 'single-work';
+}
 
 export const BATCH_METADATA_STATE_KEY = 'batch_metadata_no_data_v1';
 
@@ -50,6 +63,8 @@ export interface BatchMetadataPatch {
   updates: UpdateWatchRecord;
   fields: BatchMetadataField[];
   seasonNumber: number | null;
+  identityPlan?: TmdbIdentityPlan;
+  identityConflict?: string;
 }
 
 export const BATCH_METADATA_FIELD_LABELS: Record<BatchMetadataField, string> = {
@@ -66,6 +81,11 @@ export const BATCH_METADATA_FIELD_LABELS: Record<BatchMetadataField, string> = {
   movieDuration: '电影时长',
   episodeRuntime: '单集时长',
   totalEpisodes: '总集数',
+  tmdbMediaKind: 'TMDB 媒体类型',
+  tmdbId: 'TMDB ID',
+  tmdbParentId: 'TMDB 父剧 ID',
+  tmdbSeasonNumber: 'TMDB 季号',
+  seriesRecordKind: '系列记录类型',
 };
 
 const EMPTY_NO_DATA_STATE: BatchMetadataNoDataState = { version: 1, records: {} };
@@ -125,9 +145,24 @@ export function missingBatchMetadataFields(
   if (!isPositiveNumber(record.imdbRating)) fields.push('imdbRating');
   if (tmdbType === 'movie') {
     if (!isPositiveNumber(record.movieDuration)) fields.push('movieDuration');
+    if (record.tmdbMediaKind == null) fields.push('tmdbMediaKind');
+    if (!isPositiveNumber(record.tmdbId)) fields.push('tmdbId');
+    if (record.seriesRecordKind == null) fields.push('seriesRecordKind');
   } else if (tmdbType === 'tv') {
     if (!isPositiveNumber(record.episodeRuntime)) fields.push('episodeRuntime');
     if (!isPositiveNumber(record.totalEpisodes)) fields.push('totalEpisodes');
+    const seasonNumber = record.tmdbSeasonNumber ?? seasonNumberOf(record);
+    if (seasonNumber != null) {
+      if (record.tmdbMediaKind == null) fields.push('tmdbMediaKind');
+      if (!isPositiveNumber(record.tmdbId)) fields.push('tmdbId');
+      if (!isPositiveNumber(record.tmdbParentId)) fields.push('tmdbParentId');
+      if (!isPositiveNumber(record.tmdbSeasonNumber)) fields.push('tmdbSeasonNumber');
+      if (record.seriesRecordKind == null) fields.push('seriesRecordKind');
+    } else if (record.tmdbMediaKind === 'tv' || record.seriesRecordKind === 'whole-series') {
+      if (!isPositiveNumber(record.tmdbId)) fields.push('tmdbId');
+      if (record.tmdbMediaKind == null) fields.push('tmdbMediaKind');
+      if (record.seriesRecordKind == null) fields.push('seriesRecordKind');
+    }
   } else {
     if (!isPositiveNumber(record.movieDuration)) fields.push('movieDuration');
     if (!isPositiveNumber(record.episodeRuntime)) fields.push('episodeRuntime');
@@ -170,7 +205,7 @@ export function buildBatchMetadataPatch(
 ): BatchMetadataPatch {
   const updates: UpdateWatchRecord = {};
   const classification = classifyTmdb(detail, tmdbType === 'tv', mediaTypeOf(record));
-  const seasonNumber = tmdbType === 'tv' ? seasonNumberOf(record) : null;
+  const seasonNumber = tmdbType === 'tv' ? (record.tmdbSeasonNumber ?? seasonNumberOf(record)) : null;
   const targetSeason = seasonNumber == null
     ? undefined
     : detail.seasons?.find(season => season.season_number === seasonNumber);
@@ -218,6 +253,10 @@ export function buildBatchMetadataPatch(
     if (!isPositiveNumber(record.movieDuration) && isPositiveNumber(detail.runtime)) {
       updates.movieDuration = Math.round(detail.runtime * 60);
     }
+    const identityPlan: TmdbIdentityPlan | undefined = isPositiveNumber(detail.id) ? {
+      tmdbMediaKind: 'movie', tmdbId: detail.id, tmdbParentId: null, tmdbSeasonNumber: null, seriesRecordKind: 'single-work',
+    } : undefined;
+    return finishBatchPatch(record, updates, seasonNumber, identityPlan);
   } else {
     const runtime = positiveEpisodeRuntimeOf(detail);
     if (!isPositiveNumber(record.episodeRuntime) && runtime !== null) {
@@ -230,13 +269,35 @@ export function buildBatchMetadataPatch(
     if (!isPositiveNumber(record.totalEpisodes) && isPositiveNumber(episodeCount)) {
       updates.totalEpisodes = Math.round(episodeCount);
     }
+    const identityPlan: TmdbIdentityPlan | undefined = seasonNumber != null && isPositiveNumber(targetSeason?.id) && isPositiveNumber(detail.id)
+      ? { tmdbMediaKind: 'tv-season', tmdbId: targetSeason.id, tmdbParentId: detail.id, tmdbSeasonNumber: seasonNumber, seriesRecordKind: 'season' }
+      : seasonNumber == null && (record.tmdbMediaKind === 'tv' || record.seriesRecordKind === 'whole-series') && isPositiveNumber(detail.id)
+        ? { tmdbMediaKind: 'tv', tmdbId: detail.id, tmdbParentId: null, tmdbSeasonNumber: null, seriesRecordKind: 'whole-series' }
+        : undefined;
+    return finishBatchPatch(record, updates, seasonNumber, identityPlan);
   }
+}
 
-  return {
-    updates,
-    fields: Object.keys(updates) as BatchMetadataField[],
-    seasonNumber,
-  };
+const IDENTITY_FIELDS = ['tmdbMediaKind', 'tmdbId', 'tmdbParentId', 'tmdbSeasonNumber', 'seriesRecordKind'] as const;
+
+function finishBatchPatch(record: WatchRecord, updates: UpdateWatchRecord, seasonNumber: number | null, identityPlan?: TmdbIdentityPlan): BatchMetadataPatch {
+  let identityConflict: string | undefined;
+  if (identityPlan) {
+    for (const field of IDENTITY_FIELDS) {
+      const current = record[field];
+      const expected = identityPlan[field];
+      if (current != null && current !== expected) {
+        identityConflict = `${BATCH_METADATA_FIELD_LABELS[field]} 已有值与 TMDB 匹配结果不同`;
+        break;
+      }
+    }
+    if (!identityConflict) {
+      for (const field of IDENTITY_FIELDS) {
+        if (record[field] == null && identityPlan[field] != null) Object.assign(updates, { [field]: identityPlan[field] });
+      }
+    }
+  }
+  return { updates, fields: Object.keys(updates) as BatchMetadataField[], seasonNumber, identityPlan: identityConflict ? undefined : identityPlan, identityConflict };
 }
 
 export function retainMissingMetadataPatch(
@@ -249,6 +310,7 @@ export function retainMissingMetadataPatch(
     'genres', 'originCountry', 'contentTags', 'tmdbStatus',
   ] as const;
   const numberFields = ['imdbRating', 'movieDuration', 'episodeRuntime', 'totalEpisodes'] as const;
+  const identityFields = ['tmdbMediaKind', 'tmdbId', 'tmdbParentId', 'tmdbSeasonNumber', 'seriesRecordKind'] as const;
 
   for (const field of textFields) {
     const value = planned[field];
@@ -258,11 +320,15 @@ export function retainMissingMetadataPatch(
     const value = planned[field];
     if (!isPositiveNumber(current[field]) && isPositiveNumber(value)) updates[field] = value;
   }
+  for (const field of identityFields) {
+    const value = planned[field];
+    if (current[field] == null && value != null) Object.assign(updates, { [field]: value });
+  }
 
   return {
     updates,
     fields: Object.keys(updates) as BatchMetadataField[],
-    seasonNumber: seasonNumberOf(current),
+    seasonNumber: current.tmdbSeasonNumber ?? seasonNumberOf(current),
   };
 }
 
@@ -274,7 +340,8 @@ export function selectBatchMetadataPatch(
   for (const field of patch.fields) {
     if (allowedFields.has(field)) Object.assign(updates, { [field]: patch.updates[field] });
   }
-  return { updates, fields: Object.keys(updates) as BatchMetadataField[], seasonNumber: patch.seasonNumber };
+  const identitySelected = patch.fields.some(field => allowedFields.has(field) && IDENTITY_FIELDS.includes(field as typeof IDENTITY_FIELDS[number]));
+  return { updates, fields: Object.keys(updates) as BatchMetadataField[], seasonNumber: patch.seasonNumber, identityPlan: identitySelected ? patch.identityPlan : undefined, identityConflict: patch.identityConflict };
 }
 
 export function parseBatchMetadataNoDataState(raw: string | null | undefined): BatchMetadataNoDataState {

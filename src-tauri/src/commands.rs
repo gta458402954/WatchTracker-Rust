@@ -125,6 +125,16 @@ pub fn update_record(
 }
 
 #[tauri::command]
+pub fn complete_missing_tmdb_identity(
+    state: State<DbState>,
+    input: crate::metadata_identity::CompleteMissingTmdbIdentityInput,
+) -> Result<WatchRecord, crate::error::AppError> {
+    let mut conn = lock_database(state.inner())?;
+    let actor_id = sync_state::device_id(&conn)?;
+    crate::metadata_identity::complete_missing_tmdb_identity(&mut conn, input, &actor_id)
+}
+
+#[tauri::command]
 pub fn delete_record(state: State<DbState>, id: String) -> Result<(), crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
     let actor_id = sync_state::device_id(&conn)?;

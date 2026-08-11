@@ -97,6 +97,8 @@ export default function App() {
   const collectionState = useCollections();
   const refreshCollections = collectionState.refresh;
   const [showCollections, setShowCollections] = useState(false);
+  const [returnToCollectionsAfterForm, setReturnToCollectionsAfterForm] = useState(false);
+  const [collectionResumeId, setCollectionResumeId] = useState<string | null>(null);
 
   const applySavedView = useCallback((view: SavedWatchlistViewV1) => {
     setQuery(normalizeWatchlistQuery(view.query));
@@ -329,6 +331,15 @@ export default function App() {
 
 
   function handleEdit(record: WatchRecord) {
+    setReturnToCollectionsAfterForm(false);
+    setEditingRecord(record);
+    setShowForm(true);
+  }
+
+  function handleCollectionRecordEdit(record: WatchRecord, collectionId: string) {
+    setCollectionResumeId(collectionId);
+    setReturnToCollectionsAfterForm(true);
+    setShowCollections(false);
     setEditingRecord(record);
     setShowForm(true);
   }
@@ -387,6 +398,10 @@ export default function App() {
   function handleCloseForm() {
     setShowForm(false);
     setEditingRecord(null);
+    if (returnToCollectionsAfterForm) {
+      setReturnToCollectionsAfterForm(false);
+      setShowCollections(true);
+    }
   }
 
   async function handleDelete(id: string) {
@@ -484,7 +499,7 @@ export default function App() {
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         onShowDashboard={() => setShowDashboard(true)}
-        onShowCollections={() => setShowCollections(true)}
+        onShowCollections={() => { setCollectionResumeId(null); setShowCollections(true); }}
         onShowSettings={() => { setSettingsInitialTab('basic'); setShowSettings(true); }}
         onShowSyncSettings={() => { setSettingsInitialTab('sync'); setShowSettings(true); }}
         onShowForm={() => setShowForm(true)}
@@ -657,6 +672,7 @@ export default function App() {
           records={records}
           collections={collectionState.collections}
           members={collectionState.members}
+          initialSelectedId={collectionResumeId}
           onCreate={collectionState.create}
           onUpdate={collectionState.update}
           onSetOrderMode={collectionState.setOrderMode}
@@ -677,9 +693,9 @@ export default function App() {
             await Promise.all([loadRecords(), collectionState.refresh()]);
             return result;
           }}
-          onEditRecord={record => { setShowCollections(false); handleEdit(record); }}
+          onEditRecord={handleCollectionRecordEdit}
           onNotify={notify}
-          onClose={() => setShowCollections(false)}
+          onClose={() => { setShowCollections(false); setCollectionResumeId(null); }}
         />
       )}
 
