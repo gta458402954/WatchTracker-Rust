@@ -272,3 +272,86 @@ test('@collections requires an explicit choice when legacy IMDb matches multiple
   const snapshot = await mockSnapshot(page);
   expect(snapshot.calls.filter(call => call.command === 'update_collection')).toHaveLength(0);
 });
+
+test('@collections suppresses a single-season work and a work already covered by any collection', async ({ page }) => {
+  const redemption = {
+    ...record('redemption'), chineseName: '罪恶黑名单：救赎', originalName: 'The Blacklist: Redemption',
+    imdbId: 'tt5592230', mediaType: '剧集' as const,
+  };
+  const blacklist: WatchCollection = { ...collection, id: 'blacklist', name: '罪恶黑名单', normalizedName: '罪恶黑名单', collectionKind: 'universe' };
+  await setupMockIpc(page, {
+    records: [redemption],
+    collections: [blacklist],
+    collectionMembers: [member(redemption.id, 0, blacklist.id)],
+    tmdbSearchResults: [{ id: 68841, name: '罪恶黑名单：救赎', media_type: 'tv' }],
+    tmdbDetail: { id: 68841, name: '罪恶黑名单：救赎', seasons: [{ id: 1, season_number: 1, air_date: '2017-02-23' }] },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByText('TMDB 只读建议 · 确认前不会修改数据')).toHaveCount(0);
+  await expect(page.getByText(/已归组 1/)).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'apply_collection_suggestion')).toHaveLength(0);
+});
+
+test('@collections excludes a TMDB-confirmed single aired season outside collections', async ({ page }) => {
+  const singleSeason = {
+    ...record('single-season'), chineseName: '只有一季', originalName: 'One Season Only',
+    imdbId: 'tt1234999', mediaType: '剧集' as const,
+  };
+  await setupMockIpc(page, {
+    records: [singleSeason],
+    collections: [collection],
+    tmdbSearchResults: [{ id: 4321, name: '只有一季', media_type: 'tv' }],
+    tmdbDetail: { id: 4321, name: '只有一季', seasons: [
+      { id: 0, season_number: 0, air_date: '2020-01-01' },
+      { id: 1, season_number: 1, air_date: '2021-01-01' },
+      { id: 2, season_number: 2, air_date: '2099-01-01' },
+    ] },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByText('TMDB 只读建议 · 确认前不会修改数据')).toHaveCount(0);
+  await expect(page.getByText(/完整排除 1/)).toBeVisible();
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'get_tmdb_detail')).toHaveLength(1);
+});
+
+test('@collections persists dismissed suggestions and can restore them', async ({ page }) => {
+  const candidate = {
+    ...record('candidate'), chineseName: '多季候选 第 1 季', originalName: 'Multi Season Candidate Season 1',
+    imdbId: 'tt1234000', mediaType: '剧集' as const,
+  };
+  await setupMockIpc(page, {
+    records: [candidate],
+    collections: [collection],
+    tmdbSearchResults: [{ id: 1234, name: '多季候选', media_type: 'tv' }],
+    tmdbDetail: { id: 1234, name: '多季候选', seasons: [
+      { id: 1, season_number: 1, air_date: '2020-01-01' },
+      { id: 2, season_number: 2, air_date: '2021-01-01' },
+    ] },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByRole('button', { name: '不再推荐 多季候选' })).toBeVisible();
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'get_tmdb_detail')).toHaveLength(1);
+  await page.getByRole('button', { name: '不再推荐 多季候选' }).click();
+  await expect(page.getByRole('button', { name: '已忽略建议（1）' })).toBeEnabled();
+
+  await page.getByRole('button', { name: '关闭收藏集中心' }).first().click();
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByRole('button', { name: '不再推荐 多季候选' })).toHaveCount(0);
+  await expect(page.getByText('已忽略 1 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: '已忽略建议（1）' }).click();
+  const ignoredDialog = page.getByRole('dialog', { name: '已忽略建议' });
+  await ignoredDialog.getByRole('button', { name: '恢复', exact: true }).click();
+  await expect(page.getByRole('button', { name: '已忽略建议（0）' })).toBeDisabled();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.settings.collection_suggestion_dismissals_v1).toContain('"entries":[]');
+  expect(snapshot.calls.filter(call => call.command === 'apply_collection_suggestion')).toHaveLength(0);
+  await page.close();
+});

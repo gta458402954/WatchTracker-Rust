@@ -3,12 +3,21 @@ import type { CollectionMember, WatchCollection, WatchRecord } from '../../../sh
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import SafePosterImage from '../../watchlist/components/SafePosterImage';
-import { getTmdbDetailAsync, searchTmdbAsync, type CompleteMovieCollectionInput, type CompleteMovieCollectionResult } from '../../../shared/lib/database';
+import { getSettingAsync, getTmdbDetailAsync, searchTmdbAsync, setSettingAsync, type CompleteMovieCollectionInput, type CompleteMovieCollectionResult } from '../../../shared/lib/database';
 import type { TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
 import { getEmptyRecord } from '../../../shared/lib/constants';
 import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, readIdentityCache, seasonNumberOf, seriesBaseName, tvSourceKey, writeIdentityCache } from '../lib/seriesDiscovery';
 import { movieRecordMetadata, seasonRecordMetadata } from '../lib/tmdbRecordMapping';
 import { classifyMovieCollectionPart, type MovieCollectionCandidate } from '../lib/movieCollectionIdentity';
+import {
+  COLLECTION_SUGGESTION_DISMISSALS_KEY,
+  parseSuggestionDismissals,
+  serializeSuggestionDismissals,
+  suggestionIsCovered,
+  tvSuggestionEligibility,
+  upsertSuggestionDismissal,
+  type CollectionSuggestionDismissal,
+} from '../lib/collectionSuggestionPolicy';
 
 interface Props {
   records: WatchRecord[];
@@ -41,6 +50,7 @@ interface CollectionSuggestion {
 }
 interface ScanMatchChoice { id: number; mediaType: 'movie' | 'tv'; label: string }
 interface ScanAmbiguity { imdbId: string; recordIds: string[]; choices: ScanMatchChoice[] }
+interface ScanSummary { actionable: number; complete: number; covered: number; ignored: number; ambiguous: number; unavailable: number }
 
 async function mapWithConcurrency<T, R>(values: T[], limit: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(values.length);
@@ -85,6 +95,10 @@ export default function CollectionCenter(props: Props) {
   const cancelScanRef = useRef(false);
   const [suggestions, setSuggestions] = useState<CollectionSuggestion[]>([]);
   const [scanAmbiguities, setScanAmbiguities] = useState<ScanAmbiguity[]>([]);
+  const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
+  const [dismissals, setDismissals] = useState<CollectionSuggestionDismissal[]>([]);
+  const [dismissalsLoaded, setDismissalsLoaded] = useState(false);
+  const [showDismissedSuggestions, setShowDismissedSuggestions] = useState(false);
   const [seasonDetail, setSeasonDetail] = useState<TmdbMedia | null>(null);
   const [selectedSeasonNumbers, setSelectedSeasonNumbers] = useState<Set<number>>(() => new Set());
   const [showSpecials, setShowSpecials] = useState(false);
@@ -107,6 +121,15 @@ export default function CollectionCenter(props: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedId(collections[0]?.id ?? null);
   }, [collections, selectedId]);
+
+  useEffect(() => {
+    let active = true;
+    void getSettingAsync(COLLECTION_SUGGESTION_DISMISSALS_KEY)
+      .then(raw => { if (active) setDismissals(parseSuggestionDismissals(raw)); })
+      .catch(() => { if (active) onNotify('warning', '无法读取已忽略建议，本次仍可扫描。'); })
+      .finally(() => { if (active) setDismissalsLoaded(true); });
+    return () => { active = false; };
+  }, [onNotify]);
 
   const selected = collections.find(item => item.id === selectedId) ?? null;
   const recordById = useMemo(() => new Map(records.map(record => [record.id, record])), [records]);
@@ -158,6 +181,7 @@ export default function CollectionCenter(props: Props) {
   })();
 
   function reconcileSuggestion(item: CollectionSuggestion): CollectionSuggestion | null {
+    if (suggestionIsCovered(item.recordIds, members)) return null;
     const itemIds = new Set(item.recordIds);
     const parentId = item.sourceKey.startsWith('tmdb:tv-show:') ? Number(item.sourceKey.slice('tmdb:tv-show:'.length)) : null;
     const existingCollection = collections.find(collection => {
@@ -228,11 +252,24 @@ export default function CollectionCenter(props: Props) {
   async function scanSuggestions() {
     cancelScanRef.current = false;
     setScanAmbiguities([]);
+    setScanSummary(null);
     setScanning(true);
+    let activeDismissals = dismissals;
+    if (!dismissalsLoaded) {
+      try {
+        activeDismissals = parseSuggestionDismissals(await getSettingAsync(COLLECTION_SUGGESTION_DISMISSALS_KEY));
+        setDismissals(activeDismissals);
+        setDismissalsLoaded(true);
+      } catch { /* a read failure must not turn the scan into a write or block local discovery */ }
+    }
+    const dismissedKeys = new Set(activeDismissals.map(entry => entry.key));
     const grouped = new Map<string, CollectionSuggestion>();
+    const tvDetails = new Map<string, TmdbMedia>();
     let failures = 0;
+    let ambiguous = 0;
     for (const candidate of locallyKnownSeries(records)) {
       const stable = candidate.tmdbParentId != null;
+      if (!stable && candidate.recordIds.length < 2) continue;
       const sourceKey = stable ? tvSourceKey(candidate.tmdbParentId!) : `local:${candidate.key}`;
       const current = grouped.get(sourceKey) ?? {
         name: candidate.name,
@@ -268,7 +305,11 @@ export default function CollectionCenter(props: Props) {
           return values;
         }, []);
         if (matches.length !== 1) {
-          if (matches.length > 1) setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices: matches }]);
+          if (matches.length > 1) {
+            grouped.delete(`local:${imdbId}`);
+            ambiguous += 1;
+            setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices: matches }]);
+          }
           else { writeIdentityCache(imdbId, { searchResult, detail: null }, false); failures += 1; }
           continue;
         }
@@ -283,6 +324,11 @@ export default function CollectionCenter(props: Props) {
         const sourceName = isTv ? (detail?.name || detail?.title) : detail?.belongs_to_collection?.name;
         if (sourceId == null || !sourceName) continue;
         const sourceKey = isTv ? `tmdb:tv-show:${sourceId}` : `tmdb:movie-collection:${sourceId}`;
+        grouped.delete(`local:${imdbId}`);
+        if (isTv && detail) {
+          tvDetails.set(sourceKey, detail);
+          writeIdentityCache(`tv-series-detail:${sourceId}`, detail, true, Date.now(), 7);
+        }
         const current = grouped.get(sourceKey) ?? { name: sourceName, sourceKind, sourceKey, recordIds: [] };
         for (const record of matchingRecords) if (!current.recordIds.includes(record.id)) current.recordIds.push(record.id);
         grouped.set(sourceKey, current);
@@ -291,11 +337,46 @@ export default function CollectionCenter(props: Props) {
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
-    const found = [...grouped.values()].map(reconcileSuggestion).filter((item): item is CollectionSuggestion => item !== null);
+    const summary: ScanSummary = { actionable: 0, complete: 0, covered: 0, ignored: 0, ambiguous, unavailable: failures };
+    const candidates: CollectionSuggestion[] = [];
+    for (const item of grouped.values()) {
+      if (dismissedKeys.has(item.sourceKey)) { summary.ignored += 1; continue; }
+      if (suggestionIsCovered(item.recordIds, members)) { summary.covered += 1; continue; }
+      const reconciled = reconcileSuggestion(item);
+      if (!reconciled) { summary.covered += 1; continue; }
+      candidates.push(reconciled);
+    }
+    const verified = await mapWithConcurrency(candidates, 4, async item => {
+      if (item.sourceKind !== 'tmdb-tv-show' || item.recordIds.length !== 1) return item;
+      const parentId = Number(item.sourceKey.slice('tmdb:tv-show:'.length));
+      if (!Number.isInteger(parentId) || parentId <= 0) return item;
+      const cacheKey = `tv-series-detail:${parentId}`;
+      let detail = tvDetails.get(item.sourceKey) ?? readIdentityCache<TmdbMedia>(cacheKey);
+      if (!detail) {
+        try {
+          const result = await getTmdbDetailAsync({ id: parentId, mediaType: 'tv', language: 'zh-CN' });
+          if (!result.success || !result.data) { summary.unavailable += 1; return item; }
+          detail = result.data;
+          writeIdentityCache(cacheKey, detail, true, Date.now(), 7);
+        } catch {
+          summary.unavailable += 1;
+          return item;
+        }
+      }
+      const eligibility = tvSuggestionEligibility(detail, parentId, item.recordIds, records);
+      if (eligibility === 'complete') { summary.complete += 1; return null; }
+      if (eligibility === 'unknown') summary.unavailable += 1;
+      return item;
+    });
+    const found = verified.filter((item): item is CollectionSuggestion => item !== null);
+    summary.actionable = found.length;
     setSuggestions(found);
+    setScanSummary(summary);
     setScanning(false);
     if (cancelScanRef.current) onNotify('info', `已停止发现系列；保留已完成的 ${completed} 项只读结果。`);
-    else onNotify(found.length ? 'info' : 'warning', found.length ? `找到 ${found.length} 组 TMDB 归组建议，请确认后应用。${failures ? ` ${failures} 条未能判定。` : ''}` : '没有找到可可靠归组的 TMDB 建议。');
+    else onNotify(found.length ? 'info' : 'warning', found.length
+      ? `找到 ${found.length} 组可处理建议；已排除完整条目 ${summary.complete}、已有归组 ${summary.covered}、已忽略 ${summary.ignored}。`
+      : `没有可处理的归组建议；已排除完整条目 ${summary.complete}、已有归组 ${summary.covered}、已忽略 ${summary.ignored}。`);
   }
 
   async function resolveScanAmbiguity(ambiguity: ScanAmbiguity, choice: ScanMatchChoice) {
@@ -308,6 +389,16 @@ export default function CollectionCenter(props: Props) {
       if (!detailResult.success || sourceId == null || !sourceName) throw new Error('unusable match');
       const sourceKind = choice.mediaType === 'tv' ? 'tmdb-tv-show' as const : 'tmdb-movie-collection' as const;
       const sourceKey = choice.mediaType === 'tv' ? tvSourceKey(sourceId) : `tmdb:movie-collection:${sourceId}`;
+      if (dismissals.some(entry => entry.key === sourceKey)) {
+        setScanAmbiguities(current => current.filter(item => item.imdbId !== ambiguity.imdbId));
+        onNotify('info', `${choice.label} 已在“不再推荐”列表中。`);
+        return;
+      }
+      if (choice.mediaType === 'tv' && tvSuggestionEligibility(detail, sourceId, ambiguity.recordIds, records) === 'complete') {
+        setScanAmbiguities(current => current.filter(item => item.imdbId !== ambiguity.imdbId));
+        onNotify('info', `${choice.label} 当前只有一个已播常规季，片库已经完整收录。`);
+        return;
+      }
       const resolved = reconcileSuggestion({ name: sourceName, sourceKind, sourceKey, recordIds: ambiguity.recordIds });
       if (resolved) setSuggestions(current => {
         const prior = current.find(item => item.sourceKey === resolved.sourceKey);
@@ -332,6 +423,42 @@ export default function CollectionCenter(props: Props) {
       }
       setSuggestions(current => current.filter(item => item.sourceKey !== suggestion.sourceKey));
     }, `已应用“${suggestion.name}”归组建议。`);
+  }
+
+  async function dismissSuggestion(suggestion: CollectionSuggestion) {
+    const next = upsertSuggestionDismissal(dismissals, {
+      key: suggestion.sourceKey,
+      name: suggestion.name,
+      sourceKind: suggestion.sourceKind,
+      dismissedAt: new Date().toISOString(),
+    });
+    try {
+      await setSettingAsync(COLLECTION_SUGGESTION_DISMISSALS_KEY, serializeSuggestionDismissals(next));
+      setDismissals(next);
+      setSuggestions(current => current.filter(item => item.sourceKey !== suggestion.sourceKey));
+      setScanSummary(current => current ? { ...current, actionable: Math.max(0, current.actionable - 1), ignored: current.ignored + 1 } : current);
+      onNotify('info', `以后不再推荐“${suggestion.name}”；可在已忽略建议中恢复。`);
+    } catch {
+      onNotify('error', '无法保存忽略决定，建议仍然保留。');
+    }
+  }
+
+  async function restoreDismissal(key: string) {
+    const next = dismissals.filter(entry => entry.key !== key);
+    try {
+      await setSettingAsync(COLLECTION_SUGGESTION_DISMISSALS_KEY, serializeSuggestionDismissals(next));
+      setDismissals(next);
+      onNotify('success', '已恢复该建议；重新扫描后会按最新 TMDB 数据判断。');
+    } catch { onNotify('error', '无法恢复已忽略建议。'); }
+  }
+
+  async function restoreAllDismissals() {
+    try {
+      await setSettingAsync(COLLECTION_SUGGESTION_DISMISSALS_KEY, serializeSuggestionDismissals([]));
+      setDismissals([]);
+      setShowDismissedSuggestions(false);
+      onNotify('success', '已恢复全部建议；重新扫描后会按最新 TMDB 数据判断。');
+    } catch { onNotify('error', '无法恢复已忽略建议。'); }
   }
 
   async function inspectMissingSeasons(parentId?: number, forceRefresh = false, sourceAlreadyBound = false) {
@@ -600,6 +727,8 @@ export default function CollectionCenter(props: Props) {
             <div className="flex gap-2"><button disabled={busy || !name.trim()} onClick={() => void create()} className="flex-1 rounded-lg bg-indigo-600 py-2 text-xs font-bold text-white disabled:bg-gray-300">创建</button><button onClick={() => setCreating(false)} className="rounded-lg border px-3 text-xs">取消</button></div>
           </div>}
           <button onClick={() => scanning ? (cancelScanRef.current = true) : void scanSuggestions()} className="mt-3 w-full rounded-xl border border-indigo-100 bg-white py-2.5 text-sm font-bold text-indigo-600">{scanning ? `停止全库扫描 ${scanProgress.done}/${scanProgress.total}` : '扫描片库归组建议'}</button>
+          <button disabled={!dismissalsLoaded || dismissals.length === 0} onClick={() => setShowDismissedSuggestions(true)} className="mt-2 w-full rounded-xl border border-gray-200 bg-white py-2 text-xs font-semibold text-gray-500 disabled:opacity-40">已忽略建议（{dismissals.length}）</button>
+          {scanSummary && <div className="mt-2 rounded-xl bg-white px-3 py-2 text-[10px] leading-5 text-gray-500"><p>可处理 {scanSummary.actionable} · 完整排除 {scanSummary.complete} · 已归组 {scanSummary.covered}</p><p>已忽略 {scanSummary.ignored} · 待确认 {scanSummary.ambiguous} · 无法确认 {scanSummary.unavailable}</p></div>}
         </div>
         <div className="flex-1 space-y-2 overflow-y-auto p-3">
           {visibleCollections.map((collection, index) => {
@@ -625,7 +754,7 @@ export default function CollectionCenter(props: Props) {
               </div>
               <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:justify-end"><button onClick={() => setAdding(true)} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white sm:px-4">＋ 从片库添加</button>{legacySeriesImdb && <button disabled={busy} onClick={() => void identifyLegacySeries()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">确认 TMDB 系列</button>}{selected.collectionKind === 'tv-series' && !selected.sourceKey && selectedParentIds.length !== 1 && <button disabled={busy} onClick={() => void bindSelectedSeries()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">确认 TMDB 系列</button>}{(selected.sourceKey?.startsWith('tmdb:tv-show:') || selectedParentIds.length === 1 || selected.collectionKind === 'universe' && selectedParentIds.length > 0) && <button disabled={busy} onClick={() => void inspectMissingSeasons()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">{selected.collectionKind === 'universe' ? '检查缺失条目' : '检查缺失季'}</button>}{selected.collectionKind === 'movie-series' && <button disabled={busy} onClick={() => void inspectMissingMovies()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">检查缺失电影</button>}{selected.collectionKind === 'universe' && <button disabled={busy} onClick={() => setLinkingRelated(true)} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">关联相关作品</button>}<button onClick={startEdit} className="rounded-xl border px-3 py-2 text-sm">编辑</button><button onClick={() => void deleteSelected()} className="rounded-xl border border-red-100 px-3 py-2 text-sm text-red-500">删除</button><button onClick={onClose} aria-label="关闭收藏集中心" className="hidden rounded-xl px-3 py-2 text-xl text-gray-400 md:block">×</button></div>
             </div>
-            {suggestions.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <button key={item.sourceKey} disabled={busy} onClick={() => void applySuggestion(item)} className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-left text-xs text-indigo-700"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.requiresBinding ? '确认系列身份' : `${item.recordIds.length} 部`} · 应用</span></button>)}</div></div>}
+            {suggestions.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <div key={item.sourceKey} className="flex items-center overflow-hidden rounded-xl border border-indigo-200 bg-white text-xs text-indigo-700"><button disabled={busy} onClick={() => void applySuggestion(item)} className="px-3 py-2 text-left hover:bg-indigo-50 disabled:opacity-50"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.requiresBinding ? '确认系列身份' : `${item.recordIds.length} 部`} · 应用</span></button><button disabled={busy} onClick={() => void dismissSuggestion(item)} aria-label={`不再推荐 ${item.name}`} title="不再推荐" className="self-stretch border-l border-indigo-100 px-2.5 text-indigo-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">×</button></div>)}</div></div>}
             {scanAmbiguities.length > 0 && <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"><p className="text-xs font-bold text-amber-800">{scanAmbiguities.length} 项存在多个 TMDB 匹配，请选择</p><div className="mt-2 space-y-2">{scanAmbiguities.map(ambiguity => <div key={ambiguity.imdbId} className="rounded-xl bg-white p-2"><p className="text-[11px] text-gray-500">IMDb {ambiguity.imdbId}</p><div className="mt-1 flex flex-wrap gap-2">{ambiguity.choices.map(choice => <button key={`${choice.mediaType}:${choice.id}`} disabled={busy} onClick={() => void resolveScanAmbiguity(ambiguity, choice)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-800">{choice.label} · {choice.mediaType === 'tv' ? '剧集' : '电影'}</button>)}</div></div>)}</div></div>}
           </div>
           <div className="flex-1 space-y-3 overflow-y-auto p-5 sm:p-7">
@@ -686,6 +815,11 @@ export default function CollectionCenter(props: Props) {
       <div className="flex items-start justify-between"><div><h3 className="text-xl font-black">关联相关作品</h3><p className="mt-1 text-xs text-gray-400">搜索电影、衍生剧或特别篇；只有点击加入后才会写入</p></div><button onClick={() => setLinkingRelated(false)} className="text-xl text-gray-400">×</button></div>
       <div className="mt-4 flex gap-2"><input autoFocus value={relatedSearch} onChange={event => setRelatedSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchRelatedWorks(); } }} placeholder="输入片名" className="min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm" /><button disabled={busy || !relatedSearch.trim()} onClick={() => void searchRelatedWorks()} className="rounded-xl bg-indigo-600 px-4 text-sm font-bold text-white disabled:bg-gray-300">搜索</button></div>
       <div className="mt-3 flex-1 space-y-2 overflow-y-auto">{relatedResults.map(item => <div key={`${item.media_type}:${item.id}`} className="flex items-center gap-3 rounded-2xl border p-3"><SafePosterImage posterPath={item.poster_path || ''} alt="" compact className="h-16 w-11 rounded-lg object-cover" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{item.name || item.title}</p><p className="mt-1 truncate text-xs text-gray-400">{item.media_type === 'movie' ? '电影' : '剧集'} · {(item.release_date || item.first_air_date)?.slice(0, 4) || '年份未知'}</p></div><button disabled={busy} onClick={() => void linkRelatedWork(item)} className="rounded-xl border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-600">加入</button></div>)}{!relatedResults.length && <p className="py-10 text-center text-sm text-gray-400">搜索后在这里选择需要关联的作品</p>}</div>
+    </div></div>}
+    {showDismissedSuggestions && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/45 p-4"><div role="dialog" aria-modal="true" aria-label="已忽略建议" className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-3xl bg-white p-5 shadow-2xl">
+      <div className="flex items-start justify-between gap-4"><div><h3 className="text-xl font-black text-gray-900">已忽略建议</h3><p className="mt-1 text-xs text-gray-400">恢复后需要重新扫描，并会重新核对最新 TMDB 数据</p></div><button onClick={() => setShowDismissedSuggestions(false)} aria-label="关闭已忽略建议" className="text-xl text-gray-400">×</button></div>
+      <div className="mt-4 flex-1 space-y-2 overflow-y-auto">{dismissals.map(entry => <div key={entry.key} className="flex items-center gap-3 rounded-2xl border border-gray-100 p-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-gray-800">{entry.name}</p><p className="mt-1 text-[10px] text-gray-400">{entry.sourceKind === 'tmdb-tv-show' ? '电视剧系列' : entry.sourceKind === 'tmdb-movie-collection' ? '电影系列' : '本地建议'} · {new Date(entry.dismissedAt).toLocaleString()}</p></div><button disabled={busy} onClick={() => void restoreDismissal(entry.key)} className="rounded-xl border border-indigo-100 px-3 py-2 text-xs font-bold text-indigo-600 disabled:opacity-50">恢复</button></div>)}{dismissals.length === 0 && <p className="py-10 text-center text-sm text-gray-400">没有已忽略的建议</p>}</div>
+      <div className="mt-4 flex justify-end gap-2 border-t pt-4"><button onClick={() => setShowDismissedSuggestions(false)} className="rounded-xl border px-4 py-2 text-sm">关闭</button><button disabled={busy || dismissals.length === 0} onClick={() => void restoreAllDismissals()} className="rounded-xl border border-red-100 px-4 py-2 text-sm font-bold text-red-500 disabled:opacity-40">恢复全部</button></div>
     </div></div>}
   </div>;
 }

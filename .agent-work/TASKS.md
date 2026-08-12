@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 4 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1` 与 `TASK-D-UX-004` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R3` 与 `TASK-D-UX-004` 已实现；`TASK-D-UX-003-R2` 保持真实便携数据验收中。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1504,6 +1504,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | IMPLEMENTED | 扁平多对多收藏集、手工排序、TMDB 建议、本地 V3 与 WebDAV V5 已实现 |
 | `TASK-D-UX-003-R1` | R2 | 系列补全 | IMPLEMENTED | 本地系列识别、持久 TMDB 身份、缓存、完整季原子补充、年代排序、影视宇宙和表单归组已实现 |
+| `TASK-D-UX-003-R3` | R1 | 建议准确性 | IMPLEMENTED | TMDB 单季资格、任意收藏集覆盖去重、持久忽略与恢复入口已实现 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
 | `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
@@ -1810,6 +1811,23 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Data Boundary: 数据库主版本继续为 V18；扫描和预览零业务写入；旧数据不在启动时自动整理；新记录只填 TMDB 可用字段，已有记录只填缺失字段。
 - Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、清单 7 天/电影详情 30 天缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。电影合集现按 TMDB + IMDb 双身份区分当前成员、片库复用、真正缺失、冲突和无法确认，并由 `complete_movie_collection` 单事务补旧身份、复用成员或创建记录，写入时全片库复核并在冲突时整批回滚。保持 IN-PROGRESS，便携版真实数据验收完成后再改为 IMPLEMENTED。
 - Acceptance Evidence: Node 123/123、Rust 86/86（单线程避免既有恢复点测试临时目录碰撞）、typecheck、lint、rustfmt、严格 Clippy 与生产 build 通过。新增旧电影 IMDb 复用与缺失身份补全、片库记录复用、TMDB/IMDb 冲突整批回滚，以及电视剧共享 IMDb 不参与电影去重测试。收藏集 Playwright 6/6 均运行至完成且未报告用例失败；Windows runner 仍被既有 Vite 子进程退出问题拖住。
+
+### TASK-D-UX-003-R3：收藏集建议资格、覆盖去重与持久忽略
+
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
+- Priority: R1
+- Objective: 只有能够产生真实归组、身份绑定或缺失内容补充的候选才进入建议区；TMDB 已确认的完整单季剧、已经被任意收藏集覆盖的候选和用户明确忽略的候选均不得重复出现。
+- Eligibility: 电视剧按 TMDB `seasons` 中 `season_number > 0`、具有有效首播日期且不晚于当前日期的常规季判断；第 0 季、特别篇、未播季不参与。单一已播季且本地已经拥有时排除；全部已播季均已存在时排除；TMDB 请求失败或季数据缺失不得误判为单季。
+- Coverage: 建立 record ID 到收藏集的反向索引。单条候选已经属于任意收藏集，或候选全部成员已经被同一个集合覆盖时，不再建议创建独立集合；已有同源电视剧系列仍可进入定向缺失季检查，但影视宇宙不得被静默改绑为子剧来源。
+- Dismissal: 每条建议提供“应用”和“不再推荐”。用户决定保存在 V18 `settings.collection_suggestion_dismissals_v1`，优先使用稳定 TMDB source key，没有稳定身份时使用本地候选指纹；关闭、重启和重新扫描后继续生效。派生 TMDB 缓存不得承担用户决定。
+- Recovery UX: 收藏集中心显示“已忽略建议（N）”，支持查看名称、类型和忽略时间、单项恢复及全部恢复。恢复后重新扫描，不直接修改记录或收藏集。
+- Scan Summary: 扫描结果区分可处理、完整单季/已完整、已有集合覆盖、用户忽略、歧义和 TMDB 无法确认；默认只显示可操作建议。
+- Data Boundary: 不提升数据库主版本、不升级 WebDAV schema；忽略状态第一阶段为当前设备本地设置。扫描、过滤、忽略与恢复均不得修改 records、collections、members、generation、staging 或 outbox。
+- Acceptance: 覆盖单季、特别篇、未来季、已播缺失季、完整多季、TMDB 失败、持久忽略/恢复，以及《罪恶黑名单：救赎》已经属于《罪恶黑名单》后不再独立推荐的回归用例。
+- Implementation: 本地单条标题候选不再未经 TMDB 验证直接进入结果；稳定/IMDb 电视剧候选按已播常规季做最终资格检查。建议展示前按成员反向索引过滤任意集合覆盖，并以 SQLite settings 持久保存用户忽略决定；界面提供逐项忽略、已忽略列表、逐项/全部恢复及六类扫描统计。
+- Acceptance Evidence: Node 132/132、typecheck、lint 与生产 build 通过。收藏集 Playwright 原有 10 项与新增“任意收藏集覆盖”“TMDB 单季排除”“持久忽略/恢复”共 13/13 通过；Windows runner 仍在报告完成后被既有 Vite 子进程退出问题拖住，3 项 R3 专项均明确报告 `ok`。
 
 ### TASK-D-ARCH-001：跨语言类型生成
 
