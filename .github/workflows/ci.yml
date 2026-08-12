@@ -2,6 +2,10 @@ name: CI
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
   pull_request:
 
 permissions:
@@ -41,8 +45,11 @@ jobs:
 
   windows-bundle:
     name: Windows Tauri bundle
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [frontend, rust]
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -63,3 +70,23 @@ jobs:
             src-tauri/target/release/app.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*-setup.exe
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $app = Get-Item "src-tauri/target/release/app.exe"
+          $msi = @(Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" -File)
+          $nsis = @(Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" -File)
+
+          if ($msi.Count -eq 0 -or $nsis.Count -eq 0) {
+            throw "Expected app.exe, an MSI installer, and an NSIS setup executable."
+          }
+
+          $assets = @($app.FullName)
+          $assets += @($msi | ForEach-Object FullName)
+          $assets += @($nsis | ForEach-Object FullName)
+
+          gh release create $env:GITHUB_REF_NAME @assets `
+            --generate-notes `
+            --title "WatchTracker $env:GITHUB_REF_NAME"
