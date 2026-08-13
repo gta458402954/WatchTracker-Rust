@@ -10,6 +10,12 @@ import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, 
 import { movieRecordMetadata, seasonRecordMetadata } from '../lib/tmdbRecordMapping';
 import { classifyMovieCollectionPart, type MovieCollectionCandidate } from '../lib/movieCollectionIdentity';
 import {
+  collectionCandidateDescription,
+  movieCollectionCandidateEligibility,
+  normalizeCollectionSearchMatches,
+  type CollectionMatchSeed,
+} from '../lib/collectionCandidateEligibility';
+import {
   COLLECTION_SUGGESTION_DISMISSALS_KEY,
   parseSuggestionDismissals,
   serializeSuggestionDismissals,
@@ -48,9 +54,15 @@ interface CollectionSuggestion {
   targetCollectionId?: string;
   requiresBinding?: boolean;
 }
-interface ScanMatchChoice { id: number; mediaType: 'movie' | 'tv'; label: string }
+interface ScanMatchChoice extends CollectionMatchSeed {
+  sourceId: number;
+  sourceName: string;
+  sourceKey: string;
+  sourceKind: 'tmdb-movie-collection' | 'tmdb-tv-show';
+  description: string;
+}
 interface ScanAmbiguity { imdbId: string; recordIds: string[]; choices: ScanMatchChoice[] }
-interface ScanSummary { actionable: number; complete: number; covered: number; ignored: number; ambiguous: number; unavailable: number }
+interface ScanSummary { actionable: number; complete: number; covered: number; ignored: number; ambiguous: number; ineligible: number; unavailable: number }
 
 async function mapWithConcurrency<T, R>(values: T[], limit: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(values.length);
@@ -269,6 +281,10 @@ export default function CollectionCenter(props: Props) {
     const tvDetails = new Map<string, TmdbMedia>();
     let failures = 0;
     let ambiguous = 0;
+    let ineligible = 0;
+    let precheckedComplete = 0;
+    let precheckedCovered = 0;
+    let precheckedIgnored = 0;
     for (const candidate of locallyKnownSeries(records)) {
       const stable = candidate.tmdbParentId != null;
       if (!stable && candidate.recordIds.length < 2) continue;
@@ -296,41 +312,98 @@ export default function CollectionCenter(props: Props) {
         if (cancelScanRef.current) return;
         const [imdbId, matchingRecords] = entries[cursor++];
       try {
-        const cached = readIdentityCache<{ searchResult: Awaited<ReturnType<typeof searchTmdbAsync>>; detail: Awaited<ReturnType<typeof getTmdbDetailAsync>> | null }>(imdbId);
-        const searchResult = cached?.searchResult ?? await searchTmdbAsync({ query: imdbId, language: 'zh-CN' });
-        const matches = (searchResult.results ?? []).reduce<ScanMatchChoice[]>((values, item) => {
-          let choice: ScanMatchChoice | null = null;
-          if (item.media_type === 'movie' && item.id != null) choice = { id: item.id, mediaType: 'movie', label: item.title || item.original_title || `TMDB ${item.id}` };
-          if (item.media_type === 'tv' && item.id != null) choice = { id: item.id, mediaType: 'tv', label: item.name || item.original_name || `TMDB ${item.id}` };
-          if (item.media_type === 'tv_season' && item.show_id != null) choice = { id: item.show_id, mediaType: 'tv', label: item.name || `TMDB ${item.show_id}` };
-          if (choice && !values.some(other => other.id === choice.id && other.mediaType === choice.mediaType)) values.push(choice);
-          return values;
-        }, []);
-        if (matches.length !== 1) {
-          if (matches.length > 1) {
-            grouped.delete(`local:${imdbId}`);
-            ambiguous += 1;
-            setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices: matches }]);
-          }
-          else { writeIdentityCache(imdbId, { searchResult, detail: null }, false); failures += 1; }
+        if (suggestionIsCovered(matchingRecords.map(record => record.id), members)) {
+          grouped.delete(`local:${imdbId}`);
+          precheckedCovered += 1;
           continue;
         }
-        const match = matches[0];
-        const isTv = match.mediaType === 'tv';
-        const id = match.id;
-        const detailResult = cached?.detail ?? await getTmdbDetailAsync({ id, mediaType: isTv ? 'tv' : 'movie', language: 'zh-CN' });
-        writeIdentityCache(imdbId, { searchResult, detail: detailResult }, true);
-        const detail = detailResult.data;
-        const sourceId = isTv ? id : detail?.belongs_to_collection?.id;
-        const sourceKind = isTv ? 'tmdb-tv-show' as const : 'tmdb-movie-collection' as const;
-        const sourceName = isTv ? (detail?.name || detail?.title) : detail?.belongs_to_collection?.name;
-        if (sourceId == null || !sourceName) continue;
-        const sourceKey = isTv ? `tmdb:tv-show:${sourceId}` : `tmdb:movie-collection:${sourceId}`;
-        grouped.delete(`local:${imdbId}`);
-        if (isTv && detail) {
-          tvDetails.set(sourceKey, detail);
-          writeIdentityCache(`tv-series-detail:${sourceId}`, detail, true, Date.now(), 7);
+        const cached = readIdentityCache<{ searchResult: Awaited<ReturnType<typeof searchTmdbAsync>> }>(imdbId);
+        const searchResult = cached?.searchResult ?? await searchTmdbAsync({ query: imdbId, language: 'zh-CN' });
+        writeIdentityCache(imdbId, { searchResult }, (searchResult.results?.length ?? 0) > 0);
+        const seeds = normalizeCollectionSearchMatches(searchResult.results);
+        if (seeds.length === 0) {
+          failures += 1;
+          continue;
         }
+
+        const checked = await mapWithConcurrency(seeds, 4, async seed => {
+          const detailCacheKey = `candidate-detail:${seed.mediaType}:${seed.id}`;
+          let detail = readIdentityCache<TmdbMedia>(detailCacheKey);
+          if (!detail) {
+            const detailResult = await getTmdbDetailAsync({ id: seed.id, mediaType: seed.mediaType, language: 'zh-CN' });
+            if (!detailResult.success || !detailResult.data) return { reason: 'unavailable' as const };
+            detail = detailResult.data;
+            writeIdentityCache(detailCacheKey, detail, true);
+          }
+
+          const hasIdentityConflict = matchingRecords.some(record => seed.mediaType === 'movie'
+            ? (record.tmdbMediaKind != null && record.tmdbMediaKind !== 'movie') || (record.tmdbMediaKind === 'movie' && record.tmdbId != null && record.tmdbId !== seed.id)
+            : (record.tmdbMediaKind === 'movie') || (record.tmdbParentId != null && record.tmdbParentId !== seed.id));
+          if (hasIdentityConflict) return { reason: 'ineligible' as const };
+
+          const sourceId = seed.mediaType === 'tv' ? seed.id : detail.belongs_to_collection?.id;
+          const sourceName = seed.mediaType === 'tv' ? (detail.name || detail.title) : detail.belongs_to_collection?.name;
+          if (sourceId == null || !sourceName) return { reason: 'ineligible' as const };
+          const sourceKind = seed.mediaType === 'tv' ? 'tmdb-tv-show' as const : 'tmdb-movie-collection' as const;
+          const sourceKey = seed.mediaType === 'tv' ? tvSourceKey(sourceId) : `tmdb:movie-collection:${sourceId}`;
+          if (dismissedKeys.has(sourceKey)) return { reason: 'ignored' as const };
+
+          let missingCount: number | undefined;
+          if (seed.mediaType === 'tv') {
+            const eligibility = tvSuggestionEligibility(detail, sourceId, matchingRecords.map(record => record.id), records);
+            if (eligibility === 'complete') return { reason: 'complete' as const };
+            if (eligibility === 'unknown') return { reason: 'unavailable' as const };
+            tvDetails.set(sourceKey, detail);
+            writeIdentityCache(`tv-series-detail:${sourceId}`, detail, true, Date.now(), 7);
+          } else {
+            const collectionCacheKey = `movie-collection:${sourceId}`;
+            let collectionDetail = readIdentityCache<TmdbMedia>(collectionCacheKey);
+            if (!collectionDetail) {
+              const collectionResult = await getTmdbDetailAsync({ id: sourceId, mediaType: 'collection', language: 'zh-CN' });
+              if (!collectionResult.success || !collectionResult.data) return { reason: 'unavailable' as const };
+              collectionDetail = collectionResult.data;
+              writeIdentityCache(collectionCacheKey, collectionDetail, true, Date.now(), 7);
+            }
+            const eligibility = movieCollectionCandidateEligibility(collectionDetail);
+            if (eligibility === 'complete') return { reason: 'complete' as const };
+            if (eligibility === 'unknown') return { reason: 'unavailable' as const };
+            const localMovieIds = new Set(records.map(record => record.tmdbId).filter((value): value is number => Number.isInteger(value) && (value ?? 0) > 0));
+            missingCount = [...new Set((collectionDetail.parts ?? [])
+              .filter(part => Number.isInteger(part.id) && (part.id ?? 0) > 0 && part.release_date && new Date(`${part.release_date}T00:00:00Z`) <= new Date())
+              .map(part => part.id as number))].filter(partId => !localMovieIds.has(partId)).length;
+          }
+
+          const enrichedSeed: CollectionMatchSeed = {
+            ...seed,
+            originalLabel: seed.originalLabel || detail.original_title || detail.original_name || null,
+            year: seed.year || (detail.release_date || detail.first_air_date)?.slice(0, 4) || null,
+            posterPath: seed.posterPath || detail.poster_path || null,
+          };
+          const choice: ScanMatchChoice = {
+            ...enrichedSeed,
+            sourceId,
+            sourceName,
+            sourceKey,
+            sourceKind,
+            description: collectionCandidateDescription(enrichedSeed, sourceName, missingCount),
+          };
+          return { reason: 'qualified' as const, choice };
+        });
+        const choices = checked.flatMap(result => result.reason === 'qualified' ? [result.choice] : []);
+        precheckedComplete += checked.filter(result => result.reason === 'complete').length;
+        precheckedIgnored += checked.filter(result => result.reason === 'ignored').length;
+        ineligible += checked.filter(result => result.reason === 'ineligible').length;
+        failures += checked.filter(result => result.reason === 'unavailable').length;
+        if (choices.length === 0) continue;
+
+        grouped.delete(`local:${imdbId}`);
+        if (choices.length > 1) {
+          ambiguous += 1;
+          setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices }]);
+          continue;
+        }
+        const match = choices[0];
+        const { sourceKey, sourceName, sourceKind } = match;
         const current = grouped.get(sourceKey) ?? { name: sourceName, sourceKind, sourceKey, recordIds: [] };
         for (const record of matchingRecords) if (!current.recordIds.includes(record.id)) current.recordIds.push(record.id);
         grouped.set(sourceKey, current);
@@ -339,7 +412,7 @@ export default function CollectionCenter(props: Props) {
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
-    const summary: ScanSummary = { actionable: 0, complete: 0, covered: 0, ignored: 0, ambiguous, unavailable: failures };
+    const summary: ScanSummary = { actionable: 0, complete: precheckedComplete, covered: precheckedCovered, ignored: precheckedIgnored, ambiguous, ineligible, unavailable: failures };
     const candidates: CollectionSuggestion[] = [];
     for (const item of grouped.values()) {
       if (dismissedKeys.has(item.sourceKey)) { summary.ignored += 1; continue; }
@@ -377,31 +450,14 @@ export default function CollectionCenter(props: Props) {
     setScanning(false);
     if (cancelScanRef.current) onNotify('info', `已停止发现系列；保留已完成的 ${completed} 项只读结果。`);
     else onNotify(found.length ? 'info' : 'warning', found.length
-      ? `找到 ${found.length} 组可处理建议；已排除完整条目 ${summary.complete}、已有归组 ${summary.covered}、已忽略 ${summary.ignored}。`
-      : `没有可处理的归组建议；已排除完整条目 ${summary.complete}、已有归组 ${summary.covered}、已忽略 ${summary.ignored}。`);
+      ? `找到 ${found.length} 组可处理建议；已排除完整条目 ${summary.complete}、无合集或无差异 ${summary.ineligible}、已有归组 ${summary.covered}。`
+      : `没有可直接应用的归组建议；待确认 ${summary.ambiguous}、完整排除 ${summary.complete}、无合集或无差异 ${summary.ineligible}。`);
   }
 
   async function resolveScanAmbiguity(ambiguity: ScanAmbiguity, choice: ScanMatchChoice) {
     setBusy(true);
     try {
-      const detailResult = await getTmdbDetailAsync({ id: choice.id, mediaType: choice.mediaType, language: 'zh-CN' });
-      const detail = detailResult.data;
-      const sourceId = choice.mediaType === 'tv' ? choice.id : detail?.belongs_to_collection?.id;
-      const sourceName = choice.mediaType === 'tv' ? (detail?.name || detail?.title) : detail?.belongs_to_collection?.name;
-      if (!detailResult.success || sourceId == null || !sourceName) throw new Error('unusable match');
-      const sourceKind = choice.mediaType === 'tv' ? 'tmdb-tv-show' as const : 'tmdb-movie-collection' as const;
-      const sourceKey = choice.mediaType === 'tv' ? tvSourceKey(sourceId) : `tmdb:movie-collection:${sourceId}`;
-      if (dismissals.some(entry => entry.key === sourceKey)) {
-        setScanAmbiguities(current => current.filter(item => item.imdbId !== ambiguity.imdbId));
-        onNotify('info', `${choice.label} 已在“不再推荐”列表中。`);
-        return;
-      }
-      if (choice.mediaType === 'tv' && tvSuggestionEligibility(detail, sourceId, ambiguity.recordIds, records) === 'complete') {
-        setScanAmbiguities(current => current.filter(item => item.imdbId !== ambiguity.imdbId));
-        onNotify('info', `${choice.label} 当前只有一个已播常规季，片库已经完整收录。`);
-        return;
-      }
-      const resolved = reconcileSuggestion({ name: sourceName, sourceKind, sourceKey, recordIds: ambiguity.recordIds });
+      const resolved = reconcileSuggestion({ name: choice.sourceName, sourceKind: choice.sourceKind, sourceKey: choice.sourceKey, recordIds: ambiguity.recordIds });
       if (resolved) setSuggestions(current => {
         const prior = current.find(item => item.sourceKey === resolved.sourceKey);
         if (!prior) return [...current, resolved];
@@ -723,7 +779,7 @@ export default function CollectionCenter(props: Props) {
     <div className="flex-1 overflow-y-auto p-5 sm:p-7">
       {scanning && <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm font-semibold text-indigo-700">正在扫描片库 {scanProgress.done}/{scanProgress.total}</div>}
       {suggestions.length > 0 && <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <div key={item.sourceKey} className="flex items-center overflow-hidden rounded-xl border border-indigo-200 bg-white text-xs text-indigo-700"><button disabled={busy} onClick={() => void applySuggestion(item)} className="px-3 py-2 text-left hover:bg-indigo-50 disabled:opacity-50"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.requiresBinding ? '确认系列身份' : `${item.recordIds.length} 部`} · 应用</span></button><button disabled={busy} onClick={() => void dismissSuggestion(item)} aria-label={`不再推荐 ${item.name}`} title="不再推荐" className="self-stretch border-l border-indigo-100 px-2.5 text-indigo-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">×</button></div>)}</div></div>}
-      {scanAmbiguities.length > 0 && <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"><p className="text-xs font-bold text-amber-800">{scanAmbiguities.length} 项存在多个 TMDB 匹配，请选择</p><div className="mt-2 space-y-2">{scanAmbiguities.map(ambiguity => <div key={ambiguity.imdbId} className="rounded-xl bg-white p-2"><p className="text-[11px] text-gray-500">IMDb {ambiguity.imdbId}</p><div className="mt-1 flex flex-wrap gap-2">{ambiguity.choices.map(choice => <button key={`${choice.mediaType}:${choice.id}`} disabled={busy} onClick={() => void resolveScanAmbiguity(ambiguity, choice)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-800">{choice.label} · {choice.mediaType === 'tv' ? '剧集' : '电影'}</button>)}</div></div>)}</div></div>}
+      {scanAmbiguities.length > 0 && <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"><p className="text-xs font-bold text-amber-800">{scanAmbiguities.length} 项存在多个有效 TMDB 匹配，请选择</p><div className="mt-2 space-y-2">{scanAmbiguities.map(ambiguity => <div key={ambiguity.imdbId} className="rounded-xl bg-white p-2"><p className="text-[11px] text-gray-500">IMDb {ambiguity.imdbId}</p><p className="mt-1 truncate text-xs font-semibold text-gray-700">本地：{ambiguity.recordIds.map(id => recordById.get(id)).filter(Boolean).map(record => displayTitlesOf(record!).primary).join('、')}</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{ambiguity.choices.map(choice => <button key={`${choice.mediaType}:${choice.id}`} disabled={busy} onClick={() => void resolveScanAmbiguity(ambiguity, choice)} className="flex min-w-0 items-center gap-2 rounded-xl border border-amber-200 px-3 py-2 text-left text-xs text-amber-900 hover:bg-amber-50 disabled:opacity-50"><SafePosterImage posterPath={choice.posterPath || ''} alt="" compact className="h-12 w-8 shrink-0 rounded object-cover" /><span className="min-w-0"><span className="block truncate font-bold">{choice.label} · {choice.mediaType === 'tv' ? '剧集' : '电影'}</span><span className="mt-1 block text-[10px] leading-4 text-amber-700">{choice.description}</span></span></button>)}</div></div>)}</div></div>}
       {!scanning && scanSummary && suggestions.length === 0 && scanAmbiguities.length === 0 && <div className="py-20 text-center"><p className="text-4xl">✓</p><p className="mt-3 font-bold text-gray-700">没有可处理的归组建议</p><p className="mt-2 text-sm text-gray-400">可以从左侧选择收藏集查看具体条目</p></div>}
     </div>
   </div>;
@@ -746,7 +802,7 @@ export default function CollectionCenter(props: Props) {
           </div>}
           <button onClick={() => scanning ? (cancelScanRef.current = true) : void scanSuggestions()} className="mt-3 w-full rounded-xl border border-indigo-100 bg-white py-2.5 text-sm font-bold text-indigo-600">{scanning ? `停止全库扫描 ${scanProgress.done}/${scanProgress.total}` : '扫描片库归组建议'}</button>
           <button disabled={!dismissalsLoaded || dismissals.length === 0} onClick={() => setShowDismissedSuggestions(true)} className="mt-2 w-full rounded-xl border border-gray-200 bg-white py-2 text-xs font-semibold text-gray-500 disabled:opacity-40">已忽略建议（{dismissals.length}）</button>
-          {scanSummary && <div className="mt-2 rounded-xl bg-white px-3 py-2 text-[10px] leading-5 text-gray-500"><p>可处理 {scanSummary.actionable} · 完整排除 {scanSummary.complete} · 已归组 {scanSummary.covered}</p><p>已忽略 {scanSummary.ignored} · 待确认 {scanSummary.ambiguous} · 无法确认 {scanSummary.unavailable}</p></div>}
+          {scanSummary && <div className="mt-2 rounded-xl bg-white px-3 py-2 text-[10px] leading-5 text-gray-500"><p>可处理 {scanSummary.actionable} · 完整排除 {scanSummary.complete} · 已归组 {scanSummary.covered}</p><p>非合集/无差异 {scanSummary.ineligible} · 已忽略 {scanSummary.ignored} · 待确认 {scanSummary.ambiguous} · 无法确认 {scanSummary.unavailable}</p></div>}
         </div>
         <div className="flex-1 space-y-2 overflow-y-auto p-3">
           {visibleCollections.map((collection, index) => {

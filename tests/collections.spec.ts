@@ -95,6 +95,13 @@ test('@collections keeps library suggestions separate from a selected collection
       title: '待归组电影',
       belongs_to_collection: { id: 202, name: '待归组系列' },
     },
+    tmdbDetails: {
+      'movie:101': { id: 101, media_type: 'movie', title: '待归组电影', belongs_to_collection: { id: 202, name: '待归组系列' } },
+      'collection:202': { id: 202, name: '待归组系列', parts: [
+        { id: 101, title: '待归组电影', release_date: '2020-01-01' },
+        { id: 102, title: '待归组电影续集', release_date: '2022-01-01' },
+      ] },
+    },
   });
   await page.goto('/');
   await openCenter(page);
@@ -347,8 +354,101 @@ test('@collections excludes a TMDB-confirmed single aired season outside collect
   await openCenter(page);
   await page.getByRole('button', { name: '扫描片库归组建议' }).click();
   await expect(page.getByText('TMDB 只读建议 · 确认前不会修改数据')).toHaveCount(0);
-  await expect(page.getByText(/完整排除 1/)).toBeVisible();
+  await expect(page.getByText(/可处理 0 · 完整排除 1 · 已归组 0/)).toBeVisible();
   expect((await mockSnapshot(page)).calls.filter(call => call.command === 'get_tmdb_detail')).toHaveLength(1);
+});
+
+test('@collections filters invalid search matches before deciding that a result is ambiguous', async ({ page }) => {
+  const candidate = {
+    ...record('大时代'), originalName: 'The Greed of Man', imdbId: 'tt0843185', mediaType: '剧集' as const,
+  };
+  await setupMockIpc(page, {
+    records: [candidate],
+    collections: [collection],
+    tmdbSearchResults: [
+      { id: 810, title: 'The Greed of Man', media_type: 'movie', release_date: '1992-01-01' },
+      { id: 820, name: '大时代', original_name: 'The Greed of Man', media_type: 'tv', first_air_date: '1992-10-05' },
+    ],
+    tmdbDetails: {
+      'movie:810': { id: 810, title: 'The Greed of Man', media_type: 'movie', release_date: '1992-01-01', belongs_to_collection: null },
+      'tv:820': { id: 820, name: '大时代', original_name: 'The Greed of Man', media_type: 'tv', seasons: [
+        { id: 821, season_number: 1, air_date: '1992-10-05' },
+        { id: 822, season_number: 2, air_date: '1993-10-05' },
+      ] },
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+
+  await expect(page.getByText(/存在多个有效 TMDB 匹配/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /大时代.*应用/ })).toBeVisible();
+  await expect(page.getByText(/非合集\/无差异 1/)).toBeVisible();
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'apply_collection_suggestion')).toHaveLength(0);
+});
+
+test('@collections keeps only an actionable movie collection when the TV result is already complete', async ({ page }) => {
+  const candidate = {
+    ...record('人生七年9'), originalName: '63 Up', imdbId: 'tt8929142', mediaType: '电影' as const,
+  };
+  await setupMockIpc(page, {
+    records: [candidate],
+    collections: [collection],
+    tmdbSearchResults: [
+      { id: 901, title: '人生七年9', original_title: '63 Up', media_type: 'movie', release_date: '2019-06-04' },
+      { id: 902, name: '人生七年9', original_name: '63 Up', media_type: 'tv', first_air_date: '2019-06-04' },
+    ],
+    tmdbDetails: {
+      'movie:901': { id: 901, title: '人生七年9', media_type: 'movie', release_date: '2019-06-04', belongs_to_collection: { id: 990, name: '人生七年（系列）' } },
+      'collection:990': { id: 990, name: '人生七年（系列）', parts: [
+        { id: 900, title: '人生七年8', release_date: '2012-01-01' },
+        { id: 901, title: '人生七年9', release_date: '2019-06-04' },
+      ] },
+      'tv:902': { id: 902, name: '人生七年9', media_type: 'tv', seasons: [{ id: 903, season_number: 1, air_date: '2019-06-04' }] },
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+
+  await expect(page.getByText(/存在多个有效 TMDB 匹配/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /人生七年（系列）.*应用/ })).toBeVisible();
+  await expect(page.getByText(/完整排除 1/)).toBeVisible();
+});
+
+test('@collections asks only between multiple qualified sources and keeps the choice read-only', async ({ page }) => {
+  const candidate = {
+    ...record('人生七年6'), originalName: '42 Up', imdbId: 'tt0164312', mediaType: '纪录片' as const,
+  };
+  await setupMockIpc(page, {
+    records: [candidate],
+    collections: [collection],
+    tmdbSearchResults: [
+      { id: 610, title: '人生七年6', original_title: '42 Up', media_type: 'movie', release_date: '1998-07-21' },
+      { id: 620, name: '42: Forty Two Up', media_type: 'tv', first_air_date: '1998-07-21' },
+    ],
+    tmdbDetails: {
+      'movie:610': { id: 610, title: '人生七年6', original_title: '42 Up', media_type: 'movie', release_date: '1998-07-21', belongs_to_collection: { id: 699, name: '人生七年（系列）' } },
+      'collection:699': { id: 699, name: '人生七年（系列）', parts: [
+        { id: 600, title: '人生七年5', release_date: '1991-01-01' },
+        { id: 610, title: '人生七年6', release_date: '1998-07-21' },
+      ] },
+      'tv:620': { id: 620, name: '42: Forty Two Up', media_type: 'tv', seasons: [
+        { id: 621, season_number: 1, air_date: '1998-07-21' },
+        { id: 622, season_number: 2, air_date: '1999-07-21' },
+      ] },
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+
+  await expect(page.getByText('1 项存在多个有效 TMDB 匹配，请选择')).toBeVisible();
+  await expect(page.getByText('本地：人生七年6')).toBeVisible();
+  await expect(page.getByRole('button', { name: /人生七年6 · 电影.*TMDB 610.*电影合集：人生七年（系列）/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /42: Forty Two Up · 剧集.*TMDB 620.*电视剧系列/ })).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => ['apply_collection_suggestion', 'create_collection', 'add_collection_members'].includes(call.command))).toHaveLength(0);
 });
 
 test('@collections persists dismissed suggestions and can restore them', async ({ page }) => {
@@ -377,7 +477,7 @@ test('@collections persists dismissed suggestions and can restore them', async (
   await openCenter(page);
   await page.getByRole('button', { name: '扫描片库归组建议' }).click();
   await expect(page.getByRole('button', { name: '不再推荐 多季候选' })).toHaveCount(0);
-  await expect(page.getByText('已忽略 1 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
+  await expect(page.getByText('非合集/无差异 0 · 已忽略 1 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: '已忽略建议（1）' }).click();
   const ignoredDialog = page.getByRole('dialog', { name: '已忽略建议' });

@@ -1809,8 +1809,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Priority: R1
 - Approved Design: `docs/COLLECTION_DISCOVERY_REWORK_DESIGN.md`。用户要求修正全库 350 项误扫描、已有系列重复建议、中文季数拆组、手工系列无法检查缺失内容、影视宇宙功能互斥、记录内无法新建收藏集，以及自动补充季元数据不完整。
 - Data Boundary: 数据库主版本继续为 V18；扫描和预览零业务写入；旧数据不在启动时自动整理；新记录只填 TMDB 可用字段，已有记录只填缺失字段。
-- Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、清单 7 天/电影详情 30 天缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。电影合集现按 TMDB + IMDb 双身份区分当前成员、片库复用、真正缺失、冲突和无法确认，并由 `complete_movie_collection` 单事务补旧身份、复用成员或创建记录，写入时全片库复核并在冲突时整批回滚。保持 IN-PROGRESS，便携版真实数据验收完成后再改为 IMPLEMENTED。
+- Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、清单 7 天/电影详情 30 天缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。电影合集现按 TMDB + IMDb 双身份区分当前成员、片库复用、真正缺失、冲突和无法确认，并由 `complete_movie_collection` 单事务补旧身份、复用成员或创建记录，写入时全片库复核并在冲突时整批回滚。2026-08-13 收尾修订把电影合集/电视剧系列的详情级资格校验前移到歧义判断之前：独立电影、只有一部已上映作品的伪合集、完整单季剧、已覆盖、已忽略和身份冲突候选不再要求人工选择；过滤后只剩一个有效候选时直接生成只读建议。保持 IN-PROGRESS，便携版真实数据验收完成后再改为 IMPLEMENTED。
 - Acceptance Evidence: Node 123/123、Rust 86/86（单线程避免既有恢复点测试临时目录碰撞）、typecheck、lint、rustfmt、严格 Clippy 与生产 build 通过。新增旧电影 IMDb 复用与缺失身份补全、片库记录复用、TMDB/IMDb 冲突整批回滚，以及电视剧共享 IMDb 不参与电影去重测试。收藏集 Playwright 6/6 均运行至完成且未报告用例失败；Windows runner 仍被既有 Vite 子进程退出问题拖住。
+- 2026-08-13 Qualification Evidence: Node 136/136、typecheck、lint、生产 build 与 `git diff --check` 通过；收藏集 Playwright 17/17 均运行至完成且未报告用例失败，覆盖独立电影过滤、完整单季过滤、唯一有效来源直达建议、多个有效来源只读选择及已有集合网络前排除。Playwright 报告完成后 Vite 子进程仍不自动退出，外层命令因此超时；没有把该超时记为测试通过本身。
 - Portable Acceptance: 使用 `docs/COLLECTION_PORTABLE_ACCEPTANCE_TEST.md` 的 `WT-COLLECTION-PORTABLE-001` 完成真实便携数据验收后，才将本任务改为 `IMPLEMENTED`。
 
 ### TASK-D-UX-003-R3：收藏集建议资格、覆盖去重与持久忽略
