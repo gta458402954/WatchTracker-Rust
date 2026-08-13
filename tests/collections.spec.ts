@@ -78,6 +78,39 @@ test('@collections opening is read-only until an explicit action', async ({ page
   expect(after.calls.filter(call => writes.has(call.command))).toHaveLength(before.calls.filter(call => writes.has(call.command)).length);
 });
 
+test('@collections keeps library suggestions separate from a selected collection detail', async ({ page }) => {
+  const inside = record('收藏集具体条目');
+  const candidate = {
+    ...record('待归组电影'),
+    imdbId: 'tt1234567',
+  };
+  await setupMockIpc(page, {
+    records: [inside, candidate],
+    collections: [collection],
+    collectionMembers: [member(inside.id, 0)],
+    tmdbSearchResults: [{ id: 101, media_type: 'movie', title: '待归组电影' }],
+    tmdbDetail: {
+      id: 101,
+      media_type: 'movie',
+      title: '待归组电影',
+      belongs_to_collection: { id: 202, name: '待归组系列' },
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByRole('heading', { name: '片库归组建议' })).toBeVisible();
+  await expect(page.getByText('TMDB 只读建议 · 确认前不会修改数据')).toBeVisible();
+  await expect(page.getByRole('button', { name: /待归组系列.*应用/ })).toBeVisible();
+
+  await page.getByRole('button', { name: /测试系列.*1 部/ }).click();
+  await expect(page.getByRole('heading', { name: '测试系列' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /收藏集具体条目.*original/ })).toBeVisible();
+  await expect(page.getByText('TMDB 只读建议 · 确认前不会修改数据')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /待归组系列.*应用/ })).toHaveCount(0);
+});
+
 test('@collections arrow keys switch the focused collection and search can enter the list', async ({ page }) => {
   const second: WatchCollection = {
     ...collection,

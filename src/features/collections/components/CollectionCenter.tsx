@@ -250,6 +250,8 @@ export default function CollectionCenter(props: Props) {
   }
 
   async function scanSuggestions() {
+    // Discovery belongs to the whole library, not to the selected collection.
+    setSelectedId(null);
     cancelScanRef.current = false;
     setScanAmbiguities([]);
     setScanSummary(null);
@@ -710,9 +712,25 @@ export default function CollectionCenter(props: Props) {
     finally { setBusy(false); }
   }
 
+  const hasDiscoveryView = scanning || scanSummary !== null || suggestions.length > 0 || scanAmbiguities.length > 0;
+  const discoveryView = <div className="flex h-full flex-col">
+    <div className="border-b border-gray-100 p-5 sm:p-7">
+      <div className="flex items-start justify-between gap-4">
+        <div><h3 className="text-3xl font-black text-gray-900">片库归组建议</h3><p className="mt-2 text-sm text-gray-500">这是全片库的只读发现结果；选择左侧收藏集后只显示该收藏集内容</p></div>
+        <button onClick={onClose} aria-label="关闭收藏集中心" className="hidden rounded-xl px-3 py-2 text-xl text-gray-400 md:block">×</button>
+      </div>
+    </div>
+    <div className="flex-1 overflow-y-auto p-5 sm:p-7">
+      {scanning && <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm font-semibold text-indigo-700">正在扫描片库 {scanProgress.done}/{scanProgress.total}</div>}
+      {suggestions.length > 0 && <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <div key={item.sourceKey} className="flex items-center overflow-hidden rounded-xl border border-indigo-200 bg-white text-xs text-indigo-700"><button disabled={busy} onClick={() => void applySuggestion(item)} className="px-3 py-2 text-left hover:bg-indigo-50 disabled:opacity-50"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.requiresBinding ? '确认系列身份' : `${item.recordIds.length} 部`} · 应用</span></button><button disabled={busy} onClick={() => void dismissSuggestion(item)} aria-label={`不再推荐 ${item.name}`} title="不再推荐" className="self-stretch border-l border-indigo-100 px-2.5 text-indigo-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">×</button></div>)}</div></div>}
+      {scanAmbiguities.length > 0 && <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"><p className="text-xs font-bold text-amber-800">{scanAmbiguities.length} 项存在多个 TMDB 匹配，请选择</p><div className="mt-2 space-y-2">{scanAmbiguities.map(ambiguity => <div key={ambiguity.imdbId} className="rounded-xl bg-white p-2"><p className="text-[11px] text-gray-500">IMDb {ambiguity.imdbId}</p><div className="mt-1 flex flex-wrap gap-2">{ambiguity.choices.map(choice => <button key={`${choice.mediaType}:${choice.id}`} disabled={busy} onClick={() => void resolveScanAmbiguity(ambiguity, choice)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-800">{choice.label} · {choice.mediaType === 'tv' ? '剧集' : '电影'}</button>)}</div></div>)}</div></div>}
+      {!scanning && scanSummary && suggestions.length === 0 && scanAmbiguities.length === 0 && <div className="py-20 text-center"><p className="text-4xl">✓</p><p className="mt-3 font-bold text-gray-700">没有可处理的归组建议</p><p className="mt-2 text-sm text-gray-400">可以从左侧选择收藏集查看具体条目</p></div>}
+    </div>
+  </div>;
+
   return <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/35 p-3 sm:p-6">
     <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="collections-title" tabIndex={-1} className="flex h-[min(900px,94vh)] w-full max-w-7xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-      <aside className={`${selected && 'max-md:hidden'} flex w-full flex-col border-r border-gray-100 bg-gray-50/70 md:w-[31%]`}>
+      <aside className={`${(selected || hasDiscoveryView) && 'max-md:hidden'} flex w-full flex-col border-r border-gray-100 bg-gray-50/70 md:w-[31%]`}>
         <div className="border-b border-gray-100 p-5">
           <div className="flex items-center justify-between gap-3">
             <h2 id="collections-title" className="text-2xl font-black text-gray-900">系列与收藏集</h2>
@@ -743,8 +761,8 @@ export default function CollectionCenter(props: Props) {
         </div>
       </aside>
 
-      <main className={`${!selected && 'max-md:hidden'} flex min-w-0 flex-1 flex-col bg-white`}>
-        {!selected ? <div className="m-auto text-center"><p className="text-5xl">🎬</p><p className="mt-4 font-bold text-gray-700">创建第一个收藏集</p><p className="mt-1 text-sm text-gray-400">按系列、导演或个人主题整理片库</p></div> : <>
+      <main className={`${!selected && !hasDiscoveryView && 'max-md:hidden'} flex min-w-0 flex-1 flex-col bg-white`}>
+        {!selected ? (hasDiscoveryView ? discoveryView : <div className="m-auto text-center"><p className="text-5xl">🎬</p><p className="mt-4 font-bold text-gray-700">创建第一个收藏集</p><p className="mt-1 text-sm text-gray-400">按系列、导演或个人主题整理片库</p></div>) : <>
           <div className="border-b border-gray-100 p-5 sm:p-7">
             <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
@@ -754,8 +772,6 @@ export default function CollectionCenter(props: Props) {
               </div>
               <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:justify-end"><button onClick={() => setAdding(true)} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-bold text-white sm:px-4">＋ 从片库添加</button>{legacySeriesImdb && <button disabled={busy} onClick={() => void identifyLegacySeries()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">确认 TMDB 系列</button>}{selected.collectionKind === 'tv-series' && !selected.sourceKey && selectedParentIds.length !== 1 && <button disabled={busy} onClick={() => void bindSelectedSeries()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">确认 TMDB 系列</button>}{(selected.sourceKey?.startsWith('tmdb:tv-show:') || selectedParentIds.length === 1 || selected.collectionKind === 'universe' && selectedParentIds.length > 0) && <button disabled={busy} onClick={() => void inspectMissingSeasons()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">{selected.collectionKind === 'universe' ? '检查缺失条目' : '检查缺失季'}</button>}{selected.collectionKind === 'movie-series' && <button disabled={busy} onClick={() => void inspectMissingMovies()} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">检查缺失电影</button>}{selected.collectionKind === 'universe' && <button disabled={busy} onClick={() => setLinkingRelated(true)} className="rounded-xl border border-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-600 disabled:opacity-50">关联相关作品</button>}<button onClick={startEdit} className="rounded-xl border px-3 py-2 text-sm">编辑</button><button onClick={() => void deleteSelected()} className="rounded-xl border border-red-100 px-3 py-2 text-sm text-red-500">删除</button><button onClick={onClose} aria-label="关闭收藏集中心" className="hidden rounded-xl px-3 py-2 text-xl text-gray-400 md:block">×</button></div>
             </div>
-            {suggestions.length > 0 && <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3"><p className="text-xs font-bold text-indigo-800">TMDB 只读建议 · 确认前不会修改数据</p><div className="mt-2 flex flex-wrap gap-2">{suggestions.map(item => <div key={item.sourceKey} className="flex items-center overflow-hidden rounded-xl border border-indigo-200 bg-white text-xs text-indigo-700"><button disabled={busy} onClick={() => void applySuggestion(item)} className="px-3 py-2 text-left hover:bg-indigo-50 disabled:opacity-50"><b>{item.name}</b><span className="ml-2 text-indigo-400">{item.requiresBinding ? '确认系列身份' : `${item.recordIds.length} 部`} · 应用</span></button><button disabled={busy} onClick={() => void dismissSuggestion(item)} aria-label={`不再推荐 ${item.name}`} title="不再推荐" className="self-stretch border-l border-indigo-100 px-2.5 text-indigo-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">×</button></div>)}</div></div>}
-            {scanAmbiguities.length > 0 && <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"><p className="text-xs font-bold text-amber-800">{scanAmbiguities.length} 项存在多个 TMDB 匹配，请选择</p><div className="mt-2 space-y-2">{scanAmbiguities.map(ambiguity => <div key={ambiguity.imdbId} className="rounded-xl bg-white p-2"><p className="text-[11px] text-gray-500">IMDb {ambiguity.imdbId}</p><div className="mt-1 flex flex-wrap gap-2">{ambiguity.choices.map(choice => <button key={`${choice.mediaType}:${choice.id}`} disabled={busy} onClick={() => void resolveScanAmbiguity(ambiguity, choice)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-800">{choice.label} · {choice.mediaType === 'tv' ? '剧集' : '电影'}</button>)}</div></div>)}</div></div>}
           </div>
           <div className="flex-1 space-y-3 overflow-y-auto p-5 sm:p-7">
             {selectedMembers.map((member, index) => {

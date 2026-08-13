@@ -1811,6 +1811,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Data Boundary: 数据库主版本继续为 V18；扫描和预览零业务写入；旧数据不在启动时自动整理；新记录只填 TMDB 可用字段，已有记录只填缺失字段。
 - Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、清单 7 天/电影详情 30 天缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。电影合集现按 TMDB + IMDb 双身份区分当前成员、片库复用、真正缺失、冲突和无法确认，并由 `complete_movie_collection` 单事务补旧身份、复用成员或创建记录，写入时全片库复核并在冲突时整批回滚。保持 IN-PROGRESS，便携版真实数据验收完成后再改为 IMPLEMENTED。
 - Acceptance Evidence: Node 123/123、Rust 86/86（单线程避免既有恢复点测试临时目录碰撞）、typecheck、lint、rustfmt、严格 Clippy 与生产 build 通过。新增旧电影 IMDb 复用与缺失身份补全、片库记录复用、TMDB/IMDb 冲突整批回滚，以及电视剧共享 IMDb 不参与电影去重测试。收藏集 Playwright 6/6 均运行至完成且未报告用例失败；Windows runner 仍被既有 Vite 子进程退出问题拖住。
+- Portable Acceptance: 使用 `docs/COLLECTION_PORTABLE_ACCEPTANCE_TEST.md` 的 `WT-COLLECTION-PORTABLE-001` 完成真实便携数据验收后，才将本任务改为 `IMPLEMENTED`。
 
 ### TASK-D-UX-003-R3：收藏集建议资格、覆盖去重与持久忽略
 
@@ -1828,6 +1829,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Acceptance: 覆盖单季、特别篇、未来季、已播缺失季、完整多季、TMDB 失败、持久忽略/恢复，以及《罪恶黑名单：救赎》已经属于《罪恶黑名单》后不再独立推荐的回归用例。
 - Implementation: 本地单条标题候选不再未经 TMDB 验证直接进入结果；稳定/IMDb 电视剧候选按已播常规季做最终资格检查。建议展示前按成员反向索引过滤任意集合覆盖，并以 SQLite settings 持久保存用户忽略决定；界面提供逐项忽略、已忽略列表、逐项/全部恢复及六类扫描统计。
 - Acceptance Evidence: Node 132/132、typecheck、lint 与生产 build 通过。收藏集 Playwright 原有 10 项与新增“任意收藏集覆盖”“TMDB 单季排除”“持久忽略/恢复”共 13/13 通过；Windows runner 仍在报告完成后被既有 Vite 子进程退出问题拖住，3 项 R3 专项均明确报告 `ok`。
+- Portable Regression: `docs/COLLECTION_PORTABLE_ACCEPTANCE_TEST.md` 的同一真实便携用例同时覆盖本任务的单季资格、任意集合覆盖去重、持久忽略和恢复入口。
 
 ### TASK-D-ARCH-001：跨语言类型生成
 
@@ -1899,5 +1901,5 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Owner: Unassigned
 - Status: IMPLEMENTED
 - Former Priority: R1
-- Evidence: `.github/workflows/ci.yml` 已覆盖 push/PR 的 typecheck、lint、Node tests、前端 build、Playwright、Windows `cargo fmt/clippy/test`、Tauri build 和构建产物上传。
-- Scope: 后续只维护 action/runtime 版本、缓存、最小权限、失败诊断和构建稳定性；新增门禁另开任务。
+- Evidence: `.github/workflows/ci.yml` 在普通 branch push 与 pull request 上运行 typecheck、lint、Node tests、前端 build、Playwright，以及 Windows `cargo fmt/clippy/test`；普通 push/PR 不执行 Windows Tauri bundle。只有推送 `v*` 标签并且前端、Playwright 与 Rust 门禁全部通过后，才构建 `app.exe`、MSI 和 NSIS setup，保留 Actions artifact，并自动创建带生成式 Release Notes 的 GitHub Release、上传三类发布文件。
+- Scope: 后续只维护 action/runtime 版本、缓存、最小权限、失败诊断、tag 发布和构建稳定性；新增门禁另开任务。发布资产只由 `v*` 标签触发，普通代码提交和 PR 不应产生安装包或 Release。
