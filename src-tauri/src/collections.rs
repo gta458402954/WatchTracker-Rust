@@ -1067,9 +1067,7 @@ fn movie_identity_matches(
         ids.insert(id?);
     }
     if let Some(imdb_id) = imdb_id {
-        let mut imdb = conn.prepare(
-            "SELECT id FROM records WHERE (tmdbMediaKind='movie' OR mediaType='电影') AND lower(trim(imdbId))=?1",
-        )?;
+        let mut imdb = conn.prepare("SELECT id FROM records WHERE lower(trim(imdbId))=?1")?;
         for id in imdb.query_map([imdb_id], |row| row.get::<_, String>(0))? {
             ids.insert(id?);
         }
@@ -1147,7 +1145,7 @@ pub fn complete_movie_collection(
         if record.rev != matched.expected_rev {
             return Err(AppError::General("stale_record".into()));
         }
-        if record.media_type != "电影" && record.tmdb_media_kind.as_deref() != Some("movie") {
+        if matches!(record.tmdb_media_kind.as_deref(), Some("tv" | "tv-season")) {
             return Err(AppError::General("movie_identity_invalid".into()));
         }
         if record.tmdb_id.is_some_and(|value| value != matched.tmdb_id)
@@ -1212,7 +1210,10 @@ pub fn complete_movie_collection(
         if let Some(record_id) = matches.into_iter().next() {
             let mut existing = crate::db::get_record(&tx, &record_id)?
                 .ok_or_else(|| AppError::General("collection_reference_invalid".into()))?;
-            if existing.tmdb_id.is_some_and(|value| value != tmdb_id)
+            if matches!(
+                existing.tmdb_media_kind.as_deref(),
+                Some("tv" | "tv-season")
+            ) || existing.tmdb_id.is_some_and(|value| value != tmdb_id)
                 || normalize_imdb_id(existing.imdb_id.as_deref())
                     .is_some_and(|value| Some(value.as_str()) != imdb_id.as_deref())
             {
@@ -2042,6 +2043,60 @@ mod tests {
         assert!(result.created_record_ids.is_empty());
         assert_eq!(result.reused_record_ids, vec!["one"]);
         assert_eq!(crate::db::get_all_records(&conn).unwrap().len(), 2);
+        assert!(all_members(&conn)
+            .unwrap()
+            .iter()
+            .any(|member| member.collection_id == collection.id && member.record_id == "one"));
+    }
+
+    #[test]
+    fn movie_completion_reuses_legacy_documentary_by_imdb_instead_of_creating_duplicate() {
+        let mut conn = database();
+        conn.execute(
+            "UPDATE records SET mediaType='纪录片', imdbId='tt0164312', tmdbMediaKind=NULL, tmdbId=NULL WHERE id='one'",
+            [],
+        )
+        .unwrap();
+        let collection = create(
+            &mut conn,
+            CreateCollectionInput {
+                name: "人生七年（系列）".into(),
+                description: None,
+                source_kind: "tmdb-movie-collection".into(),
+                source_key: Some("tmdb:movie-collection:699".into()),
+                collection_kind: None,
+                order_mode: None,
+            },
+            "device",
+        )
+        .unwrap();
+        let before = crate::db::get_all_records(&conn).unwrap().len();
+        let mut proposed = record("new-42-up");
+        proposed.tmdb_media_kind = Some("movie".into());
+        proposed.tmdb_id = Some(610);
+        proposed.imdb_id = Some("tt0164312".into());
+        proposed.series_record_kind = Some("single-work".into());
+
+        let result = complete_movie_collection(
+            &mut conn,
+            CompleteMovieCollectionInput {
+                collection_id: collection.id.clone(),
+                expected_rev: collection.rev,
+                matches: vec![],
+                new_records: vec![proposed],
+                fill_missing_identity: true,
+            },
+            "device",
+        )
+        .unwrap();
+
+        assert!(result.created_record_ids.is_empty());
+        assert_eq!(result.reused_record_ids, vec!["one"]);
+        assert_eq!(crate::db::get_all_records(&conn).unwrap().len(), before);
+        let reused = crate::db::get_record(&conn, "one").unwrap().unwrap();
+        assert_eq!(reused.media_type, "纪录片");
+        assert_eq!(reused.tmdb_media_kind.as_deref(), Some("movie"));
+        assert_eq!(reused.tmdb_id, Some(610));
         assert!(all_members(&conn)
             .unwrap()
             .iter()

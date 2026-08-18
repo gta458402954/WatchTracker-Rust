@@ -320,8 +320,15 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               }
               for (const proposed of input.newRecords) {
                 const imdb = normalizeImdb(proposed.imdbId);
-                const existing = snapshot.records.find(item => item.tmdbMediaKind === 'movie' && item.tmdbId === proposed.tmdbId || item.mediaType === '电影' && imdb && normalizeImdb(item.imdbId) === imdb);
-                if (existing) { memberIds.add(existing.id); reusedRecordIds.push(existing.id); }
+                const existing = snapshot.records.find(item => item.tmdbMediaKind === 'movie' && item.tmdbId === proposed.tmdbId || !!imdb && normalizeImdb(item.imdbId) === imdb);
+                if (existing?.tmdbMediaKind === 'tv' || existing?.tmdbMediaKind === 'tv-season') throw new Error('movie_identity_conflict');
+                if (existing) {
+                  if (input.fillMissingIdentity && (!existing.tmdbMediaKind || !existing.tmdbId || !existing.seriesRecordKind)) {
+                    existing.tmdbMediaKind ||= 'movie'; existing.tmdbId ||= proposed.tmdbId; existing.seriesRecordKind ||= 'single-work';
+                    existing.rev = (existing.rev ?? 0) + 1; existing.updatedAt = now; identityUpdatedRecordIds.push(existing.id);
+                  }
+                  memberIds.add(existing.id); reusedRecordIds.push(existing.id);
+                }
                 else { snapshot.records.push(proposed); memberIds.add(proposed.id); createdRecordIds.push(proposed.id); }
               }
               let position = collectionMembers.filter(item => item.collectionId === collection.id).length;

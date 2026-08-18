@@ -28,10 +28,50 @@ test('distinguishes reusable library movies and true missing movies', () => {
   assert.equal(classifyMovieCollectionPart({ id: 604, imdb_id: 'tt0234215' }, [library], new Set()).status, 'missing');
 });
 
-test('reports conflicting TMDB and IMDb identities and ignores TV IMDb sharing', () => {
+test('reports identities that resolve to different local records as a conflict', () => {
   const byTmdb = record('one', { tmdbMediaKind: 'movie', tmdbId: 10, imdbId: 'tt0000010' });
   const byImdb = record('two', { imdbId: 'tt0000020' });
-  const tvSeason = record('season', { mediaType: '剧集', tmdbMediaKind: 'tv-season', imdbId: 'tt0000030' });
   assert.equal(classifyMovieCollectionPart({ id: 10, imdb_id: 'tt0000020' }, [byTmdb, byImdb], new Set()).status, 'conflict');
-  assert.equal(classifyMovieCollectionPart({ id: 30, imdb_id: 'tt0000030' }, [tvSeason], new Set()).status, 'missing');
+});
+
+test('a legacy documentary with the same IMDb identity is reused as a movie collection part', () => {
+  const legacy = {
+    id: '42-up',
+    mediaType: '纪录片',
+    imdbId: ' TT0164312 ',
+    tmdbMediaKind: null,
+    tmdbId: null,
+  };
+  const movie = {
+    id: 610,
+    title: '42 Up',
+    external_ids: { imdb_id: 'tt0164312' },
+  };
+
+  assert.deepEqual(classifyMovieCollectionPart(movie, [legacy], new Set()), {
+    movie,
+    status: 'library',
+    recordId: '42-up',
+  });
+});
+
+test('an explicit TV identity conflicts instead of being duplicated as a movie collection part', () => {
+  const tv = {
+    id: 'tv-record',
+    mediaType: '纪录片',
+    imdbId: 'tt0164312',
+    tmdbMediaKind: 'tv',
+    tmdbId: 620,
+  };
+  const movie = {
+    id: 610,
+    title: '42 Up',
+    external_ids: { imdb_id: 'tt0164312' },
+  };
+
+  assert.deepEqual(classifyMovieCollectionPart(movie, [tv], new Set()), {
+    movie,
+    status: 'conflict',
+    conflictRecordIds: ['tv-record'],
+  });
 });

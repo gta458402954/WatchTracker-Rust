@@ -416,6 +416,58 @@ test('@collections keeps only an actionable movie collection when the TV result 
   await expect(page.getByText(/完整排除 1/)).toBeVisible();
 });
 
+test('@collections reuses a legacy documentary by IMDb when completing a movie series', async ({ page }) => {
+  const movieSeries: WatchCollection = {
+    ...collection,
+    name: '人生七年（系列）',
+    normalizedName: '人生七年（系列）',
+    sourceKind: 'tmdb-movie-collection',
+    sourceKey: 'tmdb:movie-collection:699',
+    collectionKind: 'movie-series',
+    orderMode: 'chronological',
+  };
+  const existingMember = {
+    ...record('人生七年5'),
+    imdbId: 'tt0098575',
+    tmdbMediaKind: 'movie' as const,
+    tmdbId: 600,
+  };
+  const legacyDocumentary = {
+    ...record('人生七年6'),
+    originalName: '42 Up',
+    mediaType: '纪录片' as const,
+    imdbId: 'tt0164312',
+    tmdbMediaKind: null,
+    tmdbId: null,
+  };
+  await setupMockIpc(page, {
+    records: [existingMember, legacyDocumentary],
+    collections: [movieSeries],
+    collectionMembers: [member(existingMember.id, 0)],
+    tmdbDetails: {
+      'collection:699': { id: 699, name: '人生七年（系列）', parts: [
+        { id: 600, title: '35 Up', release_date: '1991-01-01' },
+        { id: 610, title: '42 Up', release_date: '1998-07-21' },
+      ] },
+      'movie:600': { id: 600, title: '35 Up', release_date: '1991-01-01', external_ids: { imdb_id: 'tt0098575' } },
+      'movie:610': { id: 610, title: '42 Up', release_date: '1998-07-21', external_ids: { imdb_id: 'tt0164312' } },
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '检查缺失电影' }).click();
+  const dialog = page.getByRole('dialog', { name: '检查缺失电影' });
+  await expect(dialog.getByText('42 Up · 1998')).toBeVisible();
+  await expect(dialog.getByText('已在片库，可加入收藏集')).toBeVisible();
+  await dialog.getByRole('button', { name: '补充到片库' }).click();
+
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.records).toHaveLength(2);
+  const reused = snapshot.records.find(item => item.id === legacyDocumentary.id);
+  expect(reused).toMatchObject({ mediaType: '纪录片', tmdbMediaKind: 'movie', tmdbId: 610 });
+  expect(snapshot.collectionMembers.some(item => item.collectionId === movieSeries.id && item.recordId === legacyDocumentary.id)).toBe(true);
+});
+
 test('@collections asks only between multiple qualified sources and keeps the choice read-only', async ({ page }) => {
   const candidate = {
     ...record('人生七年6'), originalName: '42 Up', imdbId: 'tt0164312', mediaType: '纪录片' as const,

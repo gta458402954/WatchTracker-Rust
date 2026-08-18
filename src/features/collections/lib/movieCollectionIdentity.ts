@@ -15,8 +15,8 @@ export function normalizeImdbId(value: string | null | undefined): string | null
   return /^tt\d+$/.test(normalized) ? normalized : null;
 }
 
-function isMovieRecord(record: WatchRecord): boolean {
-  return record.tmdbMediaKind === 'movie' || record.mediaType === '电影';
+function hasExplicitNonMovieIdentity(record: WatchRecord): boolean {
+  return record.tmdbMediaKind === 'tv' || record.tmdbMediaKind === 'tv-season';
 }
 
 export function classifyMovieCollectionPart(
@@ -28,16 +28,19 @@ export function classifyMovieCollectionPart(
   const imdbId = normalizeImdbId(movie.external_ids?.imdb_id || movie.imdb_id);
   if (tmdbId == null && imdbId == null) return { movie, status: 'unresolved' };
 
-  const movieRecords = records.filter(isMovieRecord);
   const tmdbMatches = tmdbId == null
     ? []
-    : movieRecords.filter(record => record.tmdbId === tmdbId);
+    : records.filter(record => record.tmdbMediaKind === 'movie' && record.tmdbId === tmdbId);
   const imdbMatches = imdbId == null
     ? []
-    : movieRecords.filter(record => normalizeImdbId(record.imdbId) === imdbId);
+    : records.filter(record => normalizeImdbId(record.imdbId) === imdbId);
   const ids = [...new Set([...tmdbMatches, ...imdbMatches].map(record => record.id))];
   if (ids.length > 1) return { movie, status: 'conflict', conflictRecordIds: ids };
   if (ids.length === 1) {
+    const matched = records.find(record => record.id === ids[0]);
+    if (matched && hasExplicitNonMovieIdentity(matched)) {
+      return { movie, status: 'conflict', conflictRecordIds: ids };
+    }
     return { movie, status: memberRecordIds.has(ids[0]) ? 'member' : 'library', recordId: ids[0] };
   }
   return { movie, status: 'missing' };
