@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R3` 与 `TASK-D-UX-004` 已实现；`TASK-D-UX-003-R2` 保持真实便携数据验收中。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3` 与 `TASK-D-UX-004` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1504,6 +1504,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-002` | R2 | 追剧体验 | NEEDS-DESIGN | USER-PAUSED；当前个人管理定位与基础条件不足，不进入当前排期 |
 | `TASK-D-UX-003` | R2 | 内容组织 | IMPLEMENTED | 扁平多对多收藏集、手工排序、TMDB 建议、本地 V3 与 WebDAV V5 已实现 |
 | `TASK-D-UX-003-R1` | R2 | 系列补全 | IMPLEMENTED | 本地系列识别、持久 TMDB 身份、缓存、完整季原子补充、年代排序、影视宇宙和表单归组已实现 |
+| `TASK-D-UX-003-R2` | R1 | 收藏集补全 | IMPLEMENTED | 收藏集发现、候选资格、缺失季/电影、旧 IMDb 复用与真实便携数据验收已完成 |
 | `TASK-D-UX-003-R3` | R1 | 建议准确性 | IMPLEMENTED | TMDB 单季资格、任意收藏集覆盖去重、持久忽略与恢复入口已实现 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
@@ -1803,17 +1804,17 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-UX-003-R2：收藏集发现、缺失条目与元数据补充重构
 
-- Phase: IMPLEMENTATION
+- Phase: COMPLETED
 - Owner: Codex
-- Status: IN-PROGRESS
+- Status: IMPLEMENTED
 - Priority: R1
 - Approved Design: `docs/COLLECTION_DISCOVERY_REWORK_DESIGN.md`。用户要求修正全库 350 项误扫描、已有系列重复建议、中文季数拆组、手工系列无法检查缺失内容、影视宇宙功能互斥、记录内无法新建收藏集，以及自动补充季元数据不完整。
 - Data Boundary: 数据库主版本继续为 V18；扫描和预览零业务写入；旧数据不在启动时自动整理；新记录只填 TMDB 可用字段，已有记录只填缺失字段。
-- Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、清单 7 天/电影详情 30 天缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。电影合集现按 TMDB + IMDb 双身份区分当前成员、片库复用、真正缺失、冲突和无法确认，并由 `complete_movie_collection` 单事务补旧身份、复用成员或创建记录，写入时全片库复核并在冲突时整批回滚。2026-08-13 收尾修订把电影合集/电视剧系列的详情级资格校验前移到歧义判断之前：独立电影、只有一部已上映作品的伪合集、完整单季剧、已覆盖、已忽略和身份冲突候选不再要求人工选择；过滤后只剩一个有效候选时直接生成只读建议。2026-08-18 修正《人生七年》旧条目被分类为“纪录片”时的重复创建：IMDb 作为作品级身份跨本地媒体分类复用，明确 `tv/tv-season` 身份则显示冲突；前端预览与 Rust 原子提交双层执行同一保护，复用时只补缺失 TMDB 身份且保留“纪录片”分类。保持 IN-PROGRESS，便携版真实数据验收完成后再改为 IMPLEMENTED。
+- Implementation Progress: 已实现中文季数归一与冲突拒绝、统一季/电影元数据映射、全局扫描入口、规范化 TMDB 身份去重、已有集合差异过滤、多个 TMDB 匹配人工选择、四类收藏集创建、手工系列按需来源绑定、电视剧缺失季、电影合集缺失电影、清单 7 天/电影详情 30 天缓存与强制刷新、影视宇宙多父剧选择和既有系列双重归属、记录内收藏集草稿，以及建议应用/记录内创建/缺失内容创建的 Rust 原子命令。电影合集现按 TMDB + IMDb 双身份区分当前成员、片库复用、真正缺失、冲突和无法确认，并由 `complete_movie_collection` 单事务补旧身份、复用成员或创建记录，写入时全片库复核并在冲突时整批回滚。2026-08-13 收尾修订把电影合集/电视剧系列的详情级资格校验前移到歧义判断之前：独立电影、只有一部已上映作品的伪合集、完整单季剧、已覆盖、已忽略和身份冲突候选不再要求人工选择；过滤后只剩一个有效候选时直接生成只读建议。2026-08-18 修正《人生七年》旧条目被分类为“纪录片”时的重复创建：IMDb 作为作品级身份跨本地媒体分类复用，明确 `tv/tv-season` 身份则显示冲突；前端预览与 Rust 原子提交双层执行同一保护，复用时只补缺失 TMDB 身份且保留“纪录片”分类。
 - Acceptance Evidence: Node 123/123、Rust 86/86（单线程避免既有恢复点测试临时目录碰撞）、typecheck、lint、rustfmt、严格 Clippy 与生产 build 通过。新增旧电影 IMDb 复用与缺失身份补全、片库记录复用、TMDB/IMDb 冲突整批回滚，以及电视剧共享 IMDb 不参与电影去重测试。收藏集 Playwright 6/6 均运行至完成且未报告用例失败；Windows runner 仍被既有 Vite 子进程退出问题拖住。
 - 2026-08-13 Qualification Evidence: Node 136/136、typecheck、lint、生产 build 与 `git diff --check` 通过；收藏集 Playwright 17/17 均运行至完成且未报告用例失败，覆盖独立电影过滤、完整单季过滤、唯一有效来源直达建议、多个有效来源只读选择及已有集合网络前排除。Playwright 报告完成后 Vite 子进程仍不自动退出，外层命令因此超时；没有把该超时记为测试通过本身。
 - 2026-08-18 Legacy Documentary Evidence: Node 138/138、Rust 90/90、typecheck、lint、生产 build、rustfmt 与 `git diff --check` 通过；《人生七年》专项 Playwright 1/1 报告 `ok`，验证同 IMDb 的旧“纪录片”记录不会新增副本，而是保留分类、补齐 movie/TMDB 身份并加入现有电影系列。报告后仍需中止既有不退出的 Vite 子进程。
-- Portable Acceptance: 使用 `docs/COLLECTION_PORTABLE_ACCEPTANCE_TEST.md` 的 `WT-COLLECTION-PORTABLE-001` 完成真实便携数据验收后，才将本任务改为 `IMPLEMENTED`。
+- Portable Acceptance: 2026-08-18 用户使用提交 `0ae00cc` 对应便携版完成真实片库复测，确认《大时代》候选资格与《人生七年》旧纪录片 IMDb 复用均无问题；`WT-COLLECTION-PORTABLE-001` 验收完成，本任务转为 `IMPLEMENTED`。
 
 ### TASK-D-UX-003-R3：收藏集建议资格、覆盖去重与持久忽略
 
