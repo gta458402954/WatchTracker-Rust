@@ -99,7 +99,9 @@ npm run build:portable
 
 该命令在存在未提交修改时会拒绝打包，并把当前 Git 短提交号注入应用顶部栏。这样可以直接从运行中的程序确认可执行文件对应的源码提交。普通开发验证仍可使用 `npm run tauri build`，但不得把它生成的文件当作正式便携版发布。
 
-成功后检查实际生成的文件，而不是依赖历史文件名：
+当前 `build:portable` 仍会随 Tauri 的 `targets: "all"` 继续尝试 MSI/NSIS。在受限本地构建环境中，Release `app.exe` 可能已经成功生成，但 WiX `light.exe` 因无法从该进程上下文访问 Windows Installer 的 ICE 校验而使整体命令返回失败。根因、验证证据和后续“便携构建只生成 EXE”方案见 [`docs/WINDOWS_BUNDLE_DIAGNOSTIC.md`](docs/WINDOWS_BUNDLE_DIAGNOSTIC.md)。不得把目标目录中较早生成的 MSI/NSIS 当成本次产物。
+
+完整安装包构建成功后检查实际生成的文件，而不是依赖历史文件名：
 
 ```text
 src-tauri/target/release/app.exe

@@ -1906,3 +1906,4 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 - Former Priority: R1
 - Evidence: `.github/workflows/ci.yml` 在普通 branch push 与 pull request 上运行 typecheck、lint、Node tests、前端 build、Playwright，以及 Windows `cargo fmt/clippy/test`；普通 push/PR 不执行 Windows Tauri bundle。只有推送 `v*` 标签并且前端、Playwright 与 Rust 门禁全部通过后，才构建 `app.exe`、MSI 和 NSIS setup，保留 Actions artifact，并自动创建带生成式 Release Notes 的 GitHub Release、上传三类发布文件。
 - Scope: 后续只维护 action/runtime 版本、缓存、最小权限、失败诊断、tag 发布和构建稳定性；新增门禁另开任务。发布资产只由 `v*` 标签触发，普通代码提交和 PR 不应产生安装包或 Release。
+- Local Bundle Diagnostic（2026-08-20）: 本地受限构建已确认在 Rust Release EXE 成功后，由 WiX `light.exe` 的 ICE01～ICE09 无法访问 Windows Installer 服务而失败；`msiserver` 注册与运行状态正常，相同 WiX 输入在非隔离权限下可成功链接，因此不是源码或 MSI 模板损坏。后续维护项为让 `build:portable` 只生成并校验单文件 EXE，MSI/NSIS 保持由 `v*` tag 的 GitHub Actions Windows Runner 构建。实施前不得把旧安装包误认作当次产物，也不得以跳过 ICE 校验代替正确构建权限。完整记录：`docs/WINDOWS_BUNDLE_DIAGNOSTIC.md`。
