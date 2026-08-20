@@ -6,9 +6,11 @@
   "author": "Mark",
   "type": "module",
   "scripts": {
+    "contracts:generate": "node scripts/generate-contracts.mjs",
+    "contracts:check": "node scripts/generate-contracts.mjs --check",
     "dev": "vite",
     "typecheck": "tsc -b --noEmit",
-    "test": "node --test \"src/shared/lib/__tests__/*.test.mjs\"",
+    "test": "npm run contracts:check && node --test \"src/shared/lib/__tests__/*.test.mjs\"",
     "test:e2e": "playwright test",
     "build": "tsc -b && vite build",
     "build:portable": "node scripts/build-portable.mjs",

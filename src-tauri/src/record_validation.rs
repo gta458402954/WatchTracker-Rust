@@ -1,9 +1,7 @@
 use crate::error::AppError;
-use crate::models::{Patch, UpdateWatchRecord, WatchRecord};
+use crate::models::{Patch, UpdateWatchRecord, WatchRecord, MEDIA_TYPE_VALUES};
 use chrono::Utc;
 use std::collections::HashSet;
-
-const MEDIA_TYPES: [&str; 5] = ["电影", "剧集", "纪录片", "综艺", "动画"];
 
 #[derive(Clone, Copy)]
 pub enum RecordWriteContext {
@@ -182,13 +180,13 @@ pub fn prepare_record(
             if record.original_name.is_empty() && record.chinese_name.is_empty() {
                 return Err(invalid("name", "at least one title is required"));
             }
-            if !MEDIA_TYPES.contains(&record.media_type.as_str()) {
+            if !MEDIA_TYPE_VALUES.contains(&record.media_type.as_str()) {
                 return Err(invalid("mediaType", "unsupported value"));
             }
             validate_record_numbers(&record)?;
         }
         RecordWriteContext::ImportOrSync => {
-            if !MEDIA_TYPES.contains(&record.media_type.as_str()) {
+            if !MEDIA_TYPE_VALUES.contains(&record.media_type.as_str()) {
                 record.media_type = "电影".to_string();
             }
             normalize_legacy_numbers(&mut record);
@@ -226,7 +224,7 @@ pub fn prepare_update(mut updates: UpdateWatchRecord) -> Result<UpdateWatchRecor
     }
     if let Some(value) = &mut updates.media_type {
         *value = value.trim().to_string();
-        if !MEDIA_TYPES.contains(&value.as_str()) {
+        if !MEDIA_TYPE_VALUES.contains(&value.as_str()) {
             return Err(invalid("mediaType", "unsupported value"));
         }
     }

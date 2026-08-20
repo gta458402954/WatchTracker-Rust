@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3` 与 `TASK-D-UX-004` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3`、`TASK-D-UX-004` 与 `TASK-D-ARCH-001` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1836,12 +1836,16 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-ARCH-001：跨语言类型生成
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: COMPLETED
+- Owner: Codex
+- Status: IMPLEMENTED
 - Priority: R2
 - Scope: 选择 Rust 或独立 schema 作为单一事实源，生成 TypeScript/DTO/字段白名单并在 CI 检查漂移。
 - Current Basis: 当前 Rust DTO、TypeScript 类型、SQL 列和更新映射由多处手工维护。
+- Approved Design: `docs/CROSS_LANGUAGE_CONTRACTS_DESIGN.md`。
+- Implementation: 以 `contracts/watch-record.schema.json` 作为记录 IPC 契约的唯一手写来源，通过零新增依赖的 Node 脚本生成 TypeScript 与 Rust 的 `WatchRecord`、`UpdateWatchRecord`、枚举值域和更新字段清单；Rust 保留既有 `Patch<T>` 三态语义。`npm test` 前置执行只读漂移检查，并核对契约可更新字段与原子 SQL 更新映射。
+- Data Boundary: 数据库保持 V18；不修改 Tauri 命令、JSON 字段名、SQL schema、同步 payload 或业务校验。收藏集、逐集历史及同步 envelope 留待各领域发生结构变化时分批迁移。
+- Acceptance Evidence: 契约漂移检查通过；Node 142/142、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过。
 
 ### TASK-D-ARCH-002：同步模块和大型组件拆分
 

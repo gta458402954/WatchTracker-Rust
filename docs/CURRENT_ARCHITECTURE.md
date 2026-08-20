@@ -115,7 +115,7 @@ R2 发现链路将本地父剧与收藏集统一为 `tmdb:tv-show:<id>`，完整
 
 这些能力保留在路线图中，应从已验证不变量和测试逐项重新实现，不应整体复制历史故障快照。
 
-路线图已按领域拆分，不再使用旧的 `TASK-D-R0`~`TASK-D-R3` 优先级大包。同步相关能力分别由 `TASK-D-SYNC-001`（冲突/版本/条件提交）、`TASK-D-SYNC-002`（持久化 outbox/主动拉取）和 `TASK-D-SYNC-003`（目标隔离）跟踪；状态层模块拆分属于独立的 `TASK-D-ARCH-002`，不默认要求引入 Zustand。
+路线图已按领域拆分，不再使用旧的 `TASK-D-R0`~`TASK-D-R3` 优先级大包。同步相关能力分别由 `TASK-D-SYNC-001`（冲突/版本/条件提交）、`TASK-D-SYNC-002`（持久化 outbox/主动拉取）和 `TASK-D-SYNC-003`（目标隔离）跟踪；状态层模块拆分属于独立的 `TASK-D-ARCH-002`，不默认要求引入 Zustand。`TASK-D-ARCH-001` 已以独立 schema 生成 Rust/TypeScript 核心记录 DTO、枚举和值域，并在 Node 门禁中检查生成文件与原子更新字段映射漂移。
 
 `TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003` 与同步修订 `TASK-D-SYNC-001-R2` 已经实现。同步使用独立 `records-v3.json` 和 ETag 条件提交（强 ETag 走 HTTP `If-Match`，弱 ETag 走 WebDAV `If`）：不同字段按本地共同基线三方合并，同字段、删除/编辑和锁定差异进入持久冲突中心；Rust 以 `expectedGeneration` 和单事务 SyncCommit 防止网络等待期间的新本地修改被覆盖。所有本地业务写入同时提升当前目标的持久 outbox，并维护按 ID 合并的版本暂存；PUT 前写入可恢复发布意图。自动协调器在启动、聚焦、网络恢复和周期到期时始终先拉取，再合并并按需上传；本地提交只写变化的记录。
 

@@ -1,4 +1,4 @@
-import type { MediaType, WatchRecord } from '../types';
+import { MEDIA_TYPE_VALUES, type MediaType, type WatchRecord } from '../types/watchRecord.generated.ts';
 import {
   type CountryCode,
   PREFERRED_COUNTRY_CODES,
@@ -7,7 +7,7 @@ import {
   countryLabelOf,
 } from './countryNames.ts';
 
-export const MEDIA_TYPES: readonly MediaType[] = ['电影', '剧集', '纪录片', '综艺', '动画'];
+export const MEDIA_TYPES: readonly MediaType[] = MEDIA_TYPE_VALUES;
 
 export const REGION_TAGS = ['美国', '韩国', '日本', '英国', '中国大陆', '中国香港', '中国台湾'] as const;
 export type RegionTag = (typeof REGION_TAGS)[number];
