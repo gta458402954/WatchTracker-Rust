@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import { WatchRecord, Status, MediaType, type CollectionDraft, type CollectionMember, type WatchCollection } from '../../../shared/types';
 import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
-import { downloadPosterAsync, getTmdbCredentialStatus, searchTmdbAsync, getTmdbDetailAsync } from '../../../shared/lib/database';
+import { downloadPosterAsync, getTmdbCredentialStatus, searchTmdbAsync, getTmdbDetailAsync, getTmdbSeasonDetailAsync } from '../../../shared/lib/database';
 import {
   classifyTmdb,
   inferPlatformFromTmdb,
@@ -13,7 +13,7 @@ import {
 } from '../../../shared/lib/classification';
 import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '../../../shared/lib/feedback';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
-import { seasonRecordMetadata } from '../../collections/lib/tmdbRecordMapping';
+import { seasonRecordMetadata, tmdbOriginalLanguageLocale } from '../../collections/lib/tmdbRecordMapping';
 import SafePosterImage from './SafePosterImage';
 
 interface RecordFormProps {
@@ -204,6 +204,14 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
       if (isSeason || isEpisode) {
         const targetSeason = detail.seasons?.find((s: TmdbSeason) => s.season_number === item.season_number) || item;
+        const originalSeasonResult = targetSeason.season_number == null
+          ? null
+          : await getTmdbSeasonDetailAsync({
+              seriesId: fetchId,
+              seasonNumber: targetSeason.season_number,
+              language: tmdbOriginalLanguageLocale(detail.original_language),
+            });
+        const originalSeason = originalSeasonResult?.success ? originalSeasonResult.data : undefined;
         const poster = targetSeason.poster_path || detail.poster_path || null;
 
         if (poster) downloadPosterInBackground(poster);
@@ -211,7 +219,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
         const query = form.imdbId || form.chineseName || form.originalName || '';
 
         const updates: Partial<typeof form> = {
-          ...seasonRecordMetadata({ ...detail, id: detail.id ?? fetchId }, targetSeason, form),
+          ...seasonRecordMetadata({ ...detail, id: detail.id ?? fetchId }, targetSeason, form, originalSeason),
           imdbId: query.startsWith('tt') ? query : (detail.external_ids?.imdb_id || detail.imdb_id || form.imdbId),
           tmdbParentId: fetchId,
         };
@@ -301,6 +309,15 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
   async function handleSelectSeason(season: TmdbSeason) {
     if (!selectedSeries) return;
 
+    const originalSeasonResult = selectedSeries.id == null || season.season_number == null
+      ? null
+      : await getTmdbSeasonDetailAsync({
+          seriesId: selectedSeries.id,
+          seasonNumber: season.season_number,
+          language: tmdbOriginalLanguageLocale(selectedSeries.original_language),
+        });
+    const originalSeason = originalSeasonResult?.success ? originalSeasonResult.data : undefined;
+
     const poster = season.poster_path || selectedSeries.poster_path || null;
 
     // 触发后台下载海报
@@ -308,7 +325,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
     setForm(prev => ({
       ...prev,
-      ...seasonRecordMetadata(selectedSeries, season, prev),
+      ...seasonRecordMetadata(selectedSeries, season, prev, originalSeason),
     }));
     setShowResults(false);
     setSeasons([]);

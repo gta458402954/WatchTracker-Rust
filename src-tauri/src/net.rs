@@ -342,6 +342,57 @@ pub async fn get_tmdb_detail(
     Ok(json)
 }
 
+pub async fn get_tmdb_season_detail(
+    api_key: String,
+    series_id: i32,
+    season_number: i32,
+    language: String,
+    proxy: Option<String>,
+) -> Result<Value, String> {
+    if series_id <= 0 || season_number < 0 {
+        return Err("Invalid TMDB TV season identity".to_string());
+    }
+    log::info!(
+        "[TMDB] Fetching TV season detail for series {} season {}",
+        series_id,
+        season_number
+    );
+
+    let builder = client_builder(proxy, Duration::from_secs(30))?;
+    let client = builder.build().map_err(|e| e.to_string())?;
+    let is_jwt = api_key.contains('.') || api_key.len() > 40;
+    let url = if is_jwt {
+        format!(
+            "https://api.themoviedb.org/3/tv/{}/season/{}?language={}",
+            series_id, season_number, language
+        )
+    } else {
+        format!(
+            "https://api.themoviedb.org/3/tv/{}/season/{}?api_key={}&language={}",
+            series_id, season_number, api_key, language
+        )
+    };
+
+    let mut req = client.get(&url).header("accept", "application/json");
+    if is_jwt {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+    let res = req.send().await.map_err(|e| {
+        log::error!("[TMDB] TV season detail network error: {}", e);
+        e.to_string()
+    })?;
+    let status = res.status();
+    let json = json_response(res, TMDB_JSON_MAX_BYTES, "tmdb_response_too_large", true).await?;
+    if !status.is_success() {
+        let message = json
+            .get("status_message")
+            .and_then(Value::as_str)
+            .unwrap_or("Unknown API error");
+        return Err(format!("TMDB API Error ({}): {}", status, message));
+    }
+    Ok(json)
+}
+
 pub async fn download_poster(
     paths: &AppPaths,
     state: &PosterDownloadState,

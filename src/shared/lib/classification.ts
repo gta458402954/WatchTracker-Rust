@@ -37,6 +37,7 @@ export interface TmdbMedia {
   name?: string;
   original_title?: string;
   original_name?: string;
+  original_language?: string;
   release_date?: string;
   first_air_date?: string;
   imdb_id?: string;
@@ -221,12 +222,15 @@ export function classifyTmdb(
     .filter((label, index) => label !== countryCodes[index]);
   const genreNames = detail.genres?.map(genre => genre.name?.trim()).filter((name): name is string => Boolean(name)) ?? [];
   const isDocumentary = genreNames.some(name => name === 'Documentary' || name === '纪录片');
+  const isReality = genreNames.some(name => name === 'Reality' || name === '真人秀');
 
   let mediaType: MediaType;
   if (isDocumentary) {
     mediaType = '纪录片';
   } else if (preferredType && SPECIAL_MEDIA_TYPES.includes(preferredType)) {
     mediaType = preferredType;
+  } else if (isTV && isReality) {
+    mediaType = '综艺';
   } else {
     mediaType = isTV ? '剧集' : '电影';
   }

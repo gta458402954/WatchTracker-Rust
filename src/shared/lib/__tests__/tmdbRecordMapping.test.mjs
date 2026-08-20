@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { movieRecordMetadata, seasonRecordMetadata } from '../../../features/collections/lib/tmdbRecordMapping.ts';
+import { movieRecordMetadata, seasonRecordMetadata, tmdbOriginalLanguageLocale } from '../../../features/collections/lib/tmdbRecordMapping.ts';
 
 const blackMirror = {
   id: 42009,
@@ -28,6 +28,41 @@ test('missing-season creation inherits complete series metadata', () => {
   assert.equal(result.episodeRuntime, 60);
   assert.equal(result.tmdbParentId, 42009);
   assert.equal(result.tmdbSeasonNumber, 3);
+});
+
+test('Jet Lag reality seasons preserve their specific TMDB season title', () => {
+  const result = seasonRecordMetadata({
+    id: 258321,
+    name: 'Jet Lag: The Game',
+    original_name: 'Jet Lag: The Game',
+    original_language: 'en',
+    genres: [{ name: 'Reality' }],
+    origin_country: ['US'],
+  }, {
+    id: 383896,
+    season_number: 1,
+    name: '第 1 季',
+  }, undefined, {
+    id: 383896,
+    season_number: 1,
+    name: 'Connect 4 Across America',
+  });
+
+  assert.equal(result.mediaType, '综艺');
+  assert.equal(result.chineseName, 'Jet Lag: The Game：Connect 4 Across America');
+  assert.equal(result.originalName, 'Jet Lag: The Game: Connect 4 Across America');
+  assert.equal(tmdbOriginalLanguageLocale('en'), 'en-US');
+});
+
+test('generic TMDB season names keep the established numbered-title fallback', () => {
+  const result = seasonRecordMetadata(blackMirror, {
+    id: 63871, season_number: 3, name: '第 3 季',
+  }, undefined, {
+    id: 63871, season_number: 3, name: 'Season 3',
+  });
+
+  assert.equal(result.chineseName, '黑镜 第 3 季');
+  assert.equal(result.originalName, 'Black Mirror Season 3');
 });
 
 test('metadata completion does not replace existing manually maintained fields', () => {

@@ -123,6 +123,20 @@ describe('region source priority and display (FR-02)', () => {
     assert.equal(countryLabelOf('XX'), 'XX');
   });
 
+  test('TMDB reality television is classified as variety content', () => {
+    const result = classifyTmdb({
+      origin_country: ['US'],
+      genres: [{ name: 'Reality' }],
+    }, true, '剧集');
+
+    assert.equal(result.mediaType, '综艺');
+  });
+
+  test('an explicitly maintained special type is not silently replaced by reality classification', () => {
+    const result = classifyTmdb({ genres: [{ name: 'Reality' }] }, true, '动画');
+    assert.equal(result.mediaType, '动画');
+  });
+
   test('displays BY as Belarus in Chinese', () => {
     assert.deepEqual(regionCodesOf({ originCountry: 'BY', contentTags: null }), ['BY']);
     assert.equal(countryLabelOf('BY'), '白俄罗斯');

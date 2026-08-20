@@ -714,6 +714,30 @@ pub async fn get_tmdb_detail(
 }
 
 #[tauri::command]
+pub async fn get_tmdb_season_detail(
+    state: State<'_, DbState>,
+    series_id: i32,
+    season_number: i32,
+    language: Option<String>,
+    proxy: Option<String>,
+) -> Result<Value, crate::error::AppError> {
+    let api_key = {
+        let conn = lock_database(state.inner())?;
+        tmdb_secret(&conn)?
+            .ok_or_else(|| crate::error::AppError::General("credential_missing".into()))?
+    };
+    net::get_tmdb_season_detail(
+        api_key.to_string(),
+        series_id,
+        season_number,
+        language.unwrap_or("en-US".to_string()),
+        proxy,
+    )
+    .await
+    .map_err(crate::error::AppError::General)
+}
+
+#[tauri::command]
 pub async fn download_poster(
     state: State<'_, DbState>,
     paths: State<'_, AppPaths>,

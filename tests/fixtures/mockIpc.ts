@@ -15,6 +15,7 @@ export interface MockIpcOptions {
   tmdbSearchResults?: TmdbMedia[];
   tmdbDetail?: TmdbMedia;
   tmdbDetails?: Record<string, TmdbMedia>;
+  tmdbSeasonDetails?: Record<string, TmdbMedia>;
   tmdbDelayMs?: number;
   updateFailureCounts?: Record<string, number>;
   webdavRemote?: unknown;
@@ -60,7 +61,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -833,6 +834,10 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               requireKeys(command, args, ['id', 'language', 'mediaType', 'proxy']);
               if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
               return structuredClone(tmdbDetails[`${args.mediaType}:${args.id}`] ?? tmdbDetail);
+            case 'get_tmdb_season_detail':
+              requireKeys(command, args, ['language', 'proxy', 'seasonNumber', 'seriesId']);
+              if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
+              return structuredClone(tmdbSeasonDetails[`${args.seriesId}:${args.seasonNumber}:${args.language}`] ?? {});
             case 'download_poster':
               requireKeys(command, args, ['path', 'proxy', 'size']);
               return { status: 'downloaded', fileName: `${args.size === 'w92' ? 'w92_' : ''}${String(args.path).replace(/^\//, '')}` };
@@ -906,6 +911,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       tmdbSearchResults: options.tmdbSearchResults ?? [],
       tmdbDetail: options.tmdbDetail ?? {},
       tmdbDetails: options.tmdbDetails ?? {},
+      tmdbSeasonDetails: options.tmdbSeasonDetails ?? {},
       tmdbDelayMs: options.tmdbDelayMs ?? 0,
       updateFailureCounts: options.updateFailureCounts ?? {},
       webdavRemote: options.webdavRemote ?? [],

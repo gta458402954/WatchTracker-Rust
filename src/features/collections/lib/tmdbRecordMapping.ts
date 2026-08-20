@@ -12,10 +12,34 @@ function missingText(value: string | null | undefined): boolean {
   return !value?.trim();
 }
 
+function genericSeasonName(value: string | null | undefined, seasonNumber: number): boolean {
+  const normalized = value?.trim().replace(/\s+/g, ' ') ?? '';
+  if (!normalized) return true;
+  return new RegExp(`^(?:Season\\s*${seasonNumber}|第\\s*${seasonNumber}\\s*(?:季)?)$`, 'i').test(normalized);
+}
+
+function appendSpecificSeasonTitle(seriesName: string, seasonName: string, separator: string): string {
+  const normalizedSeries = seriesName.trim();
+  const normalizedSeason = seasonName.trim();
+  if (!normalizedSeries || normalizedSeason.toLocaleLowerCase().startsWith(normalizedSeries.toLocaleLowerCase())) {
+    return normalizedSeason || normalizedSeries;
+  }
+  return `${normalizedSeries}${separator}${normalizedSeason}`;
+}
+
+export function tmdbOriginalLanguageLocale(originalLanguage?: string | null): string {
+  const locales: Record<string, string> = {
+    de: 'de-DE', en: 'en-US', es: 'es-ES', fr: 'fr-FR', hi: 'hi-IN', it: 'it-IT',
+    ja: 'ja-JP', ko: 'ko-KR', pt: 'pt-BR', ru: 'ru-RU', th: 'th-TH', zh: 'zh-CN',
+  };
+  return locales[originalLanguage?.trim().toLocaleLowerCase() ?? ''] ?? 'en-US';
+}
+
 export function seasonRecordMetadata(
   series: TmdbMedia,
   season: TmdbSeason,
   existing?: Partial<WatchRecord>,
+  originalSeason?: TmdbSeason,
 ): Partial<WatchRecord> {
   const seriesName = series.name || series.title || existing?.chineseName || '';
   const originalName = series.original_name || series.original_title || seriesName;
@@ -25,9 +49,19 @@ export function seasonRecordMetadata(
     series.networks?.[0]?.name || series.production_companies?.[0]?.name,
   );
   const runtime = positiveEpisodeRuntimeOf(series);
+  const seasonNumber = season.season_number ?? originalSeason?.season_number ?? 0;
+  const localizedSeasonName = season.name?.trim() ?? '';
+  const originalSeasonName = originalSeason?.name?.trim() ?? '';
+  const specificLocalizedName = !genericSeasonName(localizedSeasonName, seasonNumber) ? localizedSeasonName : '';
+  const specificOriginalName = !genericSeasonName(originalSeasonName, seasonNumber) ? originalSeasonName : '';
+  const bestLocalizedSeasonName = specificLocalizedName || specificOriginalName;
   const next: Partial<WatchRecord> = {
-    chineseName: `${seriesName} ${season.name || `第 ${season.season_number} 季`}`.trim(),
-    originalName: `${originalName} Season ${season.season_number}`.trim(),
+    chineseName: bestLocalizedSeasonName
+      ? appendSpecificSeasonTitle(seriesName, bestLocalizedSeasonName, '：')
+      : `${seriesName} 第 ${seasonNumber} 季`.trim(),
+    originalName: specificOriginalName
+      ? appendSpecificSeasonTitle(originalName, specificOriginalName, ': ')
+      : `${originalName} Season ${seasonNumber}`.trim(),
     releaseYear: season.air_date?.slice(0, 4) || null,
     posterPath: season.poster_path || series.poster_path || null,
     totalEpisodes: season.episode_count || null,
@@ -38,7 +72,7 @@ export function seasonRecordMetadata(
     tmdbMediaKind: 'tv-season',
     tmdbId: season.id ?? null,
     tmdbParentId: series.id ?? null,
-    tmdbSeasonNumber: season.season_number ?? null,
+    tmdbSeasonNumber: seasonNumber || null,
     seriesRecordKind: 'season',
   };
   if (missingText(existing?.genres) && classification.genres) next.genres = classification.genres;

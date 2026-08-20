@@ -357,3 +357,18 @@ export async function getTmdbDetailAsync(args: TmdbRequest & { id: number; media
     return { success: false, error: errorMessage(error) };
   }
 }
+
+export async function getTmdbSeasonDetailAsync(args: TmdbRequest & { seriesId: number; seasonNumber: number }): Promise<TmdbSearchResponse> {
+  try {
+    const proxy = await getSettingAsync('network_proxy');
+    const data = await invoke<TmdbMedia>('get_tmdb_season_detail', {
+      seriesId: args.seriesId,
+      seasonNumber: args.seasonNumber,
+      language: args.language,
+      proxy,
+    });
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: errorMessage(error) };
+  }
+}

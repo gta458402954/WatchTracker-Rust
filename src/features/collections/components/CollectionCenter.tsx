@@ -3,11 +3,11 @@ import type { CollectionMember, WatchCollection, WatchRecord } from '../../../sh
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import SafePosterImage from '../../watchlist/components/SafePosterImage';
-import { getSettingAsync, getTmdbDetailAsync, searchTmdbAsync, setSettingAsync, type CompleteMovieCollectionInput, type CompleteMovieCollectionResult } from '../../../shared/lib/database';
+import { getSettingAsync, getTmdbDetailAsync, getTmdbSeasonDetailAsync, searchTmdbAsync, setSettingAsync, type CompleteMovieCollectionInput, type CompleteMovieCollectionResult } from '../../../shared/lib/database';
 import type { TmdbMedia, TmdbSeason } from '../../../shared/lib/classification';
 import { getEmptyRecord } from '../../../shared/lib/constants';
 import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, readIdentityCache, seasonNumberOf, seriesBaseName, tvSourceKey, writeIdentityCache } from '../lib/seriesDiscovery';
-import { movieRecordMetadata, seasonRecordMetadata } from '../lib/tmdbRecordMapping';
+import { movieRecordMetadata, seasonRecordMetadata, tmdbOriginalLanguageLocale } from '../lib/tmdbRecordMapping';
 import { classifyMovieCollectionPart, type MovieCollectionCandidate } from '../lib/movieCollectionIdentity';
 import {
   collectionCandidateDescription,
@@ -600,15 +600,30 @@ export default function CollectionCenter(props: Props) {
   async function createSelectedSeasons() {
     if (!selected || !seasonDetail?.seasons || selectedSeasonNumbers.size === 0) return;
     const now = new Date().toISOString();
-    const recordsToCreate = seasonDetail.seasons.filter(season => selectedSeasonNumbers.has(season.season_number ?? -1)).map(season => ({
-      ...getEmptyRecord(),
-      ...seasonRecordMetadata(seasonDetail, season),
-      id: crypto.randomUUID(),
-      createdAt: now,
-      updatedAt: now,
-    }));
     setBusy(true);
     try {
+      const selectedSeasons = seasonDetail.seasons.filter(season => selectedSeasonNumbers.has(season.season_number ?? -1));
+      const originalDetails = new Map<number, TmdbSeason>();
+      const locale = tmdbOriginalLanguageLocale(seasonDetail.original_language);
+      for (let offset = 0; offset < selectedSeasons.length; offset += 4) {
+        const batch = selectedSeasons.slice(offset, offset + 4);
+        await Promise.all(batch.map(async season => {
+          const number = season.season_number;
+          if (number == null || seasonDetail.id == null) return;
+          const cacheKey = `tv-season-detail:${seasonDetail.id}:${number}:${locale}`;
+          const cached = readIdentityCache<Awaited<ReturnType<typeof getTmdbSeasonDetailAsync>>>(cacheKey);
+          const result = cached ?? await getTmdbSeasonDetailAsync({ seriesId: seasonDetail.id, seasonNumber: number, language: locale });
+          if (!cached && result.success && result.data) writeIdentityCache(cacheKey, result, true, undefined, 30);
+          if (result.success && result.data) originalDetails.set(number, result.data);
+        }));
+      }
+      const recordsToCreate = selectedSeasons.map(season => ({
+        ...getEmptyRecord(),
+        ...seasonRecordMetadata(seasonDetail, season, undefined, originalDetails.get(season.season_number ?? -1)),
+        id: crypto.randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      }));
       await props.onCreateMissingSeasons(selected, recordsToCreate);
       setSeasonDetail(null);
       onNotify('success', `已补充 ${recordsToCreate.length} 个缺少的季，已有条目未被覆盖。`);

@@ -176,6 +176,7 @@ pub fn run() {
             commands::clear_tmdb_credential,
             commands::search_tmdb,
             commands::get_tmdb_detail,
+            commands::get_tmdb_season_detail,
             commands::download_poster,
             commands::get_poster_cache_stats,
             commands::clean_poster_cache,
