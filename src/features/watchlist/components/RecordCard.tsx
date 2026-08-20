@@ -264,15 +264,27 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
         )}
 
         {episodeOptions.length > 0 && isCompleted ? (
-          <span className={`text-xs px-2 py-0.5 rounded-full border ${inconsistentCompletedTracking ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-            {!record.episodeTrackingEnabled
-              ? '已完成 · 无逐集历史'
-              : inconsistentCompletedTracking
+          record.episodeTrackingEnabled ? (
+            <button
+              type="button"
+              aria-label={historyExpanded ? '收起逐集完成历史' : '查看逐集完成历史'}
+              aria-expanded={historyExpanded}
+              onClick={() => void toggleHistory()}
+              className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${inconsistentCompletedTracking ? 'border-red-100 bg-red-50 text-red-600 hover:bg-red-100' : 'border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}
+            >
+              {inconsistentCompletedTracking
                 ? '已完成 · 状态与逐集进度不一致'
-                : history === null
-                  ? '已完成 · 正在读取逐集历史'
-                  : `已完成 · 已记录 ${history.length} 集历史`}
-          </span>
+                : historyLoading
+                  ? '已完成 · 读取历史…'
+                  : history === null
+                    ? '已完成 · 逐集历史'
+                    : `已完成 · 已记录 ${history.length} 集历史`}
+            </button>
+          ) : (
+            <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-600">
+              已完成 · 无逐集历史
+            </span>
+          )
         ) : episodeOptions.length > 0 ? (
           <select
             aria-label={`${displayTitles.primary} 下一集`}
@@ -301,6 +313,17 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
             {progressDisplay}
           </span>
         )}
+        {record.episodeTrackingEnabled && !isCompleted && (
+          <button
+            type="button"
+            aria-label={historyExpanded ? '收起逐集完成历史' : '查看逐集完成历史'}
+            aria-expanded={historyExpanded}
+            onClick={() => void toggleHistory()}
+            className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600 transition-colors hover:bg-indigo-100"
+          >
+            {historyLoading ? '读取历史…' : historyExpanded ? '收起历史' : '历史'}
+          </button>
+        )}
         {record.platform && !isFilmLike && (
           <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-full">
             {record.platform}
@@ -308,7 +331,7 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
         )}
       </div>
 
-      {record.episodeTrackingEnabled && (
+      {record.episodeTrackingEnabled && (newlyAvailableEpisodes > 0 || historyExpanded || historyError) && (
         <div className="border-t border-gray-100 pt-2">
           {newlyAvailableEpisodes > 0 && (
             <div className="mb-2 flex items-center gap-2 text-[11px] text-orange-600">
@@ -323,10 +346,10 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
               </button>
             </div>
           )}
-          <button type="button" onClick={() => void toggleHistory()} className="text-[11px] font-semibold text-indigo-600 hover:underline">
-            {historyLoading ? '读取历史…' : historyExpanded ? '收起逐集完成历史' : '查看逐集完成历史'}
-          </button>
           {historyError && <p className="mt-1 text-[10px] text-red-500">逐集历史读取失败，请稍后重试。</p>}
+          {historyExpanded && historyLoading && history === null && (
+            <p className="text-[10px] text-gray-400">正在读取逐集完成历史…</p>
+          )}
           {historyExpanded && history !== null && (
             <div className="mt-2 max-h-28 space-y-1 overflow-y-auto rounded-xl bg-gray-50 p-2 text-[10px] text-gray-600">
               {history.length === 0 ? <p>尚无已完成集数。</p> : history.map(item => (
@@ -337,8 +360,13 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
         </div>
       )}
 
+      {/* Notes */}
+      {record.notes && (
+        <p className="line-clamp-2 border-t pt-2 text-xs text-gray-500">{record.notes}</p>
+      )}
+
       {/* Rating */}
-      <div className="flex items-center justify-between text-sm select-none">
+      <div className="mt-auto flex items-center justify-between text-sm select-none">
         <div className="flex items-center gap-1 font-medium">
           {record.rating !== null ? (
             <>
@@ -355,11 +383,6 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
           {record.endDate && <span>⏹ {record.endDate}</span>}
         </div>
       </div>
-
-      {/* Notes */}
-      {record.notes && (
-        <p className="text-xs text-gray-500 border-t pt-2 mt-1 line-clamp-2">{record.notes}</p>
-      )}
     </div>
   );
 }
