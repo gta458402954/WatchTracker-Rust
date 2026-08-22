@@ -1849,12 +1849,15 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-ARCH-002：同步模块和大型组件拆分
 
-- Phase: DEFERRED
-- Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Phase: IMPLEMENTATION
+- Owner: Codex
+- Status: IN_PROGRESS
 - Priority: R2
 - Scope: 分离同步领域、存储、传输和应用服务，并拆分 RecordForm/SettingsModal；先锁定行为测试再做结构迁移。
 - Current Basis: `webdav.ts` 与大型表单组件职责密集，但当前 `useWatchList` 是稳定主链路，Zustand 不作为默认目标。
+- Approved Design: `docs/SYNC_COMPONENT_MODULARIZATION_DESIGN.md`。用户于 2026-08-22 确认按四批迁移：行为基线与纯函数、WebDAV 传输与一次同步服务、自动协调器与记录仓储 hook、Settings/RecordForm UI 拆分。保持所有公共入口、V18、同步协议、IPC 和界面行为不变；下一步实施 Batch A。
+- Batch A: 已完成 ETag/payload/错误映射与 RecordForm 模型纯函数提取；PROPFIND 保留原生 DOMParser，组件保留函数式更新。验收为 Node 151/151、相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过。下一步为 Batch B，尚未开始。
+- Batch B: 已完成 WebDAV transport、凭据门面、条件验证基础设施、一次同步 service 和 legacy import service 拆分；`shared/lib/webdav.ts` 仅保留约 58 行兼容门面，旧动态导入路径与全部公共出口保持不变。验收为 Node 154/154、相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过，未连接真实 WebDAV。下一步为 Batch C，尚未开始。
 
 ### TASK-D-LINK-001：可播放来源与外部链接
 

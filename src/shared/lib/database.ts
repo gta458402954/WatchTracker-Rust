@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import { type CollectionMember, type CollectionMemberTombstone, type CollectionTombstone, type EpisodeCompletion, type WatchCollection, UpdateWatchRecord, WatchRecord } from '../types';
-import { errorMessage, TmdbMedia, TmdbSearchResponse } from './classification';
-import { assertValidUpdateNumbers } from './updateValidation';
+import type { CollectionMember, CollectionMemberTombstone, CollectionTombstone, EpisodeCompletion, WatchCollection, UpdateWatchRecord, WatchRecord } from '../types/index.ts';
+import { errorMessage, type TmdbMedia, type TmdbSearchResponse } from './classification.ts';
+import { assertValidUpdateNumbers } from './updateValidation.ts';
 import type { SyncConflictV3, SyncPayloadV3, SyncTombstoneV3 } from './syncMerge';
 
 export async function getAllRecordsAsync(): Promise<WatchRecord[]> {

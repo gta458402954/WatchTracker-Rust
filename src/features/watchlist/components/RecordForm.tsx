@@ -1,11 +1,10 @@
 import React, { useMemo, useState, useRef } from 'react';
 import { WatchRecord, Status, MediaType, type CollectionDraft, type CollectionMember, type WatchCollection } from '../../../shared/types';
-import { STATUSES, PLATFORMS, getEmptyRecord, parseTimeToSeconds, formatMovieTime } from '../../../shared/lib/constants';
+import { STATUSES, PLATFORMS } from '../../../shared/lib/constants';
 import { downloadPosterAsync, getTmdbCredentialStatus, searchTmdbAsync, getTmdbDetailAsync, getTmdbSeasonDetailAsync } from '../../../shared/lib/database';
 import {
   classifyTmdb,
   inferPlatformFromTmdb,
-  mediaTypeOf,
   mergeContentTags,
   positiveEpisodeRuntimeOf,
   TmdbMedia,
@@ -15,6 +14,14 @@ import { publicFailureMessage, reportOperationFailure, type NoticeTone } from '.
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import { seasonRecordMetadata, tmdbOriginalLanguageLocale } from '../../collections/lib/tmdbRecordMapping';
 import SafePosterImage from './SafePosterImage';
+import {
+  formatMovieTime,
+  initialRecordFormValues,
+  isAlwaysEpisodic,
+  mediaTypeChange,
+  parseTimeToSeconds,
+  smartProgress,
+} from '../record-form/recordFormModel';
 
 interface RecordFormProps {
   record?: WatchRecord | null;
@@ -24,38 +31,6 @@ interface RecordFormProps {
   onNotify?: (tone: NoticeTone, message: string) => void;
   collections?: WatchCollection[];
   collectionMembers?: CollectionMember[];
-}
-
-const isAlwaysEpisodic = (mediaType: MediaType | null | undefined) => mediaType === '剧集' || mediaType === '综艺';
-
-function smartProgress(raw: string): string {
-  if (!raw) return '';
-  const t = raw.trim();
-  if (!t) return '';
-
-  // 完 / w / 0 → 完结
-  if (['完', 'wan', 'w'].includes(t.toLowerCase())) return '完结';
-  if (t === '在看') return '在看';
-  if (t === '0') return '完结';
-
-  // S01 / S1E02 等季+集格式直接保留
-  if (/^S\d+E\d+$/i.test(t)) return t.toUpperCase();
-  // S01 / S1 季格式
-  if (/^S\d+$/i.test(t)) return t.toUpperCase();
-  // E05 / E5 集格式
-  if (/^E\d+$/i.test(t)) return t.toUpperCase();
-
-  // 纯数字 → 第X集
-  if (/^\d+$/.test(t)) return `第${parseInt(t, 10)}集`;
-
-  // 第X集 / X集
-  if (/^第?\d+集?$/.test(t)) {
-    const num = t.match(/\d+/)?.[0];
-    return num ? `第${num}集` : t;
-  }
-
-  // 已经包含了第/完/在看，直接返回
-  return t;
 }
 
 export default function RecordForm({ record, onSave, onDelete, onClose, onNotify, collections = [], collectionMembers = [] }: RecordFormProps) {
@@ -68,40 +43,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
   const [creatingCollection, setCreatingCollection] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [draftKind, setDraftKind] = useState<WatchCollection['collectionKind']>('manual');
-  const [form, setForm] = useState<Omit<WatchRecord, 'id' | 'createdAt'>>(
-    record
-      ? {
-          originalName: record.originalName,
-          chineseName: record.chineseName,
-          progress: record.progress,
-          totalEpisodes: record.totalEpisodes,
-          movieProgress: record.movieProgress,
-          movieDuration: record.movieDuration,
-          releaseYear: record.releaseYear,
-          posterPath: record.posterPath,
-          status: record.status,
-          platform: record.platform,
-          rating: record.rating,
-          startDate: record.startDate,
-          endDate: record.endDate,
-          notes: record.notes,
-          imdbId: record.imdbId || null,
-          genres: record.genres || null,
-          originCountry: record.originCountry || null,
-          imdbRating: record.imdbRating || null,
-          tmdbStatus: record.tmdbStatus || null,
-          interestLevel: record.interestLevel || null,
-          episodeRuntime: record.episodeRuntime || null,
-          mediaType: mediaTypeOf(record),
-          contentTags: record.contentTags || null,
-          tmdbMediaKind: record.tmdbMediaKind || null,
-          tmdbId: record.tmdbId ?? null,
-          tmdbParentId: record.tmdbParentId ?? null,
-          tmdbSeasonNumber: record.tmdbSeasonNumber ?? null,
-          seriesRecordKind: record.seriesRecordKind || null,
-        }
-      : getEmptyRecord()
-  );
+  const [form, setForm] = useState<Omit<WatchRecord, 'id' | 'createdAt'>>(() => initialRecordFormValues(record));
 
   // 电影时间输入状态（秒）
   const [movieProgressStr, setMovieProgressStr] = useState(() => record?.movieProgress != null ? formatMovieTime(record.movieProgress) : '');
@@ -342,13 +284,7 @@ export default function RecordForm({ record, onSave, onDelete, onClose, onNotify
 
   function handleMediaTypeChange(mediaType: MediaType) {
     const episodic = isAlwaysEpisodic(mediaType) || (mediaType !== '电影' && isEpisodic);
-    setForm(prev => ({
-      ...prev,
-      mediaType,
-      ...(episodic
-        ? { movieProgress: null, movieDuration: null }
-        : { progress: '', totalEpisodes: null }),
-    }));
+    setForm(prev => mediaTypeChange(prev, mediaType).form);
     if (episodic) {
       setMovieProgressStr('');
       setMovieDurationStr('');

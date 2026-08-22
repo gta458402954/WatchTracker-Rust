@@ -1,4 +1,4 @@
-import { Status, WatchRecord } from '../types';
+import type { Status, WatchRecord } from '../types/index.ts';
 
 export const STATUSES: Status[] = ['在看', '未看', '已看'];
 
