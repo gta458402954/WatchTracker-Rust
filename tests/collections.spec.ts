@@ -207,6 +207,24 @@ test('@collections creates a staged collection from record editing only when the
   expect(snapshot.collectionMembers).toHaveLength(1);
 });
 
+test('@arch002 collection manager Escape restores focus without writing', async ({ page }) => {
+  await setupMockIpc(page, { records: [record('escape-record')] });
+  await page.goto('/');
+  await page.getByTitle('编辑').click();
+  const form = page.getByRole('dialog', { name: '编辑记录' });
+  const manage = form.getByRole('button', { name: '管理' });
+  await manage.click();
+  const manager = page.getByRole('dialog', { name: '管理所属收藏集' });
+  await expect(manager).toBeVisible();
+  await expect(manager.getByPlaceholder('搜索收藏集')).toBeFocused();
+  const writesBefore = (await mockSnapshot(page)).calls.filter(call => /^(create_|add_|update_|delete_)/.test(call.command));
+  await page.keyboard.press('Escape');
+  await expect(manager).toHaveCount(0);
+  await expect(manage).toBeFocused();
+  const writesAfter = (await mockSnapshot(page)).calls.filter(call => /^(create_|add_|update_|delete_)/.test(call.command));
+  expect(writesAfter).toEqual(writesBefore);
+});
+
 test('@collections suppresses an already complete canonical TMDB series suggestion', async ({ page }) => {
   const blackMirror: WatchCollection = {
     ...collection, id: 'black-mirror', name: '黑镜', normalizedName: '黑镜', sourceKind: 'tmdb-tv-show',

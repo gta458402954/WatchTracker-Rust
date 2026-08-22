@@ -34,11 +34,13 @@ function unlockBodyScroll() {
 interface AccessibleDialogOptions {
   onEscape: () => void;
   initialFocusRef?: RefObject<HTMLElement | null>;
+  enabled?: boolean;
 }
 
 export function useAccessibleDialog<T extends HTMLElement>({
   onEscape,
   initialFocusRef,
+  enabled = true,
 }: AccessibleDialogOptions): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const onEscapeRef = useRef(onEscape);
@@ -48,6 +50,7 @@ export function useAccessibleDialog<T extends HTMLElement>({
   }, [onEscape]);
 
   useEffect(() => {
+    if (!enabled) return;
     const token = Symbol('accessible-dialog');
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialogStack.push(token);
@@ -103,7 +106,7 @@ export function useAccessibleDialog<T extends HTMLElement>({
       unlockBodyScroll();
       if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
     };
-  }, [initialFocusRef]);
+  }, [enabled, initialFocusRef]);
 
   return dialogRef;
 }

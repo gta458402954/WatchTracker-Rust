@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3`、`TASK-D-UX-004` 与 `TASK-D-ARCH-001` 已实现。其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3`、`TASK-D-UX-004`、`TASK-D-ARCH-001` 与 `TASK-D-ARCH-002` 已实现；其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1507,7 +1507,7 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-003-R2` | R1 | 收藏集补全 | IMPLEMENTED | 收藏集发现、候选资格、缺失季/电影、旧 IMDb 复用与真实便携数据验收已完成 |
 | `TASK-D-UX-003-R3` | R1 | 建议准确性 | IMPLEMENTED | TMDB 单季资格、任意收藏集覆盖去重、持久忽略与恢复入口已实现 |
 | `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
-| `TASK-D-ARCH-002` | R2 | 工程架构 | NEEDS-DESIGN | R2 模块拆分 |
+| `TASK-D-ARCH-002` | R2 | 工程架构 | IMPLEMENTED | R2 模块拆分；Batch A～D 完成，完整门禁与专项边界验收通过 |
 | `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
 | `TASK-D-RELEASE-001` | R3 | 发布与数据防护 | NEEDS-DESIGN | 正式发布的数据库隔离、审计、签名与分阶段放量 |
 | `TASK-D-HISTORY-002` | R3 | 多观看会话 | NEEDS-DESIGN | 重看与多轮观看历史；固定为路线图最后一项 |
@@ -1849,15 +1849,17 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 ### TASK-D-ARCH-002：同步模块和大型组件拆分
 
-- Phase: IMPLEMENTATION
+- Phase: COMPLETED
 - Owner: Codex
-- Status: IN_PROGRESS
+- Status: IMPLEMENTED
 - Priority: R2
 - Scope: 分离同步领域、存储、传输和应用服务，并拆分 RecordForm/SettingsModal；先锁定行为测试再做结构迁移。
 - Current Basis: `webdav.ts` 与大型表单组件职责密集，但当前 `useWatchList` 是稳定主链路，Zustand 不作为默认目标。
-- Approved Design: `docs/SYNC_COMPONENT_MODULARIZATION_DESIGN.md`。用户于 2026-08-22 确认按四批迁移：行为基线与纯函数、WebDAV 传输与一次同步服务、自动协调器与记录仓储 hook、Settings/RecordForm UI 拆分。保持所有公共入口、V18、同步协议、IPC 和界面行为不变；下一步实施 Batch A。
-- Batch A: 已完成 ETag/payload/错误映射与 RecordForm 模型纯函数提取；PROPFIND 保留原生 DOMParser，组件保留函数式更新。验收为 Node 151/151、相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过。下一步为 Batch B，尚未开始。
-- Batch B: 已完成 WebDAV transport、凭据门面、条件验证基础设施、一次同步 service 和 legacy import service 拆分；`shared/lib/webdav.ts` 仅保留约 58 行兼容门面，旧动态导入路径与全部公共出口保持不变。验收为 Node 154/154、相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过，未连接真实 WebDAV。下一步为 Batch C，尚未开始。
+- Approved Design: `docs/SYNC_COMPONENT_MODULARIZATION_DESIGN.md`。用户于 2026-08-22 确认按四批迁移：行为基线与纯函数、WebDAV 传输与一次同步服务、自动协调器与记录仓储 hook、Settings/RecordForm UI 拆分。保持所有公共入口、V18、同步协议、IPC 和界面行为不变；Batch A～D 已完成，任务验收通过。
+- Batch A: 已完成 ETag/payload/错误映射与 RecordForm 模型纯函数提取；PROPFIND 保留原生 DOMParser，组件保留函数式更新。验收为 Node 151/151、相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过。
+- Batch B: 已完成 WebDAV transport、凭据门面、条件验证基础设施、一次同步 service 和 legacy import service 拆分；`shared/lib/webdav.ts` 仅保留约 58 行兼容门面，旧动态导入路径与全部公共出口保持不变。验收为 Node 154/154、相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过，未连接真实 WebDAV。
+- Batch C: 已完成 `useSyncCoordinator` 与 `useRecordRepository` 提取；自动同步触发、周期/暂停/恢复、单飞重跑、退避、通知去重、卸载清理、本地写入防抖和 Rust 返回值回填均保持原行为，`useWatchList` 缩为薄组合层；新增 online 恢复拉取回归。验收为 Node 154/154、同步与记录相关 Playwright 47/47（其中 `sync-reliability` 6/6，含新增 online 回归）、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过；未连接真实服务或部署数据。
+- Batch D：已完成 Settings 五个独立页签、Tools 五个 prop-driven 面板、`useSettingsBootstrap`、`useSyncSettings`、`useRecoveryPoints`、`usePosterCache`、数据库维护 hook、`useImportExport`、`useBatchMetadata`、RecordForm 的 TMDB/详情/播放/收藏集组件拆分；旧 Basic 残片已删除，SettingsModal 仅保留 dialog/tab/composition。新增 bootstrap 单次读取、页签切换零业务写入、收藏集 Escape/焦点恢复零写入和 360px 专项。验收为 Node 154/154、完整 Playwright 97/97、Rust 90/90、typecheck、lint、build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过；未连接真实服务或部署数据。
 
 ### TASK-D-LINK-001：可播放来源与外部链接
 

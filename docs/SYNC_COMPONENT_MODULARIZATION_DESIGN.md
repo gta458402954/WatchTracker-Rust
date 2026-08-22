@@ -273,3 +273,18 @@ src/features/settings/
 - 新增 `legacyImportService.ts`，迁移只读 probe/load、旧资源显式导入和冲突查询。
 - `shared/lib/webdav.ts` 缩为约 58 行兼容门面，旧导出和动态导入路径保持不变；生产确认函数由门面显式注入，service 不依赖 React、window 或 DOM。
 - 验收：Node 154/154、同步与表单相关 Playwright 46/46、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过；未连接真实 WebDAV。
+
+### Batch C（2026-08-22）：已完成
+
+- 新增 `features/sync/hooks/useSyncCoordinator.ts`，承载自动同步启动、focus/visibility/online 触发、周期拉取、暂停/恢复、单飞重跑、退避、通知去重和卸载清理；同步成功后的记录刷新通过 `reloadRecords` 回调完成。
+- 新增 `features/watchlist/hooks/useRecordRepository.ts`，承载记录加载、CRUD、逐集修改、导入替换和 Rust 返回值回填；本地写入只通过 `onLocalWrite` 回调通知协调器。
+- `useWatchList.ts` 缩为组合层，`App.tsx` 使用的导出签名、返回字段和接线保持不变；未引入 Zustand，未修改 V18、IPC、同步 payload、WebDAV 或 UI。
+- 验收：Node 154/154、同步与记录相关 Playwright 47/47（其中 `sync-reliability` 6/6，含新增 online 回归）、Rust 90/90、typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过；未连接真实服务或真实部署数据。下一步为 Batch D。
+
+### Batch D（2026-08-22）：已完成
+
+- RecordForm：新增 `useTmdbRecordSearch.ts`，承载 TMDB 搜索、详情/季选择、字段映射和后台海报下载；新增 `CollectionMembership.tsx`，承载收藏集摘要、管理器和保存前草稿，原 `RecordForm` 公共 props、dialog 入口、字段文案、收藏集草稿提交时机保持不变。
+- Settings：新增 `useSettingsBootstrap.ts`，承载一次性设置/凭据/目标注册表/冲突读取；`useSyncSettings` 承载目标探测、激活、同步、冲突和间隔流程，`useRecoveryPoints` 承载恢复点生命周期，`usePosterCache` 与数据库维护 hook 承载维护命令，`useImportExport` 承载本地/云端导入导出，`useBatchMetadata` 承载批量预览、候选、取消和安全写入。五个页签及 Tools 面板均为显式 props 视图，SettingsModal 仅保留 dialog/tab/composition；旧 Basic 不可达 JSX 已删除，未改变 IPC 或同步语义。
+- RecordForm：新增 `useTmdbRecordSearch.ts`、`TmdbSearchSection.tsx`、`RecordDetailsFields.tsx`、`PlaybackFields.tsx` 和 `CollectionMembership.tsx`；外层仅保留 dialog、提交、删除及 section 组合。
+- 新增边界验收：Settings bootstrap 只执行一次且页签切换无业务写入；RecordForm 收藏集管理器取消/ Escape 恢复焦点且零写入；Settings/RecordForm 360px 无页面级横向溢出。
+- 验收：Node 154/154；完整 Playwright 97/97（含新增 ARCH-002 专项）；Rust 90/90；typecheck、lint、生产 build、rustfmt、严格 Clippy 与 `git diff --check` 全部通过。未连接真实服务或真实部署数据。

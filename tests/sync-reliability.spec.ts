@@ -116,6 +116,32 @@ test('@expected-sync-v3 focus actively pulls a remote-only record while the loca
   expect(JSON.parse(snapshot.settings.sync_outbox_v1 as string).pending).toBe(false);
 });
 
+test('@expected-sync-v3 online recovery actively pulls after connectivity returns', async ({ page }) => {
+  const local = record('联网前本地条目');
+  const remoteOnly = record('联网恢复新增');
+  const baseline = payload([local]);
+  await setupMockIpc(page, {
+    records: [local],
+    webdavV3Remote: payload([local, remoteOnly]),
+    webdavV3Etag: '"online-etag"',
+    settings: {
+      ...credentials,
+      sync_v3_baseline: JSON.stringify(baseline),
+      sync_outbox_v1: JSON.stringify({
+        version: 1, pending: false, dirtyGeneration: 0, reasons: [], firstQueuedAt: null, lastQueuedAt: null,
+      }),
+    },
+  });
+  await page.goto('/');
+  await expect(page.getByText('联网前本地条目').first()).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByText('联网恢复新增').first()).toBeVisible();
+
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'commit_sync_result')).toBe(true);
+  expect(JSON.parse(snapshot.settings.sync_outbox_v1 as string).pending).toBe(false);
+});
+
 test('@expected-sync-v3 transient startup failure persists backoff and avoids a request loop', async ({ page }) => {
   await setupMockIpc(page, {
     records: [record('等待重试')],
