@@ -17,7 +17,7 @@
 - Recovery：5 个任务；`TASK-R-001`~`TASK-R-005` 均已验收。
 - Phase A：10 个任务；`TASK-A-001`~`TASK-A-010` 均已验收，Gate A PASS。
 - Phase B：5 个任务；`TASK-B-001`~`TASK-B-005`、AC-B-001~008、地区报告、远端 CI、Gate B 和综合报告均已通过；PR #3 尚未合并。
-- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3`、`TASK-D-UX-004`、`TASK-D-ARCH-001` 与 `TASK-D-ARCH-002` 已实现；其余 6 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 已暂停。持续集成已移出 DEFERRED，转为维护项。
+- 路线图：21 个领域任务及 5 个修订任务；`TASK-D-DATA-001`~`004`、`TASK-D-SYNC-001`~`003`、`TASK-D-SYNC-001-R2`、`TASK-D-SEC-001`、`TASK-D-HISTORY-001`、`TASK-D-DISCOVERY-001`、`TASK-D-NET-001`、`TASK-D-UX-001`、`TASK-D-UX-001-R1`、`TASK-D-UX-001-R2`、`TASK-D-UX-003`、`TASK-D-UX-003-R1`、`TASK-D-UX-003-R2`、`TASK-D-UX-003-R3`、`TASK-D-UX-004`、`TASK-D-ARCH-001` 与 `TASK-D-ARCH-002` 已实现；`TASK-D-LINK-001` 已完成专项设计但由用户暂停；其余 4 个 `NEEDS-DESIGN` 中，`TASK-D-IMPORT-001` 与 `TASK-D-UX-002` 也已暂停。持续集成已移出 DEFERRED，转为维护项。
 
 ```text
 R-001 ─┬─ R-002 ─┐
@@ -1506,9 +1506,9 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 | `TASK-D-UX-003-R1` | R2 | 系列补全 | IMPLEMENTED | 本地系列识别、持久 TMDB 身份、缓存、完整季原子补充、年代排序、影视宇宙和表单归组已实现 |
 | `TASK-D-UX-003-R2` | R1 | 收藏集补全 | IMPLEMENTED | 收藏集发现、候选资格、缺失季/电影、旧 IMDb 复用与真实便携数据验收已完成 |
 | `TASK-D-UX-003-R3` | R1 | 建议准确性 | IMPLEMENTED | TMDB 单季资格、任意收藏集覆盖去重、持久忽略与恢复入口已实现 |
-| `TASK-D-ARCH-001` | R2 | 工程架构 | NEEDS-DESIGN | R2 跨语言类型生成 |
+| `TASK-D-ARCH-001` | R2 | 工程架构 | IMPLEMENTED | R2 跨语言类型生成；schema 生成与漂移门禁已落地 |
 | `TASK-D-ARCH-002` | R2 | 工程架构 | IMPLEMENTED | R2 模块拆分；Batch A～D 完成，完整门禁与专项边界验收通过 |
-| `TASK-D-LINK-001` | R3 | 外部集成 | NEEDS-DESIGN | R3 外部链接 |
+| `TASK-D-LINK-001` | R3 | 外部集成 | SPECIFIED | USER-PAUSED（2026-08-22）；设计保留，暂不实施 |
 | `TASK-D-RELEASE-001` | R3 | 发布与数据防护 | NEEDS-DESIGN | 正式发布的数据库隔离、审计、签名与分阶段放量 |
 | `TASK-D-HISTORY-002` | R3 | 多观看会话 | NEEDS-DESIGN | 重看与多轮观看历史；固定为路线图最后一项 |
 
@@ -1865,10 +1865,15 @@ ACCEPTED — Implementation `0ee2cae` was reviewed from clean detached `D:\Proje
 
 - Phase: DEFERRED
 - Owner: Unassigned
-- Status: NEEDS-DESIGN
+- Status: SPECIFIED
 - Priority: R3
+- Scheduling: USER-PAUSED（2026-08-22）。专项设计保留为未来技术基线，但当前不开始 Batch A、不修改业务代码、不迁移数据库、不升级本地/WebDAV 格式；只有用户以后明确恢复并重新确认设计时才进入实施排期。
 - Scope: 每条记录保存多个平台/本地来源，提供 URL/协议校验、平台模板、排序和一键打开。
 - Current Basis: 当前卡片只基于 IMDb ID 打开 IMDb 页面，尚无通用来源模型。
+- Proposed Design: `docs/EXTERNAL_SOURCES_DESIGN.md`。统一使用独立来源实体，但把同步 HTTPS 来源与仅此设备来源分区；本地文件/目录强制仅设备保存。数据库继续 V18，使用 `record_sources_schema_version=1` 幂等迁移；普通导出升级 V5，WebDAV 只在存在同步来源时升级 V7。
+- Security Boundary: 前端不再拥有通用 shell open 权限。所有打开操作只提交已保存的来源 ID，由 Rust 重新读取并校验 HTTPS、平台 host 或本地规范路径；本地文件使用媒体扩展 allowlist，拒绝 HTTP、自定义协议、UNC/网络路径、快捷方式、脚本和可执行类型。
+- Implementation Order: Batch A 建立迁移、Rust CRUD/排序、安全打开和 IMDb 旁路收口；Batch B 完成卡片来源菜单与 RecordForm 管理；Batch C 接入本地 V5、WebDAV V7、冲突与完整回归。每批独立提交，真实便携替换和真实服务验证另行授权。
+- Acceptance: 临时 SQLite 验证幂等迁移、事务回滚、锁定/stale/级联和路径/URL 安全；Node 验证 V3～V7、设备来源隔离及冲突；Playwright 验证确认前零写入、点击前零打开、V7 升级确认、360px 与键盘操作。自动化不得访问真实用户数据库、流媒体或 WebDAV。
 
 ### TASK-D-RELEASE-001：正式发布与数据格式防误修改
 

@@ -294,7 +294,7 @@ Rust/Tauri 还必须执行并通过格式检查、静态检查和测试。若仓
 | R2 | 内容组织 | `TASK-D-UX-003` | 系列 / 收藏集 | NEEDS-DESIGN | 当前只有单值媒体分类和文本标签；尚无多对多收藏集模型、排序和导入同步语义 |
 | R2 | 工程架构 | `TASK-D-ARCH-001` | 跨语言类型生成 | NEEDS-DESIGN | Rust DTO、TypeScript 类型、SQL 字段仍由多处手工维护；尚未选择单一 schema 源和漂移检查 |
 | R2 | 工程架构 | `TASK-D-ARCH-002` | 同步模块和大型组件拆分 | NEEDS-DESIGN | `webdav.ts`、`RecordForm` 和 `SettingsModal` 承担多类职责；拆分必须保持现有数据与错误处理不变量 |
-| R3 | 外部集成 | `TASK-D-LINK-001` | 可播放来源与外部链接 | NEEDS-DESIGN | 当前仅支持从卡片打开 IMDb；尚无每条记录的多来源数据模型、URL 校验和平台模板 |
+| R3 | 外部集成 | `TASK-D-LINK-001` | 可播放来源与外部链接 | SPECIFIED | USER-PAUSED（2026-08-22）；专项设计见 `docs/EXTERNAL_SOURCES_DESIGN.md`，当前保留方案但暂不实施 |
 | R3 | 发布与数据防护 | `TASK-D-RELEASE-001` | 正式发布与数据格式防误修改 | NEEDS-DESIGN | 不采用完整 Event Sourcing；以 Rust 唯一写入、目的限定命令、`data_format_epoch`、旧 EXE 隔离、migration 校验快照、同事务写入、轻量审计、SQLite 安全开关、外部备份、签名、灰度发布及版本/commit/数据格式展示组成推荐方案 |
 | R3 | 多观看会话 | `TASK-D-HISTORY-002` | 多观看会话与重看历史 | NEEDS-DESIGN | 当前只有条目级单轮时间和一组逐集完成事件；未来需设计独立会话、事件归属、旧数据无猜测迁移及同步 schema，固定为路线图最后一项 |
 
