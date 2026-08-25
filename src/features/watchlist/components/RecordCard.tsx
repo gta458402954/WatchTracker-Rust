@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { type EpisodeCompletion, WatchRecord, Status } from '../../../shared/types';
+import { type EpisodeCompletion, WatchRecord, Status, type WatchCollection } from '../../../shared/types';
 import { STATUS_CONFIG, formatMovieProgress } from '../../../shared/lib/constants';
 import { mediaTypeOf } from '../../../shared/lib/classification';
 import { open } from '@tauri-apps/plugin-shell';
@@ -47,10 +47,11 @@ interface RecordCardProps {
   onStatusChange: (id: string, status: Status) => void;
   onNextEpisodeChange?: (record: WatchRecord, nextEpisode: number | null) => void;
   onLockToggle?: (id: string) => void;
-  collectionNames?: string[];
+  collectionLinks?: Array<Pick<WatchCollection, 'id' | 'name'>>;
+  onOpenCollection?: (collectionId: string) => void;
 }
 
-export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onNextEpisodeChange, onLockToggle, collectionNames = [] }: RecordCardProps) {
+export default function RecordCard({ record, onEdit, onDelete, onStatusChange, onNextEpisodeChange, onLockToggle, collectionLinks = [], onOpenCollection }: RecordCardProps) {
   const statusConf = STATUS_CONFIG[record.status];
   const mediaType = mediaTypeOf(record);
   const detailTags = record.genres;
@@ -174,8 +175,8 @@ export default function RecordCard({ record, onEdit, onDelete, onStatusChange, o
                 </span>
               ) : null;
             })()}
-            {collectionNames.slice(0, 2).map(name => <span key={name} className="max-w-[110px] truncate rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600" title={`收藏集：${name}`}>🎞️ {name}</span>)}
-            {collectionNames.length > 2 && <span className="text-[10px] font-semibold text-indigo-500">+{collectionNames.length - 2}</span>}
+            {collectionLinks.slice(0, 2).map(collection => <button key={collection.id} type="button" onClick={event => { event.stopPropagation(); onOpenCollection?.(collection.id); }} className="max-w-[110px] truncate rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-300" title={`打开收藏集：${collection.name}`} aria-label={`打开收藏集 ${collection.name}`}>🎞️ {collection.name}</button>)}
+            {collectionLinks.length > 2 && <span className="text-[10px] font-semibold text-indigo-500">+{collectionLinks.length - 2}</span>}
             {record.imdbId && (
               <a
                 href={`https://www.imdb.com/title/${record.imdbId}/`}

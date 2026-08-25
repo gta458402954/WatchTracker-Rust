@@ -1,18 +1,21 @@
-import { WatchRecord } from '../../../shared/types';
+import { WatchRecord, type WatchCollection } from '../../../shared/types';
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
 import SafePosterImage from './SafePosterImage';
 
 interface PosterWallProps {
   filtered: WatchRecord[];
   onEdit: (record: WatchRecord) => void;
-  collectionNamesByRecord?: Map<string, string[]>;
+  collectionLinksByRecord?: Map<string, Array<Pick<WatchCollection, 'id' | 'name'>>>;
+  onOpenCollection: (collectionId: string) => void;
 }
 
-export default function PosterWall({ filtered, onEdit, collectionNamesByRecord }: PosterWallProps) {
+export default function PosterWall({ filtered, onEdit, collectionLinksByRecord, onOpenCollection }: PosterWallProps) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
       {filtered.map(record => {
         const displayTitle = displayTitlesOf(record).primary;
+        const collectionLinks = collectionLinksByRecord?.get(record.id) ?? [];
+        const firstCollection = collectionLinks[0];
         return (
         <div
           key={record.id}
@@ -52,7 +55,7 @@ export default function PosterWall({ filtered, onEdit, collectionNamesByRecord }
           </div>
 
           {/* Status Badge & Lock */}
-          {(collectionNamesByRecord?.get(record.id)?.length ?? 0) > 0 && <div className="absolute left-2 top-2 max-w-[75%] truncate rounded-full bg-indigo-600/90 px-2 py-1 text-[9px] font-bold text-white shadow-sm backdrop-blur" title={collectionNamesByRecord?.get(record.id)?.join('、')}>🎞️ {collectionNamesByRecord?.get(record.id)?.[0]}{(collectionNamesByRecord?.get(record.id)?.length ?? 0) > 1 ? ` +${(collectionNamesByRecord?.get(record.id)?.length ?? 1) - 1}` : ''}</div>}
+          {firstCollection && <button type="button" onClick={event => { event.stopPropagation(); onOpenCollection(firstCollection.id); }} className="absolute left-2 top-2 max-w-[75%] truncate rounded-full bg-indigo-600/90 px-2 py-1 text-[9px] font-bold text-white shadow-sm backdrop-blur hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-white" title={`打开收藏集：${collectionLinks.map(collection => collection.name).join('、')}`} aria-label={`打开收藏集 ${firstCollection.name}`}>🎞️ {firstCollection.name}{collectionLinks.length > 1 ? ` +${collectionLinks.length - 1}` : ''}</button>}
           <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
              {record.isLocked && (
                <div className="text-[10px] w-6 h-6 flex items-center justify-center rounded-full bg-amber-500/90 text-white backdrop-blur-md border border-white/20 shadow-sm" title="已锁定">

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { WatchRecord, MediaType, Status, type CollectionDraft } from '../shared/types';
+import { WatchRecord, MediaType, Status, type CollectionDraft, type WatchCollection } from '../shared/types';
 import { useWatchList } from '../features/watchlist/hooks/useWatchList';
 import StatsBar from '../features/watchlist/components/StatsBar';
 import RecordForm from '../features/watchlist/components/RecordForm';
@@ -50,11 +50,6 @@ interface DatabaseCompatibilityIssue {
 }
 
 const Dashboard = lazy(() => import('../features/dashboard/components/Dashboard'));
-
-function localDateString(date = new Date()): string {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
-}
 
 function savedViewErrorMessage(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : '';
@@ -228,15 +223,20 @@ export default function App() {
   }, [query.mediaTypes, query.regions, query.statuses, records]);
   const advancedOptions = useMemo(() => watchlistFilterOptions(records), [records]);
   const filterSummary = useMemo(() => advancedQuerySummaryItems(query), [query]);
-  const collectionNamesByRecord = useMemo(() => {
-    const names = new Map(collectionState.collections.map(collection => [collection.id, collection.name]));
-    const result = new Map<string, string[]>();
+  const collectionLinksByRecord = useMemo(() => {
+    const collections = new Map(collectionState.collections.map(collection => [collection.id, collection]));
+    const result = new Map<string, Array<Pick<WatchCollection, 'id' | 'name'>>>();
     for (const member of collectionState.members) {
-      const name = names.get(member.collectionId); if (!name) continue;
-      result.set(member.recordId, [...(result.get(member.recordId) ?? []), name]);
+      const collection = collections.get(member.collectionId); if (!collection) continue;
+      result.set(member.recordId, [...(result.get(member.recordId) ?? []), { id: collection.id, name: collection.name }]);
     }
     return result;
   }, [collectionState.collections, collectionState.members]);
+
+  function handleOpenCollection(collectionId: string) {
+    setCollectionResumeId(collectionId);
+    setShowCollections(true);
+  }
 
   const filtered = useMemo(() => {
     return filterRecordsByQuery(records, query)
@@ -345,10 +345,6 @@ export default function App() {
   }
 
   async function handleSave(data: Omit<WatchRecord, 'id' | 'createdAt'>, collectionIds: string[] = [], collectionDrafts: CollectionDraft[] = []) {
-    const today = localDateString();
-    if (data.status === '在看' && !data.startDate) data.startDate = today;
-    if (data.status === '已看' && !data.endDate) data.endDate = today;
-
     try {
       let savedRecord: WatchRecord;
       if (editingRecord) {
@@ -437,15 +433,7 @@ export default function App() {
     const record = records.find(r => r.id === id);
     const updates: Partial<WatchRecord> = { status };
 
-    if (status === '在看') {
-      if (record && !record.startDate) {
-        updates.startDate = localDateString();
-      }
-    }
     if (status === '已看') {
-      if (record && !record.endDate) {
-        updates.endDate = localDateString();
-      }
       if (record) {
         const episodic = Boolean(record.totalEpisodes) || ['剧集', '综艺'].includes(mediaTypeOf(record));
         if (!episodic && record.movieDuration) updates.movieProgress = record.movieDuration;
@@ -609,13 +597,15 @@ export default function App() {
               onLockToggle={handleLockToggle}
               onStatusChange={handleStatusChange}
               onNextEpisodeChange={handleNextEpisodeChange}
-              collectionNamesByRecord={collectionNamesByRecord}
+              collectionLinksByRecord={collectionLinksByRecord}
+              onOpenCollection={handleOpenCollection}
             />
         ) : (
           <PosterWall
             filtered={filtered}
             onEdit={handleEdit}
-            collectionNamesByRecord={collectionNamesByRecord}
+            collectionLinksByRecord={collectionLinksByRecord}
+            onOpenCollection={handleOpenCollection}
           />
         )}
       </main>

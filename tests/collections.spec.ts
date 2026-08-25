@@ -78,6 +78,34 @@ test('@collections opening is read-only until an explicit action', async ({ page
   expect(after.calls.filter(call => writes.has(call.command))).toHaveLength(before.calls.filter(call => writes.has(call.command)).length);
 });
 
+test('@collections card and poster badges open the linked collection directly without writes', async ({ page }) => {
+  const first: WatchCollection = { ...collection, id: 'collection-first', name: '第一个收藏集', normalizedName: '第一个收藏集' };
+  const linked: WatchCollection = { ...collection, id: 'collection-linked', name: '克拉克森的农场', normalizedName: '克拉克森的农场' };
+  const item = record('克拉克森的农场 第 5 季');
+  await setupMockIpc(page, {
+    records: [item],
+    collections: [first, linked],
+    collectionMembers: [member(item.id, 0, linked.id)],
+  });
+  await page.goto('/');
+  const before = await mockSnapshot(page);
+
+  await page.getByRole('button', { name: '打开收藏集 克拉克森的农场' }).click();
+  let center = page.getByRole('dialog', { name: '系列与收藏集' });
+  await expect(center.getByRole('heading', { name: '克拉克森的农场' })).toBeVisible();
+  await center.getByRole('button', { name: '关闭收藏集中心' }).first().click();
+
+  await page.getByRole('button', { name: '更多操作' }).click();
+  await page.getByRole('menuitem', { name: '切换至海报墙' }).click();
+  await page.getByRole('button', { name: '打开收藏集 克拉克森的农场' }).click();
+  center = page.getByRole('dialog', { name: '系列与收藏集' });
+  await expect(center.getByRole('heading', { name: '克拉克森的农场' })).toBeVisible();
+
+  const after = await mockSnapshot(page);
+  const writes = /^(create_|add_|update_|delete_|remove_|reorder_|apply_|complete_)/;
+  expect(after.calls.filter(call => writes.test(call.command))).toEqual(before.calls.filter(call => writes.test(call.command)));
+});
+
 test('@collections keeps library suggestions separate from a selected collection detail', async ({ page }) => {
   const inside = record('收藏集具体条目');
   const candidate = {
