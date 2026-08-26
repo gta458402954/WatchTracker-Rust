@@ -10,9 +10,11 @@ import { chronologicalRecords, defaultMissingSeasonNumbers, locallyKnownSeries, 
 import { movieRecordMetadata, seasonRecordMetadata, tmdbOriginalLanguageLocale } from '../lib/tmdbRecordMapping';
 import { classifyMovieCollectionPart, type MovieCollectionCandidate } from '../lib/movieCollectionIdentity';
 import {
+  classifyCollectionCandidateGroup,
   collectionCandidateDescription,
   movieCollectionCandidateEligibility,
   normalizeCollectionSearchMatches,
+  type CollectionCandidateOutcome,
   type CollectionMatchSeed,
 } from '../lib/collectionCandidateEligibility';
 import {
@@ -326,7 +328,7 @@ export default function CollectionCenter(props: Props) {
           continue;
         }
 
-        const checked = await mapWithConcurrency(seeds, 4, async seed => {
+        const checked = await mapWithConcurrency<CollectionMatchSeed, CollectionCandidateOutcome<ScanMatchChoice>>(seeds, 4, async seed => {
           const detailCacheKey = `candidate-detail:${seed.mediaType}:${seed.id}`;
           let detail = readIdentityCache<TmdbMedia>(detailCacheKey);
           if (!detail) {
@@ -389,20 +391,19 @@ export default function CollectionCenter(props: Props) {
           };
           return { reason: 'qualified' as const, choice };
         });
-        const choices = checked.flatMap(result => result.reason === 'qualified' ? [result.choice] : []);
-        precheckedComplete += checked.filter(result => result.reason === 'complete').length;
-        precheckedIgnored += checked.filter(result => result.reason === 'ignored').length;
-        ineligible += checked.filter(result => result.reason === 'ineligible').length;
-        failures += checked.filter(result => result.reason === 'unavailable').length;
-        if (choices.length === 0) continue;
+        const groupResult = classifyCollectionCandidateGroup(checked);
+        if (groupResult.disposition === 'unavailable') { failures += 1; continue; }
+        if (groupResult.disposition === 'ignored') { precheckedIgnored += 1; continue; }
+        if (groupResult.disposition === 'complete') { precheckedComplete += 1; continue; }
+        if (groupResult.disposition === 'ineligible') { ineligible += 1; continue; }
 
         grouped.delete(`local:${imdbId}`);
-        if (choices.length > 1) {
+        if (groupResult.disposition === 'ambiguous') {
           ambiguous += 1;
-          setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices }]);
+          setScanAmbiguities(current => current.some(item => item.imdbId === imdbId) ? current : [...current, { imdbId, recordIds: matchingRecords.map(record => record.id), choices: groupResult.choices }]);
           continue;
         }
-        const match = choices[0];
+        const match = groupResult.choices[0];
         const { sourceKey, sourceName, sourceKind } = match;
         const current = grouped.get(sourceKey) ?? { name: sourceName, sourceKind, sourceKey, recordIds: [] };
         for (const record of matchingRecords) if (!current.recordIds.includes(record.id)) current.recordIds.push(record.id);

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  classifyCollectionCandidateGroup,
   collectionCandidateDescription,
   movieCollectionCandidateEligibility,
   normalizeCollectionSearchMatches,
@@ -48,4 +49,47 @@ test('candidate description exposes year, original title, TMDB identity and sour
   assert.match(description, /Example · 2020 · TMDB 42/);
   assert.match(description, /电影合集：示例合集/);
   assert.match(description, /至少缺少 2 部/);
+});
+
+test('a qualified candidate owns the IMDb group despite unavailable or rejected sibling matches', () => {
+  const choice = { sourceKey: 'tmdb:movie-collection:95051' };
+  assert.deepEqual(classifyCollectionCandidateGroup([
+    { reason: 'qualified', choice },
+    { reason: 'unavailable' },
+    { reason: 'complete' },
+    { reason: 'ineligible' },
+  ]), { disposition: 'actionable', choices: [choice] });
+});
+
+test('multiple qualified candidates remain ambiguous without counting rejected siblings', () => {
+  const first = { sourceKey: 'tmdb:movie-collection:1' };
+  const second = { sourceKey: 'tmdb:tv-show:2' };
+  assert.deepEqual(classifyCollectionCandidateGroup([
+    { reason: 'qualified', choice: first },
+    { reason: 'unavailable' },
+    { reason: 'qualified', choice: second },
+  ]), { disposition: 'ambiguous', choices: [first, second] });
+});
+
+test('an IMDb group is unavailable only when it has no qualified candidate and any result is unknown', () => {
+  assert.equal(classifyCollectionCandidateGroup([
+    { reason: 'complete' },
+    { reason: 'unavailable' },
+  ]).disposition, 'unavailable');
+  assert.equal(classifyCollectionCandidateGroup([]).disposition, 'unavailable');
+});
+
+test('known rejected IMDb groups are counted once using dismissal, completion, then ineligibility priority', () => {
+  assert.equal(classifyCollectionCandidateGroup([
+    { reason: 'ineligible' },
+    { reason: 'ignored' },
+  ]).disposition, 'ignored');
+  assert.equal(classifyCollectionCandidateGroup([
+    { reason: 'ineligible' },
+    { reason: 'complete' },
+  ]).disposition, 'complete');
+  assert.equal(classifyCollectionCandidateGroup([
+    { reason: 'ineligible' },
+    { reason: 'ineligible' },
+  ]).disposition, 'ineligible');
 });

@@ -11,6 +11,37 @@ export interface CollectionMatchSeed {
 
 export type MovieCandidateEligibility = 'actionable' | 'complete' | 'unknown';
 
+export type CollectionCandidateOutcome<T> =
+  | { reason: 'qualified'; choice: T }
+  | { reason: 'complete' | 'ignored' | 'ineligible' | 'unavailable' };
+
+export type CollectionCandidateGroupDisposition =
+  | 'actionable'
+  | 'ambiguous'
+  | 'complete'
+  | 'ignored'
+  | 'ineligible'
+  | 'unavailable';
+
+export interface CollectionCandidateGroupResult<T> {
+  disposition: CollectionCandidateGroupDisposition;
+  choices: T[];
+}
+
+export function classifyCollectionCandidateGroup<T>(
+  outcomes: readonly CollectionCandidateOutcome<T>[],
+): CollectionCandidateGroupResult<T> {
+  const choices = outcomes.flatMap(outcome => outcome.reason === 'qualified' ? [outcome.choice] : []);
+  if (choices.length > 1) return { disposition: 'ambiguous', choices };
+  if (choices.length === 1) return { disposition: 'actionable', choices };
+
+  const reasons = new Set(outcomes.map(outcome => outcome.reason));
+  if (reasons.has('unavailable') || reasons.size === 0) return { disposition: 'unavailable', choices };
+  if (reasons.has('ignored')) return { disposition: 'ignored', choices };
+  if (reasons.has('complete')) return { disposition: 'complete', choices };
+  return { disposition: 'ineligible', choices };
+}
+
 function validTmdbId(value: number | null | undefined): value is number {
   return Number.isInteger(value) && (value ?? 0) > 0;
 }

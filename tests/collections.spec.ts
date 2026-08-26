@@ -429,7 +429,7 @@ test('@collections filters invalid search matches before deciding that a result 
 
   await expect(page.getByText(/存在多个有效 TMDB 匹配/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: /大时代.*应用/ })).toBeVisible();
-  await expect(page.getByText(/非合集\/无差异 1/)).toBeVisible();
+  await expect(page.getByText(/非合集\/无差异 0/)).toBeVisible();
   expect((await mockSnapshot(page)).calls.filter(call => call.command === 'apply_collection_suggestion')).toHaveLength(0);
 });
 
@@ -459,7 +459,37 @@ test('@collections keeps only an actionable movie collection when the TV result 
 
   await expect(page.getByText(/存在多个有效 TMDB 匹配/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: /人生七年（系列）.*应用/ })).toBeVisible();
-  await expect(page.getByText(/完整排除 1/)).toBeVisible();
+  await expect(page.getByText(/完整排除 0/)).toBeVisible();
+});
+
+test('@collections ignores an unavailable TV sibling when the IMDb movie collection is actionable', async ({ page }) => {
+  const candidate = {
+    ...record('人生七年6'), originalName: '42 Up', imdbId: 'tt0164312', mediaType: '纪录片' as const,
+  };
+  await setupMockIpc(page, {
+    records: [candidate],
+    collections: [collection],
+    tmdbSearchResults: [
+      { id: 20565, title: '人生七年6', original_title: '42 Up', media_type: 'movie', release_date: '1999-11-17' },
+      { id: 47601, name: '42: Forty Two Up', original_name: '42: Forty Two Up', media_type: 'tv', first_air_date: '' },
+    ],
+    tmdbDetails: {
+      'movie:20565': { id: 20565, title: '人生七年6', original_title: '42 Up', media_type: 'movie', release_date: '1999-11-17', belongs_to_collection: { id: 95051, name: '人生七年（系列）' } },
+      'collection:95051': { id: 95051, name: '人生七年（系列）', parts: [
+        { id: 20562, title: '人生七年5', release_date: '1991-08-29' },
+        { id: 20565, title: '人生七年6', release_date: '1999-11-17' },
+      ] },
+      'tv:47601': { id: 47601, name: '42: Forty Two Up', original_name: '42: Forty Two Up', media_type: 'tv', first_air_date: '', status: 'Ended', seasons: [] },
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+
+  await expect(page.getByRole('button', { name: /人生七年（系列）.*应用/ })).toBeVisible();
+  await expect(page.getByText(/存在多个有效 TMDB 匹配/)).toHaveCount(0);
+  await expect(page.getByText('可处理 1 · 完整排除 0 · 已归组 0', { exact: true })).toBeVisible();
+  await expect(page.getByText('非合集/无差异 0 · 已忽略 0 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
 });
 
 test('@collections reuses a legacy documentary by IMDb when completing a movie series', async ({ page }) => {
