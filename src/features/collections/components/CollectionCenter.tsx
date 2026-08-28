@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CollectionMember, WatchCollection, WatchRecord } from '../../../shared/types';
 import { displayTitlesOf } from '../../../shared/lib/displayTitle';
+import { collectionsByRecentGrouping } from '../../../shared/lib/collectionOrdering';
 import { useAccessibleDialog } from '../../../shared/lib/useAccessibleDialog';
 import SafePosterImage from '../../watchlist/components/SafePosterImage';
 import { getSettingAsync, getTmdbDetailAsync, getTmdbSeasonDetailAsync, searchTmdbAsync, setSettingAsync, type CompleteMovieCollectionInput, type CompleteMovieCollectionResult } from '../../../shared/lib/database';
@@ -93,7 +94,7 @@ export default function CollectionCenter(props: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(() => (
     props.initialSelectedId && collections.some(item => item.id === props.initialSelectedId)
       ? props.initialSelectedId
-      : collections[0]?.id ?? null
+      : collectionsByRecentGrouping(collections, members)[0]?.id ?? null
   ));
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
@@ -129,13 +130,17 @@ export default function CollectionCenter(props: Props) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const collectionButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const dialogRef = useAccessibleDialog<HTMLDivElement>({ onEscape: onClose, initialFocusRef: closeRef });
+  const orderedCollections = useMemo(
+    () => collectionsByRecentGrouping(collections, members),
+    [collections, members],
+  );
 
   useEffect(() => {
     if (selectedId === null || collections.some(item => item.id === selectedId)) return;
     // The selected entity can disappear after a confirmed delete or remote refresh.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelectedId(collections[0]?.id ?? null);
-  }, [collections, selectedId]);
+    setSelectedId(orderedCollections[0]?.id ?? null);
+  }, [collections, orderedCollections, selectedId]);
 
   useEffect(() => {
     let active = true;
@@ -162,7 +167,7 @@ export default function CollectionCenter(props: Props) {
     const text = `${record.chineseName} ${record.originalName}`.toLowerCase();
     return !recordSearch.trim() || text.includes(recordSearch.trim().toLowerCase());
   });
-  const visibleCollections = collections.filter(item => item.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const visibleCollections = orderedCollections.filter(item => item.name.toLowerCase().includes(search.trim().toLowerCase()));
 
   function selectAndFocusCollection(index: number) {
     const collection = visibleCollections[index];

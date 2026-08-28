@@ -92,6 +92,30 @@ describe('TASK-D-SYNC-001 three-way merge', () => {
     assert.equal(result.conflicts.length, 0);
     assert.equal(result.local.records[0].revActor, 'remote');
   });
+
+  test('empty optional dates are equivalent across legacy null and current empty-string records', () => {
+    const base = record('same', { isLocked: true });
+    const local = record('same', { isLocked: true, rev: 3, revActor: 'local', updatedAt: now });
+    const remote = record('same', { isLocked: true, startDate: null, endDate: null, rev: 1, revActor: '' });
+    const frozen = [{
+      id: 'same', kind: 'locked', fields: [], base, local, remote,
+      localDeleted: false, remoteDeleted: false, detectedAt: now,
+    }];
+    const result = mergeSyncStates(side([base]), side([local]), side([remote]), 'device-a', now, frozen);
+    assert.equal(result.conflicts.length, 0);
+    assert.equal(result.local.records[0].startDate, '');
+    assert.equal(result.local.records[0].endDate, '');
+    assert.equal(result.local.records[0].rev, 3);
+    assert.deepEqual(result.local, result.remote);
+  });
+
+  test('different known optional dates remain a real same-field conflict', () => {
+    const base = record('same');
+    const local = record('same', { startDate: '2026-08-01' });
+    const remote = record('same', { startDate: '2026-08-02' });
+    const result = mergeSyncStates(side([base]), side([local]), side([remote]), 'device-a', now);
+    assert.deepEqual(result.conflicts[0].fields, ['startDate']);
+  });
 });
 
 describe('TASK-D-HISTORY-001 completion merge', () => {

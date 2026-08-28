@@ -78,6 +78,40 @@ test('@collections opening is read-only until an explicit action', async ({ page
   expect(after.calls.filter(call => writes.has(call.command))).toHaveLength(before.calls.filter(call => writes.has(call.command)).length);
 });
 
+test('@collections shows the most recently grouped collection first without using metadata edit time', async ({ page }) => {
+  const older: WatchCollection = {
+    ...collection,
+    id: 'collection-older',
+    name: '较早归组',
+    normalizedName: '较早归组',
+    updatedAt: '2030-01-01T00:00:00.000Z',
+  };
+  const recent: WatchCollection = {
+    ...collection,
+    id: 'collection-recent',
+    name: '最近归组',
+    normalizedName: '最近归组',
+  };
+  const olderRecord = record('较早条目');
+  const recentRecord = record('最近条目');
+  await setupMockIpc(page, {
+    records: [olderRecord, recentRecord],
+    collections: [older, recent],
+    collectionMembers: [
+      { ...member(olderRecord.id, 0, older.id), createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2031-01-01T00:00:00.000Z' },
+      { ...member(recentRecord.id, 0, recent.id), createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' },
+    ],
+  });
+  await page.goto('/');
+  await openCenter(page);
+
+  const dialog = page.getByRole('dialog', { name: '系列与收藏集' });
+  const collectionButtons = dialog.locator('button[aria-pressed]');
+  await expect(collectionButtons.nth(0)).toContainText('最近归组');
+  await expect(collectionButtons.nth(1)).toContainText('较早归组');
+  await expect(dialog.getByRole('heading', { name: '最近归组' })).toBeVisible();
+});
+
 test('@collections card and poster badges open the linked collection directly without writes', async ({ page }) => {
   const first: WatchCollection = { ...collection, id: 'collection-first', name: '第一个收藏集', normalizedName: '第一个收藏集' };
   const linked: WatchCollection = { ...collection, id: 'collection-linked', name: '克拉克森的农场', normalizedName: '克拉克森的农场' };
