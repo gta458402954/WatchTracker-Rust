@@ -14,6 +14,7 @@ import {
   collectionCandidateDescription,
   movieCollectionCandidateEligibility,
   normalizeCollectionSearchMatches,
+  tmdbDetailIsMissing,
   type CollectionCandidateOutcome,
   type CollectionMatchSeed,
 } from '../lib/collectionCandidateEligibility';
@@ -333,7 +334,9 @@ export default function CollectionCenter(props: Props) {
           let detail = readIdentityCache<TmdbMedia>(detailCacheKey);
           if (!detail) {
             const detailResult = await getTmdbDetailAsync({ id: seed.id, mediaType: seed.mediaType, language: 'zh-CN' });
-            if (!detailResult.success || !detailResult.data) return { reason: 'unavailable' as const };
+            if (!detailResult.success || !detailResult.data) {
+              return { reason: tmdbDetailIsMissing(detailResult.error) ? 'ineligible' as const : 'unavailable' as const };
+            }
             detail = detailResult.data;
             writeIdentityCache(detailCacheKey, detail, true);
           }
@@ -359,10 +362,18 @@ export default function CollectionCenter(props: Props) {
             writeIdentityCache(`tv-series-detail:${sourceId}`, detail, true, Date.now(), 7);
           } else {
             const collectionCacheKey = `movie-collection:${sourceId}`;
+            const missingCollectionCacheKey = `movie-collection-missing:${sourceId}`;
+            if (readIdentityCache<boolean>(missingCollectionCacheKey)) return { reason: 'ineligible' as const };
             let collectionDetail = readIdentityCache<TmdbMedia>(collectionCacheKey);
             if (!collectionDetail) {
               const collectionResult = await getTmdbDetailAsync({ id: sourceId, mediaType: 'collection', language: 'zh-CN' });
-              if (!collectionResult.success || !collectionResult.data) return { reason: 'unavailable' as const };
+              if (!collectionResult.success || !collectionResult.data) {
+                if (tmdbDetailIsMissing(collectionResult.error)) {
+                  writeIdentityCache(missingCollectionCacheKey, true, false);
+                  return { reason: 'ineligible' as const };
+                }
+                return { reason: 'unavailable' as const };
+              }
               collectionDetail = collectionResult.data;
               writeIdentityCache(collectionCacheKey, collectionDetail, true, Date.now(), 7);
             }

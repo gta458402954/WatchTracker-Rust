@@ -5,6 +5,7 @@ import {
   collectionCandidateDescription,
   movieCollectionCandidateEligibility,
   normalizeCollectionSearchMatches,
+  tmdbDetailIsMissing,
 } from '../../../features/collections/lib/collectionCandidateEligibility.ts';
 
 test('collection search matches are normalized and duplicate parent TV identities are removed', () => {
@@ -92,4 +93,12 @@ test('known rejected IMDb groups are counted once using dismissal, completion, t
     { reason: 'ineligible' },
     { reason: 'ineligible' },
   ]).disposition, 'ineligible');
+});
+
+test('only a stable TMDB 404 is treated as a missing source', () => {
+  assert.equal(tmdbDetailIsMissing('TMDB API Error (404): The resource you requested could not be found.'), true);
+  assert.equal(tmdbDetailIsMissing('General error: TMDB API Error (404): Not found'), true);
+  assert.equal(tmdbDetailIsMissing('TMDB API Error (500): Internal error'), false);
+  assert.equal(tmdbDetailIsMissing('Network error: timed out'), false);
+  assert.equal(tmdbDetailIsMissing(undefined), false);
 });

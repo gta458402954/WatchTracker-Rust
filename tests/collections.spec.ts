@@ -492,6 +492,36 @@ test('@collections ignores an unavailable TV sibling when the IMDb movie collect
   await expect(page.getByText('非合集/无差异 0 · 已忽略 0 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
 });
 
+test('@collections treats a deleted TMDB movie collection as ineligible and caches the stable 404', async ({ page }) => {
+  const candidate = {
+    ...record('奇迹男孩'), originalName: 'Wonder', imdbId: 'tt2543472', mediaType: '电影' as const,
+  };
+  await setupMockIpc(page, {
+    records: [candidate],
+    collections: [collection],
+    tmdbSearchResults: [
+      { id: 406997, title: '奇迹男孩', original_title: 'Wonder', media_type: 'movie', release_date: '2017-11-13' },
+    ],
+    tmdbDetails: {
+      'movie:406997': { id: 406997, title: '奇迹男孩', original_title: 'Wonder', media_type: 'movie', release_date: '2017-11-13', belongs_to_collection: { id: 1714886, name: '奇迹男孩（系列）' } },
+    },
+    tmdbDetailErrors: {
+      'collection:1714886': 'TMDB API Error (404): The resource you requested could not be found.',
+    },
+  });
+  await page.goto('/');
+  await openCenter(page);
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+
+  await expect(page.getByText('可处理 0 · 完整排除 0 · 已归组 0', { exact: true })).toBeVisible();
+  await expect(page.getByText('非合集/无差异 1 · 已忽略 0 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '扫描片库归组建议' }).click();
+  await expect(page.getByText('非合集/无差异 1 · 已忽略 0 · 待确认 0 · 无法确认 0', { exact: true })).toBeVisible();
+
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'get_tmdb_detail' && call.args.mediaType === 'collection' && call.args.id === 1714886)).toHaveLength(1);
+});
+
 test('@collections reuses a legacy documentary by IMDb when completing a movie series', async ({ page }) => {
   const movieSeries: WatchCollection = {
     ...collection,

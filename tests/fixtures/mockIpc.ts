@@ -15,6 +15,7 @@ export interface MockIpcOptions {
   tmdbSearchResults?: TmdbMedia[];
   tmdbDetail?: TmdbMedia;
   tmdbDetails?: Record<string, TmdbMedia>;
+  tmdbDetailErrors?: Record<string, string>;
   tmdbSeasonDetails?: Record<string, TmdbMedia>;
   tmdbDelayMs?: number;
   updateFailureCounts?: Record<string, number>;
@@ -61,7 +62,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbDetailErrors, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -833,6 +834,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'get_tmdb_detail':
               requireKeys(command, args, ['id', 'language', 'mediaType', 'proxy']);
               if (tmdbDelayMs > 0) await new Promise(resolve => setTimeout(resolve, tmdbDelayMs));
+              if (tmdbDetailErrors[`${args.mediaType}:${args.id}`]) throw new Error(tmdbDetailErrors[`${args.mediaType}:${args.id}`]);
               return structuredClone(tmdbDetails[`${args.mediaType}:${args.id}`] ?? tmdbDetail);
             case 'get_tmdb_season_detail':
               requireKeys(command, args, ['language', 'proxy', 'seasonNumber', 'seriesId']);
@@ -911,6 +913,7 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       tmdbSearchResults: options.tmdbSearchResults ?? [],
       tmdbDetail: options.tmdbDetail ?? {},
       tmdbDetails: options.tmdbDetails ?? {},
+      tmdbDetailErrors: options.tmdbDetailErrors ?? {},
       tmdbSeasonDetails: options.tmdbSeasonDetails ?? {},
       tmdbDelayMs: options.tmdbDelayMs ?? 0,
       updateFailureCounts: options.updateFailureCounts ?? {},

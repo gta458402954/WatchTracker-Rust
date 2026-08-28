@@ -28,6 +28,10 @@ export interface CollectionCandidateGroupResult<T> {
   choices: T[];
 }
 
+export function tmdbDetailIsMissing(error: string | null | undefined): boolean {
+  return /TMDB API Error\s*\(404\)/i.test(error ?? '');
+}
+
 export function classifyCollectionCandidateGroup<T>(
   outcomes: readonly CollectionCandidateOutcome<T>[],
 ): CollectionCandidateGroupResult<T> {
