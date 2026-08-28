@@ -96,6 +96,7 @@ test('known rejected IMDb groups are counted once using dismissal, completion, t
 });
 
 test('only a stable TMDB 404 is treated as a missing source', () => {
+  assert.equal(tmdbDetailIsMissing('General error: tmdb_not_found'), true);
   assert.equal(tmdbDetailIsMissing('TMDB API Error (404): The resource you requested could not be found.'), true);
   assert.equal(tmdbDetailIsMissing('General error: TMDB API Error (404): Not found'), true);
   assert.equal(tmdbDetailIsMissing('TMDB API Error (500): Internal error'), false);

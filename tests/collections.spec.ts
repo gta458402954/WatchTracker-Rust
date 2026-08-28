@@ -506,7 +506,7 @@ test('@collections treats a deleted TMDB movie collection as ineligible and cach
       'movie:406997': { id: 406997, title: '奇迹男孩', original_title: 'Wonder', media_type: 'movie', release_date: '2017-11-13', belongs_to_collection: { id: 1714886, name: '奇迹男孩（系列）' } },
     },
     tmdbDetailErrors: {
-      'collection:1714886': 'TMDB API Error (404): The resource you requested could not be found.',
+      'collection:1714886': 'General error: tmdb_not_found',
     },
   });
   await page.goto('/');

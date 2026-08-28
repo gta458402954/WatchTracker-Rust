@@ -29,7 +29,8 @@ export interface CollectionCandidateGroupResult<T> {
 }
 
 export function tmdbDetailIsMissing(error: string | null | undefined): boolean {
-  return /TMDB API Error\s*\(404\)/i.test(error ?? '');
+  const value = error ?? '';
+  return value.includes('tmdb_not_found') || /TMDB API Error\s*\(404\)/i.test(value);
 }
 
 export function classifyCollectionCandidateGroup<T>(

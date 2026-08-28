@@ -13,6 +13,11 @@ const TMDB_JSON_MAX_BYTES: usize = 4 * 1024 * 1024;
 const WEBDAV_JSON_MAX_BYTES: usize = 64 * 1024 * 1024;
 const WEBDAV_XML_MAX_BYTES: usize = 1024 * 1024;
 
+fn tmdb_resource_missing(status: reqwest::StatusCode, json: &Value) -> bool {
+    status == reqwest::StatusCode::NOT_FOUND
+        || json.get("status_code").and_then(Value::as_i64) == Some(34)
+}
+
 async fn read_limited(
     mut response: reqwest::Response,
     limit: usize,
@@ -333,6 +338,14 @@ pub async fn get_tmdb_detail(
     let status = res.status();
     let json = json_response(res, TMDB_JSON_MAX_BYTES, "tmdb_response_too_large", true).await?;
     if !status.is_success() {
+        if tmdb_resource_missing(status, &json) {
+            log::warn!(
+                "[TMDB] Detail resource missing for {} ID: {}",
+                media_type,
+                id
+            );
+            return Err("tmdb_not_found".to_string());
+        }
         let message = json
             .get("status_message")
             .and_then(Value::as_str)
@@ -340,6 +353,28 @@ pub async fn get_tmdb_detail(
         return Err(format!("TMDB API Error ({}): {}", status, message));
     }
     Ok(json)
+}
+
+#[cfg(test)]
+mod tmdb_tests {
+    use super::tmdb_resource_missing;
+    use serde_json::json;
+
+    #[test]
+    fn missing_tmdb_resources_use_a_stable_classification() {
+        assert!(tmdb_resource_missing(
+            reqwest::StatusCode::NOT_FOUND,
+            &json!({ "status_code": 1 })
+        ));
+        assert!(tmdb_resource_missing(
+            reqwest::StatusCode::BAD_REQUEST,
+            &json!({ "status_code": 34 })
+        ));
+        assert!(!tmdb_resource_missing(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            &json!({ "status_code": 11 })
+        ));
+    }
 }
 
 pub async fn get_tmdb_season_detail(
