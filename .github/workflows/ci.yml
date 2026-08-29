@@ -56,6 +56,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Verify release tag matches project versions
+        shell: pwsh
+        run: node scripts/verify-release-version.mjs $env:GITHUB_REF_NAME
       - name: Install Rust stable
         run: rustup toolchain install stable --profile minimal
       - run: npm ci
@@ -88,5 +91,7 @@ jobs:
           $assets += @($nsis | ForEach-Object FullName)
 
           gh release create $env:GITHUB_REF_NAME @assets `
+            --verify-tag `
+            --fail-on-no-commits `
             --generate-notes `
             --title "WatchTracker $env:GITHUB_REF_NAME"
