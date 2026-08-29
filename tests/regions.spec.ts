@@ -131,11 +131,10 @@ test('dynamic options react to add, edit, delete, and controlled record replacem
   await page.getByTitle('删除').click();
   await expect(page.getByLabel('地区筛选')).toHaveCount(0);
 
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: /添加记录/ }).click();
+  await page.getByLabel('顶部工具栏').getByRole('button', { name: '添加记录' }).click();
   await page.getByPlaceholder('请输入中文名称').fill('新增韩国记录');
   await page.getByPlaceholder('如：韩国').fill('韩国');
-  await page.getByRole('button', { name: '添加记录' }).click();
+  await page.getByRole('dialog', { name: '添加新记录' }).getByRole('button', { name: '添加记录' }).click();
   await expect(await regionButton(page, '韩国')).toBeVisible();
 
   await replaceMockRecords(page, [record('受控法国记录', 'FR'), record('受控德国记录', 'DE')]);

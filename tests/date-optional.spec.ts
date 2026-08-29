@@ -32,8 +32,7 @@ function record(overrides: Partial<WatchRecord> = {}): WatchRecord {
 }
 
 async function openAddForm(page: Page) {
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: /添加记录/ }).click();
+  await page.getByLabel('顶部工具栏').getByRole('button', { name: '添加记录' }).click();
   return page.getByRole('dialog', { name: '添加新记录' });
 }
 

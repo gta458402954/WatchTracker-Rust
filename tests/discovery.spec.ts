@@ -39,8 +39,7 @@ function record(id: string, overrides: Partial<WatchRecord> = {}): WatchRecord {
 }
 
 async function openDashboard(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: '数据看板' }).click();
+  await page.getByRole('button', { name: '数据看板' }).click();
   await expect(page.getByRole('heading', { name: '观看概览' })).toBeVisible();
 }
 

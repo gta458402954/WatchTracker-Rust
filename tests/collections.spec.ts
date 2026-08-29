@@ -28,8 +28,7 @@ function member(recordId: string, position: number, collectionId = collection.id
 }
 
 async function openCenter(page: Parameters<typeof setupMockIpc>[0]) {
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: '系列与收藏集' }).click();
+  await page.getByRole('button', { name: '系列与收藏集' }).click();
   await expect(page.getByRole('dialog', { name: '系列与收藏集' })).toBeVisible();
 }
 
@@ -129,8 +128,7 @@ test('@collections card and poster badges open the linked collection directly wi
   await expect(center.getByRole('heading', { name: '克拉克森的农场' })).toBeVisible();
   await center.getByRole('button', { name: '关闭收藏集中心' }).first().click();
 
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: '切换至海报墙' }).click();
+  await page.getByRole('button', { name: '切换至海报墙' }).click();
   await page.getByRole('button', { name: '打开收藏集 克拉克森的农场' }).click();
   center = page.getByRole('dialog', { name: '系列与收藏集' });
   await expect(center.getByRole('heading', { name: '克拉克森的农场' })).toBeVisible();

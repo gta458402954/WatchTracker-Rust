@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import type { SyncRuntimeState } from '../../../shared/lib/database';
 import { BUILD_INFO } from '../../../shared/lib/buildInfo';
-import MoreActionsMenu from './MoreActionsMenu';
 import SyncStatusMenu from './SyncStatusMenu';
 
 interface HeaderProps {
@@ -71,7 +70,7 @@ export default function Header({
 
         {savedViewControl}
 
-        <div className="relative min-w-48 flex-1">
+        <div className="relative w-56 shrink-0 sm:w-64">
           <svg aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
@@ -118,6 +117,53 @@ export default function Header({
 
         <button
           type="button"
+          onClick={onShowForm}
+          aria-label="添加记录"
+          title="添加记录（Ctrl+N）"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-700"
+        >
+          <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m7-7H5" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onViewModeChange(viewMode === 'list' ? 'poster' : 'list')}
+          aria-label={viewMode === 'list' ? '切换至海报墙' : '切换至列表'}
+          title={viewMode === 'list' ? '切换至海报墙' : '切换至列表'}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+        >
+          <span aria-hidden="true" className="text-lg leading-none">{viewMode === 'list' ? '▦' : '☷'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onShowCollections}
+          aria-label="系列与收藏集"
+          title="系列与收藏集"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 hover:text-indigo-600"
+        >
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <rect x="3" y="5" width="18" height="14" rx="2" strokeWidth="2" />
+            <path strokeLinecap="round" strokeWidth="2" d="M7 5v14M17 5v14M3 9h4m10 0h4M3 15h4m10 0h4" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          onClick={onShowDashboard}
+          aria-label="数据看板"
+          title="数据看板"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 hover:text-indigo-600"
+        >
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 19V9m5 10V5m5 14v-7m5 7V3" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
           onClick={onShowSettings}
           aria-label="设置"
           title="设置"
@@ -128,14 +174,6 @@ export default function Header({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
-
-        <MoreActionsMenu
-          viewMode={viewMode}
-          onViewModeChange={onViewModeChange}
-          onShowDashboard={onShowDashboard}
-          onShowCollections={onShowCollections}
-          onShowForm={onShowForm}
-        />
       </div>
     </header>
   );

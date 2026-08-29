@@ -22,7 +22,7 @@ const pausedSyncSettings = {
   }),
 };
 
-test('@toolbar keeps the confirmed eight-part desktop structure on one line', async ({ page }) => {
+test('@toolbar keeps every direct action on one desktop line', async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await setupMockIpc(page, { records: [record('布局记录', 'CN')], settings: pausedSyncSettings });
   await page.goto('/');
@@ -34,8 +34,12 @@ test('@toolbar keeps the confirmed eight-part desktop structure on one line', as
   await expect(toolbar.getByRole('button', { name: /高级筛选/ })).toBeVisible();
   await expect(toolbar.getByRole('combobox', { name: '排序方式' })).toBeVisible();
   await expect(toolbar.getByRole('button', { name: /云端同步：已暂停/ })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '添加记录' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '切换至海报墙' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '系列与收藏集' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '数据看板' })).toBeVisible();
   await expect(toolbar.getByRole('button', { name: '设置' })).toBeVisible();
-  await expect(toolbar.getByRole('button', { name: '更多操作' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '更多操作' })).toHaveCount(0);
 
   const verticalCenters = await toolbar.locator(':scope > *').evaluateAll(elements =>
     elements.map(element => {
@@ -47,7 +51,7 @@ test('@toolbar keeps the confirmed eight-part desktop structure on one line', as
   expect(await page.locator('body').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(false);
 });
 
-test('@toolbar popovers are inert until an explicit action and moved actions remain reachable', async ({ page }) => {
+test('@toolbar popovers are inert and direct actions remain reachable', async ({ page }) => {
   await setupMockIpc(page, { records: [record('菜单记录', 'CN')], settings: pausedSyncSettings });
   await page.goto('/');
   const before = await mockSnapshot(page);
@@ -57,11 +61,10 @@ test('@toolbar popovers are inert until an explicit action and moved actions rem
   await page.getByRole('button', { name: /云端同步：已暂停/ }).click();
   await expect(page.getByRole('dialog', { name: '同步状态' })).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await expect(page.getByRole('menuitem', { name: /添加记录/ })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: /切换至海报墙/ })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: '数据看板' })).toBeVisible();
-  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: '添加记录' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '切换至海报墙' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '系列与收藏集' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '数据看板' })).toBeVisible();
 
   const after = await mockSnapshot(page);
   expect(after.calls.filter(call => call.command === 'webdav_request' || writeCommands.has(call.command))).toHaveLength(businessCallsBefore);

@@ -28,8 +28,7 @@ test('@arch002 record form remains page-safe at 360px', async ({ page }) => {
   await setupMockIpc(page);
   await page.setViewportSize({ width: 360, height: 740 });
   await page.goto('/');
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: /添加记录/ }).click();
+  await page.getByLabel('顶部工具栏').getByRole('button', { name: '添加记录' }).click();
   const dialog = page.getByRole('dialog', { name: '添加新记录' });
   await expect(dialog).toBeVisible();
   expect(await page.locator('body').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(false);

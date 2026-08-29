@@ -65,8 +65,7 @@ test('@poster-cache Windows source retries once through the controlled downloade
   });
   await setupMockIpc(page, { records: [posterRecord()] });
   await page.goto('/');
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: '切换至海报墙' }).click();
+  await page.getByRole('button', { name: '切换至海报墙' }).click();
 
   await expect(page.getByRole('button', { name: '重试海报' })).toBeVisible();
   await expect.poll(() => posterRequests).toEqual([

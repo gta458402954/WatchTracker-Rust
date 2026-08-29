@@ -1,7 +1,7 @@
 # Windows 本地打包诊断与发布边界
 
 > 记录日期：2026-08-20
-> 适用版本：WatchTracker 1.10.2 及当前 Tauri 2 / WiX 3.14.1 构建链
+> 适用版本：WatchTracker 1.10.3 及当前 Tauri 2 / WiX 3.14.1 构建链
 
 ## 结论
 

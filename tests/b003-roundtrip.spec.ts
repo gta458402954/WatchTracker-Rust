@@ -289,13 +289,12 @@ test('@conditional-record-form new movie preserves all normalized countries and 
     },
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: /添加记录/ }).click();
+  await page.getByLabel('顶部工具栏').getByRole('button', { name: '添加记录' }).click();
   await page.getByPlaceholder('请输入中文名称').fill('电影候选');
   await page.getByPlaceholder('如：韩国').fill('美国,律政,自定义');
   await page.getByRole('button', { name: /自动填充/ }).click();
   await page.getByRole('button', { name: /电影候选/ }).click();
-  await page.getByRole('button', { name: '添加记录' }).click();
+  await page.getByRole('dialog', { name: '添加新记录' }).getByRole('button', { name: '添加记录' }).click();
 
   const snapshot = await mockSnapshot(page);
   const inserted = snapshot.calls.find(call => call.command === 'insert_record')?.args.r as WatchRecord;
@@ -334,14 +333,13 @@ test('@expected-record-form mainland-China TMDB metadata does not infer a missin
     },
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '更多操作' }).click();
-  await page.getByRole('menuitem', { name: /添加记录/ }).click();
+  await page.getByLabel('顶部工具栏').getByRole('button', { name: '添加记录' }).click();
   await page.locator('select:has(option[value="剧集"])').selectOption('剧集');
   await page.getByPlaceholder('请输入中文名称').fill('大陆剧集候选');
   await page.getByRole('button', { name: /自动填充/ }).click();
   await page.getByRole('button', { name: /大陆剧集候选/ }).click();
   await expect(page.getByPlaceholder('Netflix / 爱奇艺 / B站...')).toHaveValue('');
-  await page.getByRole('button', { name: '添加记录' }).click();
+  await page.getByRole('dialog', { name: '添加新记录' }).getByRole('button', { name: '添加记录' }).click();
 
   const inserted = (await mockSnapshot(page)).calls.find(call => call.command === 'insert_record')?.args.r as WatchRecord;
   expect(inserted.originCountry).toBe('CN');
