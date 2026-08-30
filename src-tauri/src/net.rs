@@ -597,6 +597,22 @@ fn validator_fingerprint(value: &str) -> String {
         .collect()
 }
 
+pub(crate) fn valid_entity_tag(value: &str, allow_weak: bool) -> bool {
+    let opaque = if allow_weak {
+        value
+            .strip_prefix("W/\"")
+            .or_else(|| value.strip_prefix('"'))
+    } else {
+        value.strip_prefix('"')
+    }
+    .and_then(|rest| rest.strip_suffix('"'));
+    opaque.is_some_and(|inner| {
+        !inner.is_empty()
+            && !inner.contains('"')
+            && !inner.chars().any(|character| character.is_control())
+    })
+}
+
 pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, String> {
     log::info!("[WebDAV] {} Request to: {}", request.method, request.url);
     if request.method == "PUT" {
@@ -613,6 +629,14 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
         } else if let Some(value) = request.if_none_match.as_deref() {
             log::info!(
                 "[WebDAV] PUT condition: if-none-match; validator fingerprint: {}",
+                validator_fingerprint(value)
+            );
+        }
+    }
+    if request.method == "GET" {
+        if let Some(value) = request.if_none_match.as_deref() {
+            log::info!(
+                "[WebDAV] GET condition: if-none-match; validator fingerprint: {}",
                 validator_fingerprint(value)
             );
         }
@@ -680,6 +704,16 @@ pub async fn webdav_request(request: WebDavRequest) -> Result<WebDavResponse, St
         .get(reqwest::header::ETAG)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
+
+    if request.method == "GET" && status == reqwest::StatusCode::NOT_MODIFIED {
+        log::info!("[WebDAV] Conditional GET completed with 304");
+        return Ok(WebDavResponse {
+            status: status.as_u16(),
+            body: None,
+            etag,
+            text: None,
+        });
+    }
 
     if request.method == "GET" && status.is_success() {
         log::info!(
