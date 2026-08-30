@@ -36,6 +36,9 @@ export interface MockIpcOptions {
   } | null;
   recoveryPoints?: RecoveryPoint[];
   failSettingWrites?: boolean;
+  exportBackupResult?: string | null;
+  failExportBackup?: boolean;
+  exportBackupDelayMs?: number;
 }
 
 export interface MockSnapshot {
@@ -62,7 +65,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbDetailErrors, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbDetailErrors, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites, exportBackupResult, failExportBackup, exportBackupDelayMs }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -201,6 +204,11 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 throw new Error('injected database load failure');
               }
               return structuredClone(snapshot.records);
+            case 'export_library_backup':
+              requireKeys(command, args, []);
+              if (exportBackupDelayMs > 0) await new Promise(resolve => setTimeout(resolve, exportBackupDelayMs));
+              if (failExportBackup) throw new Error('injected export failure');
+              return exportBackupResult;
             case 'get_collections':
               requireKeys(command, args, []);
               return structuredClone(collections);
@@ -930,6 +938,9 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       databaseCompatibilityIssue: options.databaseCompatibilityIssue ?? null,
       recoveryPoints: options.recoveryPoints ?? [],
       failSettingWrites: options.failSettingWrites ?? false,
+      exportBackupResult: options.exportBackupResult === undefined ? 'C:\\Users\\tester\\Documents\\影视追踪_2026-08-30_003523.json' : options.exportBackupResult,
+      failExportBackup: options.failExportBackup ?? false,
+      exportBackupDelayMs: options.exportBackupDelayMs ?? 0,
     },
   );
 }

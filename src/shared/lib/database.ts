@@ -8,6 +8,10 @@ export async function getAllRecordsAsync(): Promise<WatchRecord[]> {
   return invoke('get_all_records');
 }
 
+export async function exportLibraryBackup(): Promise<string | null> {
+  return invoke('export_library_backup');
+}
+
 export async function insertRecord(record: WatchRecord): Promise<WatchRecord> {
   return invoke<WatchRecord>('insert_record', { r: record });
 }

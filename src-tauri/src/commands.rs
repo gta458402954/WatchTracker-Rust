@@ -7,7 +7,7 @@ use crate::sync_state;
 use serde_json::Value;
 use tauri::State;
 
-fn lock_database(
+pub(crate) fn lock_database(
     state: &DbState,
 ) -> Result<std::sync::MutexGuard<'_, rusqlite::Connection>, crate::error::AppError> {
     if let Some(issue) = &state.compatibility_issue {
@@ -20,6 +20,14 @@ fn lock_database(
         .conn
         .lock()
         .map_err(|error| crate::error::AppError::ConcurrencyError(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn export_library_backup(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+) -> Result<Option<String>, crate::error::AppError> {
+    crate::local_backup::export(app, state).await
 }
 
 fn validate_webdav_conditions(

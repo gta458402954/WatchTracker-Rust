@@ -1,11 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { WatchRecord } from '../../../shared/types';
-import { getAllEpisodeCompletions, getCollections, getCollectionMembers, replaceLibrary, replaceLibraryV3 } from '../../../shared/lib/database';
+import { exportLibraryBackup, replaceLibrary, replaceLibraryV3 } from '../../../shared/lib/database';
 import { normalizeImportedRecords } from '../../../shared/lib/importValidation';
 import type { NoticeTone } from '../../../shared/lib/feedback';
 
 interface Options {
-  records: WatchRecord[];
   onImport: (records: WatchRecord[]) => void | Promise<void>;
   onDatabaseRestored: () => Promise<WatchRecord[]>;
   onNotify?: (tone: NoticeTone, message: string) => void;
@@ -13,15 +12,23 @@ interface Options {
   showSuccess: (message: string) => void;
 }
 
-export function useImportExport({ records, onImport, onDatabaseRestored, onNotify, showFailure, showSuccess }: Options) {
+export function useImportExport({ onImport, onDatabaseRestored, onNotify, showFailure, showSuccess }: Options) {
   const [importStatus, setImportStatus] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const exportingRef = useRef(false);
   async function handleExport() {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExporting(true);
+    setImportStatus('');
     try {
-      const [episodeCompletions, collections, collectionMembers] = await Promise.all([getAllEpisodeCompletions(), getCollections(), getCollectionMembers()]);
-      const data = JSON.stringify({ formatVersion: 4, exportedAt: new Date().toISOString(), records, episodeCompletions, collections, collectionMembers }, null, 2);
-      const blob = new Blob([data], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a');
-      a.href = url; a.download = `影视追踪_${new Date().toISOString().slice(0, 10)}.json`; a.click(); a.remove(); URL.revokeObjectURL(url);
+      const path = await exportLibraryBackup();
+      if (!path) { setImportStatus('已取消导出。'); onNotify?.('info', '已取消导出。'); return; }
+      const message = `备份已保存到：${path}`;
+      setImportStatus(`✅ ${message}`);
+      showSuccess(message);
     } catch (error) { showFailure('Settings.ExportLocal', '导出本地数据', error, setImportStatus); }
+    finally { exportingRef.current = false; setExporting(false); }
   }
   function handleImportLocal() {
     const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
@@ -51,5 +58,5 @@ export function useImportExport({ records, onImport, onDatabaseRestored, onNotif
       }; reader.readAsText(file);
     }; input.click();
   }
-  return { importStatus, setImportStatus, handleExport, handleImportLocal };
+  return { importStatus, setImportStatus, exporting, handleExport, handleImportLocal };
 }

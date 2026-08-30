@@ -811,16 +811,25 @@ test('@conditional-watchlist-boundary local export and import preserve region fi
   await page.goto('/');
   await openSettingsTools(page);
 
-  const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /导出备份 JSON/ }).click();
-  const download = await downloadPromise;
-  const path = await download.path();
-  expect(path).not.toBeNull();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText(/备份已保存到：.*影视追踪_2026-08-30_003523\.json/);
+  expect((await mockSnapshot(page)).calls.filter(call => call.command === 'export_library_backup')).toHaveLength(1);
 
   const chooserPromise = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: /导入本地 JSON/ }).click();
   const chooser = await chooserPromise;
-  await chooser.setFiles(path!);
+  await chooser.setFiles({
+    name: '影视追踪_2026-08-30_003523.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      formatVersion: 4,
+      exportedAt: '2026-08-29T16:35:23.000Z',
+      records: [original],
+      episodeCompletions: [],
+      collections: [],
+      collectionMembers: [],
+    })),
+  });
   await expect(page.getByText('已导入 1 条记录、0 条逐集历史和 0 个收藏集。')).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
@@ -829,6 +838,42 @@ test('@conditional-watchlist-boundary local export and import preserve region fi
   expect(replacement?.args.records).toEqual([
     expect.objectContaining({ originCountry: 'GB, XX, CN', contentTags: '律政,自定义,日本料理' }),
   ]);
+});
+
+test('@local-backup native export ignores repeated clicks while saving', async ({ page }) => {
+  await setupMockIpc(page, { exportBackupDelayMs: 200 });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  const exportButton = page.getByRole('button', { name: /导出备份 JSON/ });
+  await exportButton.evaluate((button: HTMLButtonElement) => {
+    button.click();
+    button.click();
+  });
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText(/备份已保存到：/);
+
+  const calls = (await mockSnapshot(page)).calls.filter(call => call.command === 'export_library_backup');
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args).toEqual({});
+});
+
+test('@local-backup native export distinguishes cancellation from failure', async ({ page }) => {
+  await setupMockIpc(page, { exportBackupResult: null });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /导出备份 JSON/ }).click();
+  await expect(page.getByRole('dialog').getByRole('status')).toHaveText('已取消导出。');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('@local-backup native export keeps write failures visible', async ({ page }) => {
+  await setupMockIpc(page, { failExportBackup: true });
+  await page.goto('/');
+  await openSettingsTools(page);
+
+  await page.getByRole('button', { name: /导出备份 JSON/ }).click();
+  await expect(page.getByRole('alert')).toContainText('导出本地数据失败，请稍后重试。');
 });
 
 test('@conditional-watchlist-boundary sync replacement preserves region fields', async ({ page }) => {

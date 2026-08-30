@@ -8,6 +8,7 @@ mod db_atomic_helpers;
 mod db_atomic_update;
 mod episode_history;
 mod error;
+mod local_backup;
 mod metadata_identity;
 mod models;
 mod net;
@@ -54,6 +55,7 @@ fn setup_logging(paths: &AppPaths) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("poster", |context, request| {
             let path = request.uri().path();
             let file_name = path.trim_start_matches('/');
@@ -127,6 +129,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_all_records,
+            commands::export_library_backup,
             commands::get_database_compatibility,
             commands::insert_record,
             commands::update_record,
