@@ -213,7 +213,7 @@ export interface SyncCommitInput {
   collectionMemberTombstones: CollectionMemberTombstone[];
   baseline: SyncPayloadV3;
   conflicts: SyncConflictV3[];
-  remoteEtag: string;
+  remoteEtag: string | null;
   lastCommit: unknown;
   v2SourceFingerprint: string | null;
   acknowledgeOutbox: boolean;
@@ -222,6 +222,14 @@ export interface SyncCommitInput {
 export interface SyncCommitResult {
   recordsGeneration: number;
   recordCount: number;
+}
+
+export interface RemoteUnchangedInput {
+  targetId: string | null;
+  targetEpoch: number | null;
+  expectedGeneration: number;
+  expectedRemoteEtag: string;
+  v2SourceFingerprint: string | null;
 }
 
 export async function getSyncSnapshot(): Promise<SyncSnapshot> {
@@ -238,6 +246,10 @@ export async function setAutoSyncPaused(paused: boolean, targetId: string | null
 
 export async function recordSyncFailure(code: string, nextAttemptAt: string | null, targetId: string | null, targetEpoch: number | null): Promise<SyncRuntimeState> {
   return invoke('record_sync_failure', { code, nextAttemptAt, targetId, targetEpoch });
+}
+
+export async function recordSyncRemoteUnchanged(input: RemoteUnchangedInput): Promise<SyncRuntimeState> {
+  return invoke('record_sync_remote_unchanged', { input });
 }
 
 export async function commitSyncResult(input: SyncCommitInput): Promise<SyncCommitResult> {
