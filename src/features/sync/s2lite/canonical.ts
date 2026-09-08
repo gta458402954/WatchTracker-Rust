@@ -97,7 +97,8 @@ export function canonicalJcsBytes(value: JsonValue): Uint8Array {
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer as ArrayBuffer);
+  const exactBytes = Uint8Array.from(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', exactBytes.buffer as ArrayBuffer);
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -141,6 +142,11 @@ export function validateSafeInteger(value: unknown, minimum: number, maximum: nu
   if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
     invalid('invalid_safe_integer');
   }
+}
+
+export function extractSafeIntegerV1(value: unknown, minimum: number, maximum: number): number {
+  validateSafeInteger(value, minimum, maximum);
+  return value;
 }
 
 export function validateFloat64(value: unknown, minimum: number, maximum: number): asserts value is number {

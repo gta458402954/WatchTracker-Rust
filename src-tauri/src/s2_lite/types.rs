@@ -158,3 +158,185 @@ pub trait LegacySemanticAdapterV1 {
         legacy_value: &Value,
     ) -> std::result::Result<BootstrapEntity, String>;
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitMutationV1 {
+    pub local_mutation_id: String,
+    pub entity_type: String,
+    pub entity_key: EntityKey,
+    pub operation: String,
+    pub value: Value,
+    pub base_frontier: Vec<CommitRef>,
+    pub changed_fields: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitSourceV1 {
+    pub r#type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitV1 {
+    pub protocol: String,
+    pub protocol_version: u8,
+    pub s2_semantic_profile_version: u8,
+    pub required_features: Vec<String>,
+    pub writer_id: String,
+    pub writer_seq: WriterSeqDecimalString,
+    pub commit_id: String,
+    pub content_hash: String,
+    pub previous_writer_commit: Option<CommitRef>,
+    pub basis_clock: Vec<CommitRef>,
+    pub commit_kind: String,
+    pub created_at: String,
+    pub source: CommitSourceV1,
+    pub resolves: Vec<String>,
+    pub mutations: Vec<CommitMutationV1>,
+}
+
+impl CommitV1 {
+    pub fn commit_ref(&self) -> CommitRef {
+        CommitRef {
+            writer_id: self.writer_id.clone(),
+            writer_seq: self.writer_seq.clone(),
+            commit_id: self.commit_id.clone(),
+            content_hash: self.content_hash.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HistoricalValidityState {
+    Pending,
+    Valid,
+    Invalid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoricalValidity {
+    pub state: HistoricalValidityState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityVersionV1 {
+    pub entity_key: EntityKey,
+    pub operation: String,
+    pub full_value: Value,
+    pub semantic_state: Value,
+    pub canonical_semantic_value: Option<Value>,
+    pub changed_fields: Vec<String>,
+    pub base_frontier: Vec<CommitRef>,
+    pub commit_ref: CommitRef,
+    pub commit_dot: CommitDot,
+    pub causal_basis: Vec<CommitRef>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataVariantV1 {
+    pub commit_ref: CommitRef,
+    pub metadata: Value,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "state")]
+pub enum MaterializedEntityV1 {
+    Absent,
+    Resolved {
+        #[serde(rename = "semanticState")]
+        semantic_state: Value,
+        #[serde(rename = "businessValue")]
+        business_value: Option<Value>,
+        #[serde(rename = "provenanceFrontier")]
+        provenance_frontier: Vec<CommitRef>,
+        #[serde(rename = "metadataVariants")]
+        metadata_variants: Vec<MetadataVariantV1>,
+    },
+    Conflict {
+        #[serde(rename = "conflictId")]
+        conflict_id: String,
+        #[serde(rename = "conflictKind")]
+        conflict_kind: String,
+        #[serde(rename = "entityKey")]
+        entity_key: EntityKey,
+        frontier: Vec<CommitRef>,
+        #[serde(rename = "conflictFields")]
+        conflict_fields: Vec<String>,
+        #[serde(rename = "semanticAlternatives")]
+        semantic_alternatives: Vec<SemanticAlternative>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriterForkV1 {
+    pub writer_id: String,
+    pub writer_seq: WriterSeqDecimalString,
+    pub alternatives: Vec<CommitRef>,
+    pub safe_writer_frontier: WriterSeqDecimalString,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationConflictV1 {
+    pub relation_conflict_id: String,
+    pub core: RelationConflictCore,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationDetectionV1 {
+    pub conflicts: Vec<RelationConflictV1>,
+    pub blocked_by_entity_conflict: Vec<EntityKey>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateDiagnosticV1 {
+    pub kind: String,
+    pub value: Value,
+    pub entity_keys: Vec<EntityKey>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidityEntryV1 {
+    pub commit_ref: CommitRef,
+    pub validity: HistoricalValidity,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontierEntryV1 {
+    pub entity_key: EntityKey,
+    pub frontier: Vec<CommitRef>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterializedEntryV1 {
+    pub entity_key: EntityKey,
+    pub value: MaterializedEntityV1,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedReplayV1 {
+    pub validity: Vec<ValidityEntryV1>,
+    pub forks: Vec<WriterForkV1>,
+    pub unsafe_commit_refs: Vec<CommitRef>,
+    pub forensic_versions: Vec<EntityVersionV1>,
+    pub versions: Vec<EntityVersionV1>,
+    pub frontiers: Vec<FrontierEntryV1>,
+    pub materialized: Vec<MaterializedEntryV1>,
+    pub relations: RelationDetectionV1,
+    pub duplicate_diagnostics: Vec<DuplicateDiagnosticV1>,
+}
