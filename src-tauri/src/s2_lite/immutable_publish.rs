@@ -1,0 +1,389 @@
+use super::canonical::{
+    jcs_bytes, parse_writer_seq, sha256_hex, validate_commit_ref, validate_timestamp,
+    ProtocolError, Result,
+};
+use super::causal::decode_frozen_wire_commit_v1;
+use super::types::CommitRef;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+pub const COMMIT_SEGMENT_SIZE_V1: u64 = 256;
+pub const WRITER_SEQ_PATH_WIDTH_V1: usize = 20;
+pub const SEGMENT_NAME_WIDTH_V1: usize = 14;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedIntentV1 {
+    pub intent_version: u8,
+    pub object_kind: String,
+    pub remote_path: String,
+    pub exact_bytes: Vec<u8>,
+    pub content_hash: String,
+    pub commit_ref: CommitRef,
+    pub intent_fingerprint: String,
+    pub created_locally_at_diagnostic: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemotePublishedReceiptV1 {
+    pub receipt_version: u8,
+    pub remote_path: String,
+    pub content_hash: String,
+    pub commit_ref: CommitRef,
+    pub prepared_intent_fingerprint: String,
+    pub verified_exact_bytes_hash: String,
+    pub verified_at_diagnostic: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RemoteExactGetResultV1 {
+    DefinitelyPresent(Vec<u8>),
+    DefinitelyAbsent,
+    Indeterminate,
+    AuthOrCapabilityFailure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemotePutResultV1 {
+    Success,
+    Indeterminate,
+    AuthOrCapabilityFailure,
+}
+
+pub trait ImmutableObjectRemoteV1 {
+    fn get_exact(&mut self, remote_path: &str) -> RemoteExactGetResultV1;
+    fn put_exact(
+        &mut self,
+        remote_path: &str,
+        exact_bytes: &[u8],
+        if_none_match_star: bool,
+    ) -> RemotePutResultV1;
+}
+
+pub trait PreparedIntentStoreV1 {
+    fn persist(&mut self, intent: &PreparedIntentV1) -> Result<()>;
+}
+
+pub trait PublishedReceiptStoreV1 {
+    fn persist(&mut self, receipt: &RemotePublishedReceiptV1) -> Result<()>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersistedPreparedIntentV1 {
+    intent: PreparedIntentV1,
+    persisted_fingerprint: String,
+}
+
+impl PersistedPreparedIntentV1 {
+    pub fn intent_fingerprint(&self) -> &str {
+        &self.persisted_fingerprint
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImmutablePathMismatchEventV1 {
+    pub code: &'static str,
+    pub freeze_class: &'static str,
+    pub remote_path: String,
+    pub expected_content_hash: String,
+    pub observed_content_hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecoverPreparedIntentResultV1 {
+    AlreadyPublishedExact(RemotePublishedReceiptV1),
+    RetryPublishExact,
+    CorruptionMismatch(ImmutablePathMismatchEventV1),
+    RemoteIndeterminate,
+    AuthOrCapabilityFailure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImmutablePublishStateV1 {
+    Prepared,
+    PutAttempted,
+    VerifyRemote,
+    VerifiedPublished,
+    CorruptionMismatch,
+    RemoteIndeterminate,
+    AuthOrCapabilityFailure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImmutablePublishEventV1 {
+    PutStarted,
+    VerifyStarted,
+    RemoteExact,
+    RemoteAbsent,
+    RemoteMismatch,
+    RemoteIndeterminate,
+    RemoteAuthOrCapabilityFailure,
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn intent_fingerprint(intent: &PreparedIntentV1) -> Result<String> {
+    let core = json!({
+        "domain": "watchtracker-s2-lite-prepared-intent-fingerprint-v1",
+        "intentVersion": intent.intent_version,
+        "objectKind": intent.object_kind,
+        "remotePath": intent.remote_path,
+        "exactBytesHex": bytes_to_hex(&intent.exact_bytes),
+        "contentHash": intent.content_hash,
+        "commitRef": intent.commit_ref,
+    });
+    Ok(sha256_hex(&jcs_bytes(&core)?))
+}
+
+pub fn build_commit_remote_path_v1(commit_ref: &CommitRef) -> Result<String> {
+    validate_commit_ref(commit_ref)?;
+    let writer_seq = parse_writer_seq(&commit_ref.writer_seq)?;
+    let segment_index = (writer_seq - 1) / COMMIT_SEGMENT_SIZE_V1;
+    let segment_name = format!("{segment_index:0SEGMENT_NAME_WIDTH_V1$x}");
+    if segment_name.len() != SEGMENT_NAME_WIDTH_V1 {
+        return Err(ProtocolError("segment_name_overflow"));
+    }
+    let writer_seq_20 = format!("{writer_seq:0WRITER_SEQ_PATH_WIDTH_V1$}");
+    if writer_seq_20.len() != WRITER_SEQ_PATH_WIDTH_V1 {
+        return Err(ProtocolError("writer_seq_path_overflow"));
+    }
+    Ok(format!(
+        "writers/{}/segments/{}/{}--{}--{}.json",
+        commit_ref.writer_id,
+        segment_name,
+        writer_seq_20,
+        commit_ref.commit_id,
+        commit_ref.content_hash
+    ))
+}
+
+pub fn prepare_commit_intent_v1(
+    exact_commit_bytes: &[u8],
+    created_locally_at_diagnostic: &str,
+) -> Result<PreparedIntentV1> {
+    validate_timestamp(created_locally_at_diagnostic)?;
+    let commit = decode_frozen_wire_commit_v1(exact_commit_bytes)?;
+    let commit_ref = commit.commit_ref();
+    let mut intent = PreparedIntentV1 {
+        intent_version: 1,
+        object_kind: "commit".to_string(),
+        remote_path: build_commit_remote_path_v1(&commit_ref)?,
+        exact_bytes: exact_commit_bytes.to_vec(),
+        content_hash: commit_ref.content_hash.clone(),
+        commit_ref,
+        intent_fingerprint: String::new(),
+        created_locally_at_diagnostic: created_locally_at_diagnostic.to_string(),
+    };
+    intent.intent_fingerprint = intent_fingerprint(&intent)?;
+    Ok(intent)
+}
+
+pub fn validate_prepared_intent_v1(intent: &PreparedIntentV1) -> Result<()> {
+    let validate = || -> Result<()> {
+        if intent.intent_version != 1 || intent.object_kind != "commit" {
+            return Err(ProtocolError("invalid_prepared_intent"));
+        }
+        validate_timestamp(&intent.created_locally_at_diagnostic)?;
+        validate_commit_ref(&intent.commit_ref)?;
+        if intent.remote_path != build_commit_remote_path_v1(&intent.commit_ref)? {
+            return Err(ProtocolError("invalid_prepared_intent"));
+        }
+        let exact_hash = sha256_hex(&intent.exact_bytes);
+        if exact_hash != intent.content_hash || exact_hash != intent.commit_ref.content_hash {
+            return Err(ProtocolError("invalid_prepared_intent"));
+        }
+        let decoded = decode_frozen_wire_commit_v1(&intent.exact_bytes)?;
+        if decoded.commit_ref() != intent.commit_ref
+            || intent.intent_fingerprint != intent_fingerprint(intent)?
+        {
+            return Err(ProtocolError("invalid_prepared_intent"));
+        }
+        Ok(())
+    };
+    validate().map_err(|_| ProtocolError("LOCAL_PREPARED_INTENT_CORRUPTION"))
+}
+
+fn make_receipt_v1(
+    intent: &PreparedIntentV1,
+    verified_at_diagnostic: &str,
+) -> Result<RemotePublishedReceiptV1> {
+    validate_timestamp(verified_at_diagnostic)?;
+    Ok(RemotePublishedReceiptV1 {
+        receipt_version: 1,
+        remote_path: intent.remote_path.clone(),
+        content_hash: intent.content_hash.clone(),
+        commit_ref: intent.commit_ref.clone(),
+        prepared_intent_fingerprint: intent.intent_fingerprint.clone(),
+        verified_exact_bytes_hash: sha256_hex(&intent.exact_bytes),
+        verified_at_diagnostic: verified_at_diagnostic.to_string(),
+    })
+}
+
+pub fn validate_published_receipt_v1(
+    receipt: &RemotePublishedReceiptV1,
+    intent: &PreparedIntentV1,
+) -> Result<()> {
+    let validate = || -> Result<()> {
+        validate_prepared_intent_v1(intent)?;
+        validate_timestamp(&receipt.verified_at_diagnostic)?;
+        validate_commit_ref(&receipt.commit_ref)?;
+        if receipt.receipt_version != 1
+            || receipt.remote_path != intent.remote_path
+            || receipt.content_hash != intent.content_hash
+            || receipt.verified_exact_bytes_hash != intent.content_hash
+            || receipt.prepared_intent_fingerprint != intent.intent_fingerprint
+            || receipt.commit_ref != intent.commit_ref
+        {
+            return Err(ProtocolError("invalid_published_receipt"));
+        }
+        Ok(())
+    };
+    validate().map_err(|_| ProtocolError("LOCAL_PUBLISHED_RECEIPT_CORRUPTION"))
+}
+
+pub fn advance_immutable_publish_state_v1(
+    state: ImmutablePublishStateV1,
+    event: ImmutablePublishEventV1,
+) -> Result<ImmutablePublishStateV1> {
+    use ImmutablePublishEventV1 as Event;
+    use ImmutablePublishStateV1 as State;
+    match (state, event) {
+        (State::Prepared, Event::PutStarted) => Ok(State::PutAttempted),
+        (State::Prepared | State::PutAttempted, Event::VerifyStarted) => Ok(State::VerifyRemote),
+        (State::VerifyRemote, Event::RemoteExact) => Ok(State::VerifiedPublished),
+        (State::VerifyRemote, Event::RemoteAbsent) => Ok(State::Prepared),
+        (State::VerifyRemote, Event::RemoteMismatch) => Ok(State::CorruptionMismatch),
+        (State::VerifyRemote, Event::RemoteIndeterminate) => Ok(State::RemoteIndeterminate),
+        (State::VerifyRemote, Event::RemoteAuthOrCapabilityFailure) => {
+            Ok(State::AuthOrCapabilityFailure)
+        }
+        _ => Err(ProtocolError("invalid_immutable_publish_transition")),
+    }
+}
+
+fn classify_exact_get_v1(
+    intent: &PreparedIntentV1,
+    fetched: RemoteExactGetResultV1,
+    verified_at_diagnostic: &str,
+) -> Result<RecoverPreparedIntentResultV1> {
+    match fetched {
+        RemoteExactGetResultV1::DefinitelyAbsent => {
+            Ok(RecoverPreparedIntentResultV1::RetryPublishExact)
+        }
+        RemoteExactGetResultV1::Indeterminate => {
+            Ok(RecoverPreparedIntentResultV1::RemoteIndeterminate)
+        }
+        RemoteExactGetResultV1::AuthOrCapabilityFailure => {
+            Ok(RecoverPreparedIntentResultV1::AuthOrCapabilityFailure)
+        }
+        RemoteExactGetResultV1::DefinitelyPresent(bytes) if bytes == intent.exact_bytes => {
+            Ok(RecoverPreparedIntentResultV1::AlreadyPublishedExact(
+                make_receipt_v1(intent, verified_at_diagnostic)?,
+            ))
+        }
+        RemoteExactGetResultV1::DefinitelyPresent(bytes) => Ok(
+            RecoverPreparedIntentResultV1::CorruptionMismatch(ImmutablePathMismatchEventV1 {
+                code: "REMOTE_IMMUTABLE_PATH_CONTENT_MISMATCH",
+                freeze_class: "SYNC_ROOT_FROZEN_CORRUPTION",
+                remote_path: intent.remote_path.clone(),
+                expected_content_hash: intent.content_hash.clone(),
+                observed_content_hash: sha256_hex(&bytes),
+            }),
+        ),
+    }
+}
+
+pub fn recover_prepared_intent_v1<R: ImmutableObjectRemoteV1>(
+    intent: &PreparedIntentV1,
+    remote: &mut R,
+    verified_at_diagnostic: &str,
+) -> Result<RecoverPreparedIntentResultV1> {
+    validate_prepared_intent_v1(intent)?;
+    validate_timestamp(verified_at_diagnostic)?;
+    classify_exact_get_v1(
+        intent,
+        remote.get_exact(&intent.remote_path),
+        verified_at_diagnostic,
+    )
+}
+
+fn publish_prepared_intent_v1<R: ImmutableObjectRemoteV1>(
+    intent: &PreparedIntentV1,
+    remote: &mut R,
+    verified_at_diagnostic: &str,
+) -> Result<RecoverPreparedIntentResultV1> {
+    let preflight = recover_prepared_intent_v1(intent, remote, verified_at_diagnostic)?;
+    if !matches!(preflight, RecoverPreparedIntentResultV1::RetryPublishExact) {
+        return Ok(preflight);
+    }
+    let put_result = remote.put_exact(&intent.remote_path, &intent.exact_bytes, true);
+    let verification = classify_exact_get_v1(
+        intent,
+        remote.get_exact(&intent.remote_path),
+        verified_at_diagnostic,
+    )?;
+    if matches!(
+        verification,
+        RecoverPreparedIntentResultV1::RetryPublishExact
+    ) && put_result == RemotePutResultV1::AuthOrCapabilityFailure
+    {
+        return Ok(RecoverPreparedIntentResultV1::AuthOrCapabilityFailure);
+    }
+    Ok(verification)
+}
+
+pub fn persist_prepared_intent_before_publish_v1<S: PreparedIntentStoreV1>(
+    intent: &PreparedIntentV1,
+    store: &mut S,
+) -> Result<PersistedPreparedIntentV1> {
+    validate_prepared_intent_v1(intent)?;
+    store.persist(intent)?;
+    Ok(PersistedPreparedIntentV1 {
+        intent: intent.clone(),
+        persisted_fingerprint: intent.intent_fingerprint.clone(),
+    })
+}
+
+pub fn publish_persisted_intent_v1<R: ImmutableObjectRemoteV1>(
+    persisted: &PersistedPreparedIntentV1,
+    remote: &mut R,
+    verified_at_diagnostic: &str,
+) -> Result<RecoverPreparedIntentResultV1> {
+    validate_prepared_intent_v1(&persisted.intent)?;
+    if persisted.persisted_fingerprint != persisted.intent.intent_fingerprint {
+        return Err(ProtocolError("LOCAL_PREPARED_INTENT_CORRUPTION"));
+    }
+    publish_prepared_intent_v1(&persisted.intent, remote, verified_at_diagnostic)
+}
+
+pub fn restart_durable_publish_v1<R: ImmutableObjectRemoteV1>(
+    durable_intent: &PreparedIntentV1,
+    durable_receipt: Option<&RemotePublishedReceiptV1>,
+    remote: &mut R,
+    verified_at_diagnostic: &str,
+) -> Result<RecoverPreparedIntentResultV1> {
+    validate_prepared_intent_v1(durable_intent)?;
+    if let Some(receipt) = durable_receipt {
+        validate_published_receipt_v1(receipt, durable_intent)?;
+        return Ok(RecoverPreparedIntentResultV1::AlreadyPublishedExact(
+            receipt.clone(),
+        ));
+    }
+    recover_prepared_intent_v1(durable_intent, remote, verified_at_diagnostic)
+}
+
+pub fn persist_verified_receipt_v1<S: PublishedReceiptStoreV1>(
+    result: &RecoverPreparedIntentResultV1,
+    intent: &PreparedIntentV1,
+    store: &mut S,
+) -> Result<()> {
+    let RecoverPreparedIntentResultV1::AlreadyPublishedExact(receipt) = result else {
+        return Err(ProtocolError("receipt_requires_exact_remote_verification"));
+    };
+    validate_published_receipt_v1(receipt, intent)?;
+    store.persist(receipt)
+}
