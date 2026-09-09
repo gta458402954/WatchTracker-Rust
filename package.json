@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "contracts:generate": "node scripts/generate-contracts.mjs",
-    "contracts:check": "node scripts/generate-contracts.mjs --check && node scripts/generate-s2-causal-golden.mjs && node scripts/generate-s2-raw-wire-fixture.mjs --check && node scripts/generate-s2-publish-golden.mjs --check",
+    "contracts:check": "node scripts/generate-contracts.mjs --check && node scripts/generate-s2-causal-golden.mjs && node scripts/generate-s2-raw-wire-fixture.mjs --check && node scripts/generate-s2-publish-golden.mjs --check && node scripts/generate-s2-discovery-golden.mjs --check",
     "dev": "vite",
     "typecheck": "tsc -b --noEmit",
     "test": "npm run contracts:check && node --test \"src/shared/lib/__tests__/*.test.mjs\"",
