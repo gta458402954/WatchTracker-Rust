@@ -1,3 +1,4 @@
+pub mod activation_cutover;
 pub mod bootstrap;
 pub mod canonical;
 pub mod causal;
@@ -7,6 +8,8 @@ pub mod remote_discovery;
 pub mod semantic;
 pub mod types;
 
+#[cfg(test)]
+mod activation_cutover_tests;
 #[cfg(test)]
 mod causal_tests;
 #[cfg(test)]

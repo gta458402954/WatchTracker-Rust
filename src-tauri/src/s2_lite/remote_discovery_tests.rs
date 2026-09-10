@@ -15,7 +15,8 @@ use super::remote_discovery::{
     verify_activation_candidate_v1, verify_commit_candidate_v1, ActivationValidatorErrorV1,
     ActivationVerificationV1, CandidatePathClassificationV1, DirectoryListResultV1,
     DiscoveryBudgetsV1, DiscoveryExactGetResultV1, DiscoveryRemoteV1, DiscoveryStateV1,
-    HistoricalAuditCursorV1, ObservedCandidateV1, VerifiedRemoteObjectV1,
+    HistoricalAuditCursorV1, ObservedCandidateV1, VerifiedFingerprintEvidenceV1,
+    VerifiedRemoteObjectV1,
 };
 use super::types::{CommitRef, CommitV1};
 
@@ -147,6 +148,7 @@ fn activation_validator(
             .as_str()
             .unwrap_or_default()
             .to_string(),
+        legacy_fingerprint: value["legacyFingerprint"].as_str().map(str::to_string),
         semantic_profile_supported: value["semanticProfileSupported"].as_bool().unwrap_or(false),
         required_features_supported: value["requiredFeaturesSupported"]
             .as_bool()
@@ -547,6 +549,7 @@ fn fair_scheduler_closes_verified_prefix_and_dependency_restart_counterexamples(
             content_hash: commit_ref.content_hash.clone(),
             commit_ref: Some(commit_ref),
             activation_id: None,
+            fingerprint_evidence: VerifiedFingerprintEvidenceV1::Missing,
         });
         state.reverification_queue.push(prefix_path);
     }
@@ -786,6 +789,7 @@ fn activation_candidate_is_retained_verified_and_never_interpreted_as_cutover() 
         &bytes,
         &ActivationVerificationV1 {
             activation_id: activation_id.to_string(),
+            legacy_fingerprint: None,
             semantic_profile_supported: true,
             required_features_supported: true,
         },

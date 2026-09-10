@@ -54,11 +54,21 @@ pub struct VerifiedRemoteObjectV1 {
     pub commit_ref: Option<CommitRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activation_id: Option<String>,
+    pub fingerprint_evidence: VerifiedFingerprintEvidenceV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "PascalCase", tag = "state")]
+pub enum VerifiedFingerprintEvidenceV1 {
+    Missing,
+    Null,
+    Value { value: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActivationVerificationV1 {
     pub activation_id: String,
+    pub legacy_fingerprint: Option<String>,
     pub semantic_profile_supported: bool,
     pub required_features_supported: bool,
 }
@@ -561,6 +571,12 @@ fn retain_activation_verification_v1(
             content_hash: content_hash.clone(),
             commit_ref: None,
             activation_id: Some(activation_id.clone()),
+            fingerprint_evidence: verification.legacy_fingerprint.as_ref().map_or(
+                VerifiedFingerprintEvidenceV1::Null,
+                |value| VerifiedFingerprintEvidenceV1::Value {
+                    value: value.clone(),
+                },
+            ),
         });
         state.verified_objects.sort_by(|a, b| a.path.cmp(&b.path));
     }
@@ -780,6 +796,7 @@ pub fn verify_commit_candidate_v1(
             content_hash: content_hash.clone(),
             commit_ref: Some(commit_ref.clone()),
             activation_id: None,
+            fingerprint_evidence: VerifiedFingerprintEvidenceV1::Missing,
         });
         state.verified_objects.sort_by(|a, b| a.path.cmp(&b.path));
     }

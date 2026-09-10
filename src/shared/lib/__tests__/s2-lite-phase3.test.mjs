@@ -261,7 +261,7 @@ test('65 retained dependencies advance fairly across budget 64 and serialized re
 
 test('activation verification retains an owned entry snapshot across deferred validator mutation', async () => {
   const activationId = fixture.identities.activationId;
-  const originalBytes = Buffer.from(JSON.stringify({ activationId, semanticProfileSupported: true, requiredFeaturesSupported: true }));
+  const originalBytes = Buffer.from(JSON.stringify({ activationId, legacyFingerprint: null, semanticProfileSupported: true, requiredFeaturesSupported: true }));
   const originalHash = await sha256Hex(originalBytes);
   const candidate = parseActivationCandidatePathV1(`activations/${activationId}--${originalHash}.json`);
   const state = createDiscoveryStateV1();
@@ -281,8 +281,9 @@ test('activation verification retains an owned entry snapshot across deferred va
   await pending;
   const retained = state.verifiedObjects[0];
   assert.equal(retained.exactBytesHash, originalHash);
-  assert.equal(Buffer.from(retained.exactBytesHex, 'hex').toString('utf8'), JSON.stringify({ activationId, semanticProfileSupported: true, requiredFeaturesSupported: true }));
+  assert.equal(Buffer.from(retained.exactBytesHex, 'hex').toString('utf8'), JSON.stringify({ activationId, legacyFingerprint: null, semanticProfileSupported: true, requiredFeaturesSupported: true }));
   assert.equal(retained.activationId, activationId);
+  assert.deepEqual(retained.fingerprintEvidence, { state: 'Null' });
 });
 
 test('commit verification also owns its entry bytes and identity before asynchronous hashing', async () => {
@@ -317,6 +318,7 @@ test('observed writers, segments, candidates, gaps, and activations survive omis
 
   const activationBytes = Buffer.from(JSON.stringify({
     activationId: fixture.identities.activationId,
+    legacyFingerprint: null,
     semanticProfileSupported: true,
     requiredFeaturesSupported: true,
   }));
@@ -328,6 +330,7 @@ test('observed writers, segments, candidates, gaps, and activations survive omis
   const secondActivationId = '30000000-0000-4000-8000-000000000002';
   const secondActivationBytes = Buffer.from(JSON.stringify({
     activationId: secondActivationId,
+    legacyFingerprint: null,
     semanticProfileSupported: true,
     requiredFeaturesSupported: true,
   }));
@@ -484,7 +487,7 @@ test('path/body mismatches, immutable byte changes, and unsupported activation a
 
   const activationId = fixture.identities.activationId;
   const bytes = Buffer.from(JSON.stringify({
-    activationId, semanticProfileSupported: false, requiredFeaturesSupported: true,
+    activationId, legacyFingerprint: null, semanticProfileSupported: false, requiredFeaturesSupported: true,
   }));
   const path = `activations/${activationId}--${await sha256Hex(bytes)}.json`;
   const candidate = parseActivationCandidatePathV1(path);

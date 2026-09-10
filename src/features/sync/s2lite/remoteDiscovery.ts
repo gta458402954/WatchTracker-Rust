@@ -47,7 +47,13 @@ export interface VerifiedRemoteObjectV1 {
   contentHash: string;
   commitRef?: CommitRef;
   activationId?: string;
+  fingerprintEvidence: VerifiedFingerprintEvidenceV1;
 }
+
+export type VerifiedFingerprintEvidenceV1 =
+  | { state: 'Missing' }
+  | { state: 'Null' }
+  | { state: 'Value'; value: string };
 
 export interface RootFatalSignalV1 {
   code: string;
@@ -131,6 +137,7 @@ export class DiscoveryOperationalFailureV1 extends Error {
 
 export interface ActivationVerificationV1 {
   activationId: string;
+  legacyFingerprint: string | null;
   semanticProfileSupported: boolean;
   requiredFeaturesSupported: boolean;
 }
@@ -420,6 +427,7 @@ export async function verifyCommitCandidateV1(
   pushUnique(state.verifiedObjects, {
     path: candidateSnapshot.path, kind: 'commit', exactBytesHash, exactBytesHex: bytesToHex(bytesSnapshot),
     contentHash: candidateSnapshot.contentHash, commitRef: ref,
+    fingerprintEvidence: { state: 'Missing' },
   }, item => item.path);
   const sameSeqObjects = state.verifiedObjects.filter(object => (
     object.commitRef?.writerId === ref.writerId && object.commitRef.writerSeq === ref.writerSeq
@@ -485,6 +493,9 @@ export async function verifyActivationCandidateV1(
     path: candidateSnapshot.path, kind: 'activation', exactBytesHash, exactBytesHex: bytesToHex(bytesSnapshot),
     contentHash: candidateSnapshot.contentHash,
     activationId: candidateSnapshot.activationId,
+    fingerprintEvidence: result.legacyFingerprint === null
+      ? { state: 'Null' }
+      : { state: 'Value', value: result.legacyFingerprint },
   }, item => item.path);
   normalizeState(state);
 }

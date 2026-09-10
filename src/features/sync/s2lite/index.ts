@@ -1,4 +1,5 @@
 export * from './bootstrapPlan.ts';
+export * from './activationCutover.ts';
 export * from './canonical.ts';
 export * from './causalReducer.ts';
 export * from './conflictCodec.ts';
