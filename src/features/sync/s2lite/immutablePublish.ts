@@ -4,6 +4,7 @@ import {
   compareCommitRefV1,
   parseWriterSeq,
   sha256Hex,
+  validateCanonicalUuidV4,
   validateCanonicalTimestamp,
   validateCommitRef,
   validateContentHash,
@@ -64,6 +65,41 @@ export interface PublishedReceiptStoreV1 {
   persist(receipt: Readonly<RemotePublishedReceiptV1>): Promise<void>;
 }
 
+export interface PreparedActivationIntentStoreV1 {
+  persist(intent: Readonly<PreparedActivationIntentV1>): Promise<void>;
+}
+
+export interface PublishedActivationReceiptStoreV1 {
+  persist(receipt: Readonly<PublishedActivationReceiptV1>): Promise<void>;
+}
+
+export interface PreparedActivationIntentV1 {
+  intentVersion: 1;
+  objectKind: 'activation';
+  remotePath: string;
+  exactBytes: Uint8Array;
+  contentHash: string;
+  activationId: string;
+  intentFingerprint: string;
+  createdLocallyAtDiagnostic: string;
+}
+
+export interface PublishedActivationReceiptV1 {
+  receiptVersion: 1;
+  remotePath: string;
+  contentHash: string;
+  activationId: string;
+  preparedIntentFingerprint: string;
+  verifiedExactBytesHash: string;
+  verifiedAtDiagnostic: string;
+}
+
+export type PublishActivationResultV1 =
+  | { outcome: 'AlreadyPublishedExact'; receipt: PublishedActivationReceiptV1 }
+  | { outcome: 'CorruptionMismatch'; safetyEvent: ImmutablePathMismatchEventV1 }
+  | { outcome: 'RemoteIndeterminate' }
+  | { outcome: 'AuthOrCapabilityFailure' };
+
 const persistedIntentBrand: unique symbol = Symbol('s2-lite-persisted-intent-v1');
 
 export interface PersistedPreparedIntentV1 {
@@ -72,6 +108,12 @@ export interface PersistedPreparedIntentV1 {
 }
 
 const ownedPersistedIntents = new WeakMap<object, PreparedIntentV1>();
+const ownedPersistedActivationIntents = new WeakMap<object, PreparedActivationIntentV1>();
+
+export interface PersistedPreparedActivationIntentV1 {
+  readonly persistedFingerprint: string;
+  readonly [persistedIntentBrand]: true;
+}
 
 export class RemoteOperationalFailureV1 extends Error {
   readonly category: 'Indeterminate' | 'AuthOrCapabilityFailure';
@@ -451,6 +493,37 @@ export async function publishPersistedIntentV1(
   return publishPreparedIntentV1(snapshot, remote, verifiedAtDiagnostic);
 }
 
+export async function publishAdmittedPersistedIntentV1(
+  persisted: PersistedPreparedIntentV1,
+  remote: ImmutableObjectRemoteV1,
+  verifiedAtDiagnostic: string,
+): Promise<RecoverPreparedIntentResultV1> {
+  const owned = ownedPersistedIntents.get(persisted);
+  if (persisted[persistedIntentBrand] !== true || owned === undefined) {
+    invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
+  }
+  const intent = copyPreparedIntent(owned);
+  if (persisted.persistedFingerprint !== intent.intentFingerprint) {
+    invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
+  }
+  // The module-private snapshot was fully validated before the durable token
+  // was issued. Keep admission-to-PUT synchronous: no await may reopen a root
+  // fatal race after the orchestration gate has admitted this exact attempt.
+  validateCanonicalTimestamp(verifiedAtDiagnostic);
+  const putResult = await callRemotePutExactV1(
+    remote, intent.remotePath, Uint8Array.from(intent.exactBytes),
+  );
+  const verification = await classifyExactGetV1(
+    intent,
+    await callRemoteGetExactV1(remote, intent.remotePath),
+    verifiedAtDiagnostic,
+  );
+  if (verification.outcome === 'RetryPublishExact' && putResult.state === 'AuthOrCapabilityFailure') {
+    return { outcome: 'AuthOrCapabilityFailure' };
+  }
+  return verification;
+}
+
 export async function restartDurablePublishV1(
   durableIntent: PreparedIntentV1,
   durableReceipt: RemotePublishedReceiptV1 | null,
@@ -483,4 +556,268 @@ export async function persistVerifiedReceiptV1(
   const durableCopy = copyPublishedReceipt(ownedReceipt);
   await store.persist(durableCopy);
   await validatePublishedReceiptV1(durableCopy, ownedIntent);
+}
+
+function copyActivationIntent(intent: PreparedActivationIntentV1): PreparedActivationIntentV1 {
+  return { ...intent, exactBytes: Uint8Array.from(intent.exactBytes) };
+}
+
+function activationIntentCore(intent: Omit<PreparedActivationIntentV1, 'intentFingerprint'>): JsonValue {
+  return {
+    domain: 'watchtracker-s2-lite-prepared-activation-intent-v1',
+    intentVersion: intent.intentVersion,
+    objectKind: intent.objectKind,
+    remotePath: intent.remotePath,
+    exactBytesHex: bytesToHex(intent.exactBytes),
+    contentHash: intent.contentHash,
+    activationId: intent.activationId,
+  };
+}
+
+export async function prepareActivationIntentV1(
+  activationId: string,
+  exactActivationBytes: Uint8Array,
+  createdLocallyAtDiagnostic: string,
+): Promise<PreparedActivationIntentV1> {
+  validateCanonicalUuidV4(activationId);
+  validateCanonicalTimestamp(createdLocallyAtDiagnostic);
+  const exactBytes = Uint8Array.from(exactActivationBytes);
+  const contentHash = await sha256Hex(exactBytes);
+  const withoutFingerprint: Omit<PreparedActivationIntentV1, 'intentFingerprint'> = {
+    intentVersion: 1,
+    objectKind: 'activation',
+    remotePath: `activations/${activationId}--${contentHash}.json`,
+    exactBytes,
+    contentHash,
+    activationId,
+    createdLocallyAtDiagnostic,
+  };
+  return {
+    ...withoutFingerprint,
+    intentFingerprint: await sha256Hex(canonicalJcsBytes(activationIntentCore(withoutFingerprint))),
+  };
+}
+
+export async function validatePreparedActivationIntentV1(
+  input: PreparedActivationIntentV1,
+): Promise<void> {
+  const intent = copyActivationIntent(input);
+  try {
+    if (!hasExactFields(intent, [
+      'intentVersion', 'objectKind', 'remotePath', 'exactBytes', 'contentHash', 'activationId',
+      'intentFingerprint', 'createdLocallyAtDiagnostic',
+    ]) || intent.intentVersion !== 1 || intent.objectKind !== 'activation') invalid('invalid');
+    validateCanonicalUuidV4(intent.activationId);
+    validateCanonicalTimestamp(intent.createdLocallyAtDiagnostic);
+    validateContentHash(intent.contentHash);
+    const hash = await sha256Hex(intent.exactBytes);
+    if (hash !== intent.contentHash
+      || intent.remotePath !== `activations/${intent.activationId}--${hash}.json`) invalid('invalid');
+    const withoutFingerprint: Omit<PreparedActivationIntentV1, 'intentFingerprint'> = {
+      intentVersion: intent.intentVersion,
+      objectKind: intent.objectKind,
+      remotePath: intent.remotePath,
+      exactBytes: intent.exactBytes,
+      contentHash: intent.contentHash,
+      activationId: intent.activationId,
+      createdLocallyAtDiagnostic: intent.createdLocallyAtDiagnostic,
+    };
+    const expected = await sha256Hex(canonicalJcsBytes(activationIntentCore(withoutFingerprint)));
+    if (intent.intentFingerprint !== expected) invalid('invalid');
+  } catch {
+    invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
+  }
+}
+
+export async function validatePublishedActivationReceiptV1(
+  input: PublishedActivationReceiptV1,
+  intentInput: PreparedActivationIntentV1,
+): Promise<void> {
+  const receipt = structuredClone(input);
+  const intent = copyActivationIntent(intentInput);
+  try {
+    await validatePreparedActivationIntentV1(intent);
+    if (!hasExactFields(receipt, [
+      'receiptVersion', 'remotePath', 'contentHash', 'activationId', 'preparedIntentFingerprint',
+      'verifiedExactBytesHash', 'verifiedAtDiagnostic',
+    ]) || receipt.receiptVersion !== 1) invalid('invalid');
+    validateCanonicalTimestamp(receipt.verifiedAtDiagnostic);
+    validateContentHash(receipt.contentHash);
+    validateContentHash(receipt.verifiedExactBytesHash);
+    validateCanonicalUuidV4(receipt.activationId);
+    if (receipt.remotePath !== intent.remotePath || receipt.contentHash !== intent.contentHash
+      || receipt.activationId !== intent.activationId
+      || receipt.preparedIntentFingerprint !== intent.intentFingerprint
+      || receipt.verifiedExactBytesHash !== intent.contentHash) invalid('invalid');
+  } catch {
+    invalid('LOCAL_PUBLISHED_RECEIPT_CORRUPTION');
+  }
+}
+
+function activationReceipt(
+  intent: PreparedActivationIntentV1,
+  verifiedAtDiagnostic: string,
+): PublishedActivationReceiptV1 {
+  validateCanonicalTimestamp(verifiedAtDiagnostic);
+  return {
+    receiptVersion: 1,
+    remotePath: intent.remotePath,
+    contentHash: intent.contentHash,
+    activationId: intent.activationId,
+    preparedIntentFingerprint: intent.intentFingerprint,
+    verifiedExactBytesHash: intent.contentHash,
+    verifiedAtDiagnostic,
+  };
+}
+
+async function publishPreparedActivationIntentV1(
+  input: PreparedActivationIntentV1,
+  remote: ImmutableObjectRemoteV1,
+  verifiedAtDiagnostic: string,
+): Promise<PublishActivationResultV1> {
+  const intent = copyActivationIntent(input);
+  await validatePreparedActivationIntentV1(intent);
+  validateCanonicalTimestamp(verifiedAtDiagnostic);
+  let fetched = await callRemoteGetExactV1(remote, intent.remotePath);
+  if (fetched.state === 'DefinitelyAbsent') {
+    const put = await callRemotePutExactV1(remote, intent.remotePath, Uint8Array.from(intent.exactBytes));
+    fetched = await callRemoteGetExactV1(remote, intent.remotePath);
+    if (fetched.state === 'DefinitelyAbsent' && put.state === 'AuthOrCapabilityFailure') {
+      return { outcome: 'AuthOrCapabilityFailure' };
+    }
+  }
+  if (fetched.state === 'Indeterminate' || fetched.state === 'DefinitelyAbsent') {
+    return { outcome: 'RemoteIndeterminate' };
+  }
+  if (fetched.state === 'AuthOrCapabilityFailure') return { outcome: 'AuthOrCapabilityFailure' };
+  const observedHash = await sha256Hex(fetched.bytes);
+  if (!exactBytesEqual(fetched.bytes, intent.exactBytes)) {
+    return {
+      outcome: 'CorruptionMismatch',
+      safetyEvent: {
+        code: 'REMOTE_IMMUTABLE_PATH_CONTENT_MISMATCH',
+        freezeClass: 'SYNC_ROOT_FROZEN_CORRUPTION',
+        remotePath: intent.remotePath,
+        expectedContentHash: intent.contentHash,
+        observedContentHash: observedHash,
+      },
+    };
+  }
+  return { outcome: 'AlreadyPublishedExact', receipt: activationReceipt(intent, verifiedAtDiagnostic) };
+}
+
+export async function persistPreparedActivationIntentBeforePublishV1(
+  input: PreparedActivationIntentV1,
+  store: PreparedActivationIntentStoreV1,
+): Promise<PersistedPreparedActivationIntentV1> {
+  const snapshot = copyActivationIntent(input);
+  await validatePreparedActivationIntentV1(snapshot);
+  const durableCopy = copyActivationIntent(snapshot);
+  await store.persist(durableCopy);
+  await validatePreparedActivationIntentV1(durableCopy);
+  const token: PersistedPreparedActivationIntentV1 = Object.freeze({
+    persistedFingerprint: snapshot.intentFingerprint,
+    [persistedIntentBrand]: true as const,
+  });
+  ownedPersistedActivationIntents.set(token, copyActivationIntent(snapshot));
+  return token;
+}
+
+export async function publishPersistedActivationIntentV1(
+  persisted: PersistedPreparedActivationIntentV1,
+  remote: ImmutableObjectRemoteV1,
+  verifiedAtDiagnostic: string,
+): Promise<PublishActivationResultV1> {
+  const owned = ownedPersistedActivationIntents.get(persisted);
+  if (persisted[persistedIntentBrand] !== true || owned === undefined
+    || persisted.persistedFingerprint !== owned.intentFingerprint) {
+    invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
+  }
+  const snapshot = copyActivationIntent(owned);
+  await validatePreparedActivationIntentV1(snapshot);
+  return publishPreparedActivationIntentV1(snapshot, remote, verifiedAtDiagnostic);
+}
+
+export async function publishAdmittedPersistedActivationIntentV1(
+  persisted: PersistedPreparedActivationIntentV1,
+  remote: ImmutableObjectRemoteV1,
+  verifiedAtDiagnostic: string,
+): Promise<PublishActivationResultV1> {
+  const owned = ownedPersistedActivationIntents.get(persisted);
+  if (persisted[persistedIntentBrand] !== true || owned === undefined
+    || persisted.persistedFingerprint !== owned.intentFingerprint) {
+    invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
+  }
+  const intent = copyActivationIntent(owned);
+  // As above, the owned snapshot was validated before token issuance. The
+  // first asynchronous remote operation after admission must be the PUT.
+  validateCanonicalTimestamp(verifiedAtDiagnostic);
+  const put = await callRemotePutExactV1(remote, intent.remotePath, Uint8Array.from(intent.exactBytes));
+  const fetched = await callRemoteGetExactV1(remote, intent.remotePath);
+  if (fetched.state === 'DefinitelyAbsent' && put.state === 'AuthOrCapabilityFailure') {
+    return { outcome: 'AuthOrCapabilityFailure' };
+  }
+  if (fetched.state === 'Indeterminate' || fetched.state === 'DefinitelyAbsent') {
+    return { outcome: 'RemoteIndeterminate' };
+  }
+  if (fetched.state === 'AuthOrCapabilityFailure') return { outcome: 'AuthOrCapabilityFailure' };
+  if (!exactBytesEqual(fetched.bytes, intent.exactBytes)) {
+    return {
+      outcome: 'CorruptionMismatch',
+      safetyEvent: {
+        code: 'REMOTE_IMMUTABLE_PATH_CONTENT_MISMATCH',
+        freezeClass: 'SYNC_ROOT_FROZEN_CORRUPTION',
+        remotePath: intent.remotePath,
+        expectedContentHash: intent.contentHash,
+        observedContentHash: await sha256Hex(fetched.bytes),
+      },
+    };
+  }
+  return { outcome: 'AlreadyPublishedExact', receipt: activationReceipt(intent, verifiedAtDiagnostic) };
+}
+
+export async function restartDurableActivationPublishV1(
+  intentInput: PreparedActivationIntentV1,
+  receiptInput: PublishedActivationReceiptV1 | null,
+  remote: ImmutableObjectRemoteV1,
+  verifiedAtDiagnostic: string,
+): Promise<PublishActivationResultV1 | { outcome: 'RetryPublishExact' }> {
+  const intent = copyActivationIntent(intentInput);
+  await validatePreparedActivationIntentV1(intent);
+  if (receiptInput !== null) {
+    const receipt = structuredClone(receiptInput);
+    await validatePublishedActivationReceiptV1(receipt, intent);
+    return { outcome: 'AlreadyPublishedExact', receipt };
+  }
+  const fetched = await callRemoteGetExactV1(remote, intent.remotePath);
+  if (fetched.state === 'DefinitelyAbsent') return { outcome: 'RetryPublishExact' };
+  if (fetched.state === 'Indeterminate') return { outcome: 'RemoteIndeterminate' };
+  if (fetched.state === 'AuthOrCapabilityFailure') return { outcome: 'AuthOrCapabilityFailure' };
+  if (!exactBytesEqual(fetched.bytes, intent.exactBytes)) {
+    return {
+      outcome: 'CorruptionMismatch',
+      safetyEvent: {
+        code: 'REMOTE_IMMUTABLE_PATH_CONTENT_MISMATCH',
+        freezeClass: 'SYNC_ROOT_FROZEN_CORRUPTION',
+        remotePath: intent.remotePath,
+        expectedContentHash: intent.contentHash,
+        observedContentHash: await sha256Hex(fetched.bytes),
+      },
+    };
+  }
+  return { outcome: 'AlreadyPublishedExact', receipt: activationReceipt(intent, verifiedAtDiagnostic) };
+}
+
+export async function persistVerifiedActivationReceiptV1(
+  result: PublishActivationResultV1,
+  intentInput: PreparedActivationIntentV1,
+  store: PublishedActivationReceiptStoreV1,
+): Promise<void> {
+  if (result.outcome !== 'AlreadyPublishedExact') invalid('receipt_requires_exact_remote_verification');
+  const intent = copyActivationIntent(intentInput);
+  const receipt = structuredClone(result.receipt);
+  await validatePublishedActivationReceiptV1(receipt, intent);
+  const durableCopy = structuredClone(receipt);
+  await store.persist(durableCopy);
+  await validatePublishedActivationReceiptV1(durableCopy, intent);
 }
