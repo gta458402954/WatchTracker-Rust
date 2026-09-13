@@ -670,7 +670,7 @@ pub fn start_or_attach_migration_v1<M: MigrationStateStoreV1>(
     })
 }
 
-fn validate_attempt_transition(
+pub(crate) fn validate_attempt_transition(
     prior: &MigrationStateV1,
     requested: &MigrationStateV1,
 ) -> Result<()> {

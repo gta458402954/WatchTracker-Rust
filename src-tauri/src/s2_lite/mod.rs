@@ -3,6 +3,7 @@ pub mod bootstrap;
 pub mod canonical;
 pub mod causal;
 pub mod conflict;
+pub mod durable_persistence;
 pub mod immutable_publish;
 pub mod migration_orchestration;
 pub mod remote_discovery;
@@ -13,6 +14,8 @@ pub mod types;
 mod activation_cutover_tests;
 #[cfg(test)]
 mod causal_tests;
+#[cfg(test)]
+mod durable_persistence_tests;
 #[cfg(test)]
 mod immutable_publish_tests;
 #[cfg(test)]
