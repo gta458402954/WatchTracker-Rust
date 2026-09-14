@@ -6,5 +6,6 @@ export * from './conflictCodec.ts';
 export * from './immutablePublish.ts';
 export * from './migrationOrchestration.ts';
 export * from './remoteDiscovery.ts';
+export * from './webdavRemote.ts';
 export * from './semanticProfile.ts';
 export type * from './types.ts';

@@ -9,6 +9,7 @@ pub mod migration_orchestration;
 pub mod remote_discovery;
 pub mod semantic;
 pub mod types;
+pub mod webdav_adapter;
 
 #[cfg(test)]
 mod activation_cutover_tests;
