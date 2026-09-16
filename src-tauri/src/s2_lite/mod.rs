@@ -6,6 +6,7 @@ pub mod conflict;
 pub mod durable_persistence;
 pub mod immutable_publish;
 pub mod migration_orchestration;
+pub mod ordinary_mutation;
 pub mod remote_discovery;
 pub mod semantic;
 pub mod types;
@@ -21,6 +22,8 @@ mod durable_persistence_tests;
 mod immutable_publish_tests;
 #[cfg(test)]
 mod migration_orchestration_tests;
+#[cfg(test)]
+mod ordinary_mutation_tests;
 #[cfg(test)]
 mod remote_discovery_tests;
 #[cfg(test)]

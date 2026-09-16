@@ -24,12 +24,13 @@ The cross-language contract root is `contracts/s2-lite/v1/`, containing:
 - `float-roundtrip-conflict-v1.jcs`
 - `jcs-oracle-v1.json`
 - `migration-golden-v1.json`
+- `ordinary-mutation-semantic-golden-v1.json`
 - `publish-golden-v1.json`
 - `raw-wire-json-v1.json`
 
 The TypeScript protocol implementation is under `src/features/sync/s2lite/`. The Rust protocol implementation is under `src-tauri/src/s2_lite/`.
 
-The frozen v1 surface includes semantic profiles and scalar/JCS rules; entity, conflict, commit, reducer, and materialization semantics; bootstrap ordering; immutable exact-byte publishing and recovery; discovery, audit, and fork behavior; activation and legacy cutover; migration orchestration; root safety authority; and frozen-root/new-root handoff behavior. Any protocol-visible semantic change requires an explicit protocol version and protocol review. Integration work must not reinterpret these rules.
+The frozen v1 surface includes semantic profiles and scalar/JCS rules; the ordinary-mutation producer profile in `docs/s2-lite-v1-ordinary-mutation-semantic-profile.md`; entity, conflict, commit, reducer, and materialization semantics; bootstrap ordering; immutable exact-byte publishing and recovery; discovery, audit, and fork behavior; activation and legacy cutover; migration orchestration; root safety authority; and frozen-root/new-root handoff behavior. Any protocol-visible semantic change requires an explicit protocol version and protocol review. Integration work must not reinterpret these rules.
 
 ## Integration work still required
 
