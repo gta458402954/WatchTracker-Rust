@@ -540,10 +540,17 @@ mod tests {
     fn assert_no_outbound_state(conn: &Mutex<Connection>, root: &str) {
         let mut store = SqliteS2LiteStoreV1::open(conn, root).unwrap();
         assert_eq!(store.load_unfinished_outbound_batch().unwrap(), None);
-        assert!(store
-            .list_prepared_unreceipted_intents()
+        let prepared_intent_count: i64 = conn
+            .lock()
             .unwrap()
-            .is_empty());
+            .query_row(
+                "SELECT COUNT(*) FROM s2_lite_prepared_intent_v1
+                 WHERE root_id=?1 AND intent_kind='commit'",
+                [root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(prepared_intent_count, 0);
         let root_state = store.load_desktop_root_state().unwrap().unwrap();
         assert_eq!(root_state.next_writer_sequence, 1);
         assert!(root_state.writer_head.is_none());
