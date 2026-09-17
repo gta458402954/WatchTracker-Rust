@@ -1,5 +1,6 @@
 pub mod activation_cutover;
 pub mod bootstrap;
+pub mod business_projection;
 pub mod canonical;
 pub mod causal;
 pub mod conflict;
