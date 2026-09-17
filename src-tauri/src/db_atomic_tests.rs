@@ -11,6 +11,7 @@ mod tests {
     use crate::models::{Patch, RecordStatus, UpdateWatchRecord, WatchRecord};
     use crate::sync_staging::get_staging;
     use rusqlite::Connection;
+    use std::path::PathBuf;
 
     fn record(id: &str) -> WatchRecord {
         WatchRecord {
@@ -57,6 +58,23 @@ mod tests {
         let connection = Connection::open_in_memory().expect("open test database");
         db::setup_db(&connection).expect("create current schema");
         connection
+    }
+
+    fn file_database_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "watchtracker-delete-evidence-{name}-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn set_baseline(conn: &Connection, value: serde_json::Value) {
+        set_setting_tx(conn, "sync_v3_baseline", &value.to_string()).unwrap();
+        crate::sync_staging::set_staging(conn, &crate::sync_staging::SyncStaging::default())
+            .unwrap();
     }
 
     fn state(conn: &Connection, id: &str) -> (String, Option<String>, i64, String, i64) {
@@ -149,6 +167,354 @@ mod tests {
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].id, "deleted");
         assert!(!tombstones[0].deleted_at.is_empty());
+    }
+
+    #[test]
+    fn record_delete_cascade_descriptors_survive_reopen_without_source_rows() {
+        let path = file_database_path("record-cascade");
+        let (member_id, completion_id) = {
+            let mut conn = Connection::open(&path).unwrap();
+            db::setup_db(&conn).unwrap();
+            let mut deleted = record("deleted");
+            deleted.media_type = "剧集".to_string();
+            db::insert_record(&conn, deleted).unwrap();
+            let collection = crate::collections::create(
+                &mut conn,
+                crate::collections::CreateCollectionInput {
+                    name: "cascade".into(),
+                    description: None,
+                    source_kind: "manual".into(),
+                    source_key: None,
+                    collection_kind: None,
+                    order_mode: None,
+                },
+                "test-actor",
+            )
+            .unwrap();
+            crate::collections::add_members(
+                &mut conn,
+                &collection.id,
+                vec!["deleted".into()],
+                "manual",
+                collection.rev,
+                "test-actor",
+            )
+            .unwrap();
+            let enabled =
+                crate::episode_history::enable(&mut conn, "deleted", 2, 2, "test-actor").unwrap();
+            crate::episode_history::set_next(
+                &mut conn,
+                "deleted",
+                Some(3),
+                enabled.record.rev,
+                "test-actor",
+            )
+            .unwrap();
+            let member_id = crate::collections::all_members(&conn).unwrap()[0]
+                .id
+                .clone();
+            let completion_id = crate::episode_history::completions(&conn, "deleted").unwrap()[0]
+                .id
+                .clone();
+            set_baseline(
+                &conn,
+                serde_json::json!({
+                    "records": [{"id":"deleted"}],
+                    "collectionMembers": [{"id":member_id,"collectionId":collection.id,"recordId":"deleted"}],
+                    "episodeCompletions": [{"id":completion_id,"recordId":"deleted","episodeNumber":2}]
+                }),
+            );
+            delete_record_atomic(&mut conn, "deleted", "test-actor").unwrap();
+            (member_id, completion_id)
+        };
+        let conn = Connection::open(&path).unwrap();
+        assert!(db::get_record(&conn, "deleted").unwrap().is_none());
+        assert!(crate::collections::all_members(&conn).unwrap().is_empty());
+        assert!(crate::episode_history::completions(&conn, "deleted")
+            .unwrap()
+            .is_empty());
+        let entries = get_staging(&conn).unwrap().entries;
+        let by_id = entries
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry))
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            crate::sync_staging::staged_entry_entity_key(by_id["deleted"]).unwrap(),
+            serde_json::json!(["record", "deleted"])
+        );
+        assert_eq!(
+            crate::sync_staging::staged_entry_entity_key(by_id[member_id.as_str()]).unwrap(),
+            serde_json::json!([
+                "collection-member",
+                by_id[member_id.as_str()]
+                    .delete_descriptor
+                    .as_ref()
+                    .and_then(|descriptor| match descriptor {
+                        crate::sync_staging::StagedDeleteDescriptor::CollectionMember {
+                            collection_id,
+                            ..
+                        } => Some(collection_id.as_str()),
+                        _ => None,
+                    })
+                    .unwrap(),
+                "deleted"
+            ])
+        );
+        assert_eq!(
+            crate::sync_staging::staged_entry_entity_key(by_id[completion_id.as_str()]).unwrap(),
+            serde_json::json!(["episode-completion", "deleted", 2])
+        );
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn collection_delete_descriptors_survive_reopen() {
+        let path = file_database_path("collection-cascade");
+        let (collection_id, member_id) = {
+            let mut conn = Connection::open(&path).unwrap();
+            db::setup_db(&conn).unwrap();
+            db::insert_record(&conn, record("record-1")).unwrap();
+            let collection = crate::collections::create(
+                &mut conn,
+                crate::collections::CreateCollectionInput {
+                    name: "collection".into(),
+                    description: None,
+                    source_kind: "manual".into(),
+                    source_key: None,
+                    collection_kind: None,
+                    order_mode: None,
+                },
+                "test-actor",
+            )
+            .unwrap();
+            crate::collections::add_members(
+                &mut conn,
+                &collection.id,
+                vec!["record-1".into()],
+                "manual",
+                collection.rev,
+                "test-actor",
+            )
+            .unwrap();
+            let collection = crate::collections::all(&conn)
+                .unwrap()
+                .into_iter()
+                .find(|item| item.id == collection.id)
+                .unwrap();
+            let member_id = crate::collections::all_members(&conn).unwrap()[0]
+                .id
+                .clone();
+            set_baseline(
+                &conn,
+                serde_json::json!({
+                    "collections":[{"id":collection.id}],
+                    "collectionMembers":[{"id":member_id,"collectionId":collection.id,"recordId":"record-1"}]
+                }),
+            );
+            crate::collections::delete(&mut conn, &collection.id, collection.rev, "test-actor")
+                .unwrap();
+            (collection.id, member_id)
+        };
+        let conn = Connection::open(&path).unwrap();
+        let entries = get_staging(&conn).unwrap().entries;
+        let collection = entries
+            .iter()
+            .find(|entry| entry.id == collection_id)
+            .unwrap();
+        let member = entries.iter().find(|entry| entry.id == member_id).unwrap();
+        assert!(collection.delete_descriptor.is_some());
+        assert_eq!(
+            crate::sync_staging::staged_entry_entity_key(member).unwrap(),
+            serde_json::json!(["collection-member", collection_id, "record-1"])
+        );
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn direct_episode_completion_delete_survives_reopen() {
+        let path = file_database_path("episode-completion");
+        let completion_id = {
+            let mut conn = Connection::open(&path).unwrap();
+            db::setup_db(&conn).unwrap();
+            let mut series = record("series");
+            series.media_type = "剧集".into();
+            db::insert_record(&conn, series).unwrap();
+            let enabled =
+                crate::episode_history::enable(&mut conn, "series", 1, 2, "test-actor").unwrap();
+            let done = crate::episode_history::set_next(
+                &mut conn,
+                "series",
+                Some(2),
+                enabled.record.rev,
+                "test-actor",
+            )
+            .unwrap();
+            let completion = done.completions[0].clone();
+            set_baseline(
+                &conn,
+                serde_json::json!({"episodeCompletions":[{"id":completion.id,"recordId":"series","episodeNumber":1}]}),
+            );
+            crate::episode_history::delete_completion(
+                &mut conn,
+                "series",
+                1,
+                completion.rev,
+                "test-actor",
+            )
+            .unwrap();
+            completion.id
+        };
+        let conn = Connection::open(&path).unwrap();
+        let deleted = get_staging(&conn).unwrap().entries.pop().unwrap();
+        assert_eq!(deleted.id, completion_id);
+        assert_eq!(
+            crate::sync_staging::staged_entry_entity_key(&deleted).unwrap(),
+            serde_json::json!(["episode-completion", "series", 1])
+        );
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn episode_uncompletion_is_a_live_upsert_not_a_tombstone() {
+        let mut conn = database();
+        let mut series = record("series-uncomplete");
+        series.media_type = "剧集".into();
+        db::insert_record(&conn, series).unwrap();
+        let enabled =
+            crate::episode_history::enable(&mut conn, "series-uncomplete", 1, 2, "test-actor")
+                .unwrap();
+        let done = crate::episode_history::set_next(
+            &mut conn,
+            "series-uncomplete",
+            Some(2),
+            enabled.record.rev,
+            "test-actor",
+        )
+        .unwrap();
+        let completion = done.completions[0].clone();
+        set_baseline(
+            &conn,
+            serde_json::json!({"episodeCompletions":[{"id":completion.id,"recordId":"series-uncomplete","episodeNumber":1}]}),
+        );
+        crate::episode_history::uncomplete(
+            &mut conn,
+            "series-uncomplete",
+            1,
+            completion.rev,
+            "test-actor",
+        )
+        .unwrap();
+        let entry = get_staging(&conn).unwrap().entries.pop().unwrap();
+        assert_eq!(entry.operation, "upsert");
+        assert!(entry.delete_descriptor.is_none());
+        assert_eq!(
+            entry.local.as_ref().unwrap()["completedAt"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn collection_member_removal_descriptor_survives_reopen() {
+        let path = file_database_path("member-remove");
+        let member_id = {
+            let mut conn = Connection::open(&path).unwrap();
+            db::setup_db(&conn).unwrap();
+            db::insert_record(&conn, record("record-1")).unwrap();
+            let collection = crate::collections::create(
+                &mut conn,
+                crate::collections::CreateCollectionInput {
+                    name: "members".into(),
+                    description: None,
+                    source_kind: "manual".into(),
+                    source_key: None,
+                    collection_kind: None,
+                    order_mode: None,
+                },
+                "test-actor",
+            )
+            .unwrap();
+            let member = crate::collections::add_members(
+                &mut conn,
+                &collection.id,
+                vec!["record-1".into()],
+                "manual",
+                collection.rev,
+                "test-actor",
+            )
+            .unwrap()
+            .remove(0);
+            set_baseline(
+                &conn,
+                serde_json::json!({"collectionMembers":[{"id":member.id,"collectionId":collection.id,"recordId":"record-1"}]}),
+            );
+            crate::collections::remove_member(
+                &mut conn,
+                &collection.id,
+                "record-1",
+                member.rev,
+                "test-actor",
+            )
+            .unwrap();
+            member.id
+        };
+        let conn = Connection::open(&path).unwrap();
+        let entry = get_staging(&conn)
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.id == member_id)
+            .unwrap();
+        assert!(entry.delete_descriptor.is_some());
+        assert_eq!(
+            crate::sync_staging::staged_entry_entity_key(&entry).unwrap()[0],
+            "collection-member"
+        );
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn deletion_rollback_keeps_source_and_descriptor_uncommitted() {
+        let mut conn = database();
+        let mut series = record("rollback-series");
+        series.media_type = "剧集".into();
+        db::insert_record(&conn, series).unwrap();
+        let enabled =
+            crate::episode_history::enable(&mut conn, "rollback-series", 1, 2, "test-actor")
+                .unwrap();
+        let done = crate::episode_history::set_next(
+            &mut conn,
+            "rollback-series",
+            Some(2),
+            enabled.record.rev,
+            "test-actor",
+        )
+        .unwrap();
+        let completion = done.completions[0].clone();
+        set_baseline(
+            &conn,
+            serde_json::json!({
+                "records":[{"id":"rollback-series"}],
+                "episodeCompletions":[{"id":completion.id,"recordId":"rollback-series","episodeNumber":1}]
+            }),
+        );
+        conn.execute_batch(
+            "CREATE TRIGGER fail_completion_delete BEFORE DELETE ON episode_completions
+             BEGIN SELECT RAISE(ABORT, 'injected completion deletion failure'); END;",
+        )
+        .unwrap();
+        assert!(delete_record_atomic(&mut conn, "rollback-series", "test-actor").is_err());
+        assert!(db::get_record(&conn, "rollback-series").unwrap().is_some());
+        assert_eq!(
+            crate::episode_history::completions(&conn, "rollback-series")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(get_staging(&conn).unwrap().entries.is_empty());
     }
 
     #[test]

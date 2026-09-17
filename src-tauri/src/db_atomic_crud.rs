@@ -60,8 +60,40 @@ pub fn delete_record_atomic(
         [id],
         |row| row.get::<_, i64>(0),
     )?;
-    let (removed_collection_members, changed_collections) =
-        crate::collections::detach_record_tx(&transaction, id, actor_id)?;
+    let generation = mark_local_records_mutated(&transaction, "record-delete")?;
+    let (_removed_collection_members, changed_collections) =
+        crate::collections::detach_record_tx(&transaction, id, actor_id, generation)?;
+    let removed_completions = crate::episode_history::completions(&transaction, id)?;
+    let deleted_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let record_revision = previous_revision
+        .checked_add(1)
+        .ok_or_else(|| AppError::General("Record revision overflow".to_string()))?;
+    crate::sync_staging::stage_entity_delete_with_descriptor(
+        &transaction,
+        "record",
+        crate::sync_staging::StagedDeleteDescriptor::Record {
+            id: id.to_string(),
+            deleted_at: deleted_at.clone(),
+            rev: record_revision,
+            rev_actor: actor_id.to_string(),
+        },
+        generation,
+    )?;
+    for completion in &removed_completions {
+        crate::sync_staging::stage_entity_delete_with_descriptor(
+            &transaction,
+            "episode-completion",
+            crate::sync_staging::StagedDeleteDescriptor::EpisodeCompletion {
+                id: completion.id.clone(),
+                record_id: completion.record_id.clone(),
+                episode_number: completion.episode_number,
+                deleted_at: deleted_at.clone(),
+                rev: completion.rev + 1,
+                rev_actor: actor_id.to_string(),
+            },
+            generation,
+        )?;
+    }
     transaction.execute("DELETE FROM episode_completions WHERE recordId = ?1", [id])?;
     if transaction.execute("DELETE FROM records WHERE id = ?1", [id])? == 0 {
         return Err(AppError::General(format!("Record not found: {id}")));
@@ -71,23 +103,11 @@ pub fn delete_record_atomic(
     tombstones.retain(|tombstone| tombstone.id != id);
     tombstones.push(Tombstone {
         id: id.to_string(),
-        deleted_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        rev: previous_revision
-            .checked_add(1)
-            .ok_or_else(|| AppError::General("Record revision overflow".to_string()))?,
+        deleted_at,
+        rev: record_revision,
         rev_actor: actor_id.to_string(),
     });
     set_tombstones_tx(&transaction, &tombstones)?;
-    let generation = mark_local_records_mutated(&transaction, "record-delete")?;
-    crate::sync_staging::stage_delete(&transaction, id, generation)?;
-    for member_id in removed_collection_members {
-        crate::sync_staging::stage_entity_delete(
-            &transaction,
-            "collection-member",
-            &member_id,
-            generation,
-        )?;
-    }
     for collection in changed_collections {
         let collection_id = collection.id.clone();
         crate::sync_staging::stage_entity_upsert(

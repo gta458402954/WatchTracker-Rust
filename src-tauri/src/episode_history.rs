@@ -282,6 +282,147 @@ fn insert_known(
     Ok(())
 }
 
+fn stage_completion_delta(
+    conn: &Connection,
+    before: &[EpisodeCompletion],
+    after: &[EpisodeCompletion],
+    generation: i64,
+) -> Result<(), AppError> {
+    let before = before
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let after = after
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let ids = before
+        .keys()
+        .chain(after.keys())
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    for id in ids {
+        match (before.get(id), after.get(id)) {
+            (Some(left), Some(right)) if *left == *right => {}
+            (_, Some(completion)) => {
+                crate::sync_staging::stage_episode_completion_upsert(conn, completion, generation)?;
+            }
+            (Some(completion), None) => {
+                crate::sync_staging::stage_entity_delete_with_descriptor(
+                    conn,
+                    "episode-completion",
+                    crate::sync_staging::StagedDeleteDescriptor::EpisodeCompletion {
+                        id: completion.id.clone(),
+                        record_id: completion.record_id.clone(),
+                        episode_number: completion.episode_number,
+                        deleted_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+                        rev: completion.rev + 1,
+                        rev_actor: completion.rev_actor.clone(),
+                    },
+                    generation,
+                )?;
+            }
+            (None, None) => unreachable!("union of completion ids"),
+        }
+    }
+    Ok(())
+}
+
+/// Removes an episode-completion entity rather than merely marking it
+/// uncompleted. This is intentionally separate from `set_next`: changing
+/// `completedAt` to null preserves the entity and is staged as a live upsert.
+/// A true removal captures its immutable S2 deletion evidence before the row
+/// is removed, in the same transaction.
+#[allow(dead_code)] // Reserved for a direct completion-removal command.
+pub fn delete_completion(
+    conn: &mut Connection,
+    record_id: &str,
+    episode_number: i32,
+    expected_rev: i64,
+    actor_id: &str,
+) -> Result<(), AppError> {
+    if actor_id.trim().is_empty() || episode_number <= 0 {
+        return Err(invalid("episode_completion_delete_invalid"));
+    }
+    let transaction = conn.transaction()?;
+    let completion = transaction
+        .query_row(
+            "SELECT * FROM episode_completions WHERE recordId=?1 AND episodeNumber=?2",
+            params![record_id, episode_number],
+            row_to_completion,
+        )
+        .optional()?
+        .ok_or_else(|| invalid("episode_completion_not_found"))?;
+    if completion.rev != expected_rev {
+        return Err(invalid("stale_episode_completion"));
+    }
+    let generation = mark_local_records_mutated(&transaction, "episode-completion-delete")?;
+    crate::sync_staging::stage_entity_delete_with_descriptor(
+        &transaction,
+        "episode-completion",
+        crate::sync_staging::StagedDeleteDescriptor::EpisodeCompletion {
+            id: completion.id.clone(),
+            record_id: completion.record_id.clone(),
+            episode_number: completion.episode_number,
+            deleted_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            rev: completion.rev + 1,
+            rev_actor: actor_id.to_string(),
+        },
+        generation,
+    )?;
+    transaction.execute(
+        "DELETE FROM episode_completions WHERE id=?1",
+        [&completion.id],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Preserves the completion entity while clearing its completion timestamp.
+/// This is a live state transition, not a tombstone-producing deletion.
+#[allow(dead_code)] // Reserved for a direct completion-uncompletion command.
+pub fn uncomplete(
+    conn: &mut Connection,
+    record_id: &str,
+    episode_number: i32,
+    expected_rev: i64,
+    actor_id: &str,
+) -> Result<(), AppError> {
+    if actor_id.trim().is_empty() || episode_number <= 0 {
+        return Err(invalid("episode_completion_uncomplete_invalid"));
+    }
+    let transaction = conn.transaction()?;
+    let completion = transaction
+        .query_row(
+            "SELECT * FROM episode_completions WHERE recordId=?1 AND episodeNumber=?2",
+            params![record_id, episode_number],
+            row_to_completion,
+        )
+        .optional()?
+        .ok_or_else(|| invalid("episode_completion_not_found"))?;
+    if completion.rev != expected_rev {
+        return Err(invalid("stale_episode_completion"));
+    }
+    if completion.completed_at.is_none() {
+        transaction.commit()?;
+        return Ok(());
+    }
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    transaction.execute(
+        "UPDATE episode_completions SET completedAt=NULL, updatedAt=?1, rev=rev+1, revActor=?2 WHERE id=?3",
+        params![now, actor_id, completion.id],
+    )?;
+    let generation = mark_local_records_mutated(&transaction, "episode-completion-uncomplete")?;
+    let updated = transaction.query_row(
+        "SELECT * FROM episode_completions WHERE id=?1",
+        [&completion.id],
+        row_to_completion,
+    )?;
+    crate::sync_staging::stage_episode_completion_upsert(&transaction, &updated, generation)?;
+    transaction.commit()?;
+    Ok(())
+}
+
 pub fn enable(
     conn: &mut Connection,
     record_id: &str,
@@ -339,6 +480,8 @@ pub fn set_next(
         return tracking(conn, record_id);
     }
 
+    let prior_completions = completions(conn, record_id)?;
+
     let transaction = conn.transaction()?;
     let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
     if let Some(current) = record.next_episode {
@@ -360,6 +503,13 @@ pub fn set_next(
     )?;
     let generation = mark_local_records_mutated(&transaction, "episode-progress")?;
     crate::sync_staging::stage_upsert(&transaction, &record, generation)?;
+    let updated_completions = completions(&transaction, record_id)?;
+    stage_completion_delta(
+        &transaction,
+        &prior_completions,
+        &updated_completions,
+        generation,
+    )?;
     transaction.commit()?;
     tracking(conn, record_id)
 }

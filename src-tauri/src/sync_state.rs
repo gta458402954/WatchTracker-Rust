@@ -814,18 +814,38 @@ pub fn resolve_conflict(
         .and_then(|mut records| records.pop());
 
     let transaction = conn.transaction()?;
+    let existing = db::get_record(&transaction, id)?;
+    let generation = mark_local_records_mutated(&transaction, "conflict-resolution")?;
+    let actor = device_id(&transaction)?;
+    let deleted_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut tombstones = get_tombstones_tx(&transaction)?;
     if let Some(record) = selected {
         db::insert_record(&transaction, record)?;
         tombstones.retain(|item| item.id != id);
     } else {
+        if let Some(record) = existing {
+            crate::sync_staging::stage_entity_delete_with_descriptor(
+                &transaction,
+                "record",
+                crate::sync_staging::StagedDeleteDescriptor::Record {
+                    id: id.to_string(),
+                    deleted_at: deleted_at.clone(),
+                    rev: record
+                        .rev
+                        .checked_add(1)
+                        .ok_or_else(|| AppError::General("Record revision overflow".to_string()))?,
+                    rev_actor: actor.clone(),
+                },
+                generation,
+            )?;
+        }
         transaction.execute("DELETE FROM records WHERE id = ?1", [id])?;
         tombstones.retain(|item| item.id != id);
         tombstones.push(Tombstone {
             id: id.to_string(),
-            deleted_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            deleted_at,
             rev: 0,
-            rev_actor: device_id(&transaction)?,
+            rev_actor: actor,
         });
     }
     set_tombstones_tx(&transaction, &tombstones)?;
@@ -837,11 +857,8 @@ pub fn resolve_conflict(
             AppError::General(format!("Could not serialize conflicts: {error}"))
         })?,
     )?;
-    let generation = mark_local_records_mutated(&transaction, "conflict-resolution")?;
     if let Some(record) = db::get_record(&transaction, id)? {
         crate::sync_staging::stage_upsert(&transaction, &record, generation)?;
-    } else {
-        crate::sync_staging::stage_delete(&transaction, id, generation)?;
     }
     transaction.commit()?;
     Ok(())

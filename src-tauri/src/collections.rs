@@ -1354,11 +1354,23 @@ pub fn remove_member(
     if member.rev != expected_rev {
         return Err(AppError::General("stale_collection_member".into()));
     }
-    tx.execute("DELETE FROM collection_members WHERE id=?1", [&id])?;
-    tx.execute("INSERT INTO collection_member_tombstones(id,collectionId,recordId,deletedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET deletedAt=excluded.deletedAt,rev=excluded.rev,revActor=excluded.revActor", params![id,collection_id,record_id,timestamp,member.rev+1,actor])?;
     let collection = bump_collection(&tx, collection_id, actor, &timestamp)?;
     let generation = mark_local_records_mutated(&tx, "collection-member-remove")?;
-    crate::sync_staging::stage_entity_delete(&tx, "collection-member", &id, generation)?;
+    crate::sync_staging::stage_entity_delete_with_descriptor(
+        &tx,
+        "collection-member",
+        crate::sync_staging::StagedDeleteDescriptor::CollectionMember {
+            id: id.clone(),
+            collection_id: collection_id.to_string(),
+            record_id: record_id.to_string(),
+            deleted_at: timestamp.clone(),
+            rev: member.rev + 1,
+            rev_actor: actor.to_string(),
+        },
+        generation,
+    )?;
+    tx.execute("DELETE FROM collection_members WHERE id=?1", [&id])?;
+    tx.execute("INSERT INTO collection_member_tombstones(id,collectionId,recordId,deletedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET deletedAt=excluded.deletedAt,rev=excluded.rev,revActor=excluded.revActor", params![id,collection_id,record_id,timestamp,member.rev+1,actor])?;
     crate::sync_staging::stage_entity_upsert(
         &tx,
         "collection",
@@ -1462,15 +1474,37 @@ pub fn delete(
         .into_iter()
         .filter(|item| item.collection_id == id)
         .collect::<Vec<_>>();
+    let generation = mark_local_records_mutated(&tx, "collection-delete")?;
+    crate::sync_staging::stage_entity_delete_with_descriptor(
+        &tx,
+        "collection",
+        crate::sync_staging::StagedDeleteDescriptor::Collection {
+            id: id.to_string(),
+            deleted_at: timestamp.clone(),
+            rev: collection.rev + 1,
+            rev_actor: actor.to_string(),
+        },
+        generation,
+    )?;
+    for member in &members {
+        crate::sync_staging::stage_entity_delete_with_descriptor(
+            &tx,
+            "collection-member",
+            crate::sync_staging::StagedDeleteDescriptor::CollectionMember {
+                id: member.id.clone(),
+                collection_id: member.collection_id.clone(),
+                record_id: member.record_id.clone(),
+                deleted_at: timestamp.clone(),
+                rev: member.rev + 1,
+                rev_actor: actor.to_string(),
+            },
+            generation,
+        )?;
+    }
     tx.execute("DELETE FROM collections WHERE id=?1", [id])?;
     tx.execute("INSERT INTO collection_tombstones(id,deletedAt,rev,revActor) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET deletedAt=excluded.deletedAt,rev=excluded.rev,revActor=excluded.revActor", params![id,timestamp,collection.rev+1,actor])?;
     for member in &members {
         tx.execute("INSERT INTO collection_member_tombstones(id,collectionId,recordId,deletedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET deletedAt=excluded.deletedAt,rev=excluded.rev,revActor=excluded.revActor", params![member.id,member.collection_id,member.record_id,timestamp,member.rev+1,actor])?;
-    }
-    let generation = mark_local_records_mutated(&tx, "collection-delete")?;
-    crate::sync_staging::stage_entity_delete(&tx, "collection", id, generation)?;
-    for member in members {
-        crate::sync_staging::stage_entity_delete(&tx, "collection-member", &member.id, generation)?;
     }
     tx.commit()?;
     Ok(())
@@ -1480,7 +1514,8 @@ pub fn detach_record_tx(
     conn: &Connection,
     record_id: &str,
     actor: &str,
-) -> Result<(Vec<String>, Vec<Collection>), AppError> {
+    generation: i64,
+) -> Result<(Vec<CollectionMember>, Vec<Collection>), AppError> {
     let timestamp = now();
     let members = all_members(conn)?
         .into_iter()
@@ -1488,6 +1523,19 @@ pub fn detach_record_tx(
         .collect::<Vec<_>>();
     let mut changed_collections = Vec::new();
     for member in &members {
+        crate::sync_staging::stage_entity_delete_with_descriptor(
+            conn,
+            "collection-member",
+            crate::sync_staging::StagedDeleteDescriptor::CollectionMember {
+                id: member.id.clone(),
+                collection_id: member.collection_id.clone(),
+                record_id: member.record_id.clone(),
+                deleted_at: timestamp.clone(),
+                rev: member.rev + 1,
+                rev_actor: actor.to_string(),
+            },
+            generation,
+        )?;
         conn.execute("DELETE FROM collection_members WHERE id=?1", [&member.id])?;
         conn.execute("INSERT INTO collection_member_tombstones(id,collectionId,recordId,deletedAt,rev,revActor) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET deletedAt=excluded.deletedAt,rev=excluded.rev,revActor=excluded.revActor", params![member.id,member.collection_id,member.record_id,timestamp,member.rev+1,actor])?;
         changed_collections.push(bump_collection(
@@ -1497,10 +1545,7 @@ pub fn detach_record_tx(
             &timestamp,
         )?);
     }
-    Ok((
-        members.into_iter().map(|item| item.id).collect(),
-        changed_collections,
-    ))
+    Ok((members, changed_collections))
 }
 
 pub fn reconcile_after_record_replace_tx(
