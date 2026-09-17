@@ -5,6 +5,7 @@ pub mod causal;
 pub mod conflict;
 pub mod durable_persistence;
 pub mod immutable_publish;
+pub mod materialized_projection;
 pub mod migration_orchestration;
 pub mod ordinary_mutation;
 pub mod remote_discovery;

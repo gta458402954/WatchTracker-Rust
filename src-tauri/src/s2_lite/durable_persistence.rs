@@ -15,7 +15,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
 use super::activation_cutover::ActivationCutoverStateV1;
-use super::canonical::{ProtocolError, Result};
+use super::canonical::{validate_canonical_uuid_v4, validate_commit_ref, ProtocolError, Result};
+use super::causal::decode_frozen_wire_commit_v1;
 use super::immutable_publish::{
     restart_durable_activation_publish_v1, restart_durable_publish_v1,
     validate_prepared_activation_intent_v1, validate_prepared_intent_v1,
@@ -24,6 +25,7 @@ use super::immutable_publish::{
     PreparedIntentStoreV1, PreparedIntentV1, PublishedActivationReceiptV1,
     RecoverActivationIntentResultV1, RecoverPreparedIntentResultV1, RemotePublishedReceiptV1,
 };
+use super::materialized_projection::MaterializedProjectionStateV1;
 use super::migration_orchestration::{
     create_migration_root_safety_state_v1, merge_migration_root_cutover_state_v1,
     reconcile_migration_state_v1, validate_attempt_transition, ActivationCutoverStateStoreV1,
@@ -31,12 +33,87 @@ use super::migration_orchestration::{
     MigrationStatusV1, PublishExclusiveResultV1,
 };
 use super::remote_discovery::DiscoveryStateV1;
+use super::types::CommitRef;
 
 const STORE_FAILURE: ProtocolError = ProtocolError("S2_DURABLE_PERSISTENCE_FAILURE");
 const STORE_CORRUPTION: ProtocolError = ProtocolError("S2_DURABLE_STATE_CORRUPTION");
 const ROOT_MISMATCH: ProtocolError = ProtocolError("MIGRATION_ROOT_BINDING_MISMATCH");
 const SCHEMA_VERSION: &str = "1";
 const PERSISTENCE_FORMAT_VERSION: u8 = 1;
+
+/// Result of an ordinary root-bound publication admission. A transport result
+/// is intentionally not a receipt and carries no publication authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OrdinaryPublishExclusiveResultV1<T> {
+    Executed(T),
+    RejectedRootFrozen,
+}
+
+/// Local-only desktop bookkeeping. Frozen root safety, discovery, activation,
+/// and receipts intentionally live in their established authoritative tables.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopRootStateV1 {
+    pub state_version: u8,
+    pub physical_root_id: String,
+    pub local_writer_id: String,
+    pub next_writer_sequence: u64,
+    pub writer_head: Option<CommitRef>,
+    pub lifecycle_generation: u64,
+    pub materialized_projection_generation: Option<u64>,
+    pub business_applied_projection_generation: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OutboundBatchMutationV1 {
+    pub entity_kind: String,
+    pub entity_id: String,
+    pub captured_last_generation: i64,
+    pub local_mutation_id: String,
+}
+
+/// Local recovery binding for one ordinary commit. It references the durable
+/// prepared intent and authoritative receipt; it never copies receipt facts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OutboundBatchV1 {
+    pub state_version: u8,
+    pub batch_id: String,
+    pub physical_root_id: String,
+    pub captured_local_generation: i64,
+    pub mutations: Vec<OutboundBatchMutationV1>,
+    pub base_frontier: Vec<CommitRef>,
+    pub writer_id: String,
+    pub writer_sequence: u64,
+    pub previous_writer_ref: Option<CommitRef>,
+    pub prepared_intent_path: String,
+    pub prepared_intent_fingerprint: String,
+    pub bookkeeping_completed: bool,
+    pub bookkeeping_generation: u64,
+}
+
+/// Rebuildable cache binding frozen replay output to the exact durable inputs
+/// used to derive it. It is never receipt, safety, or discovery authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DurableMaterializedProjectionV1 {
+    pub projection_version: u8,
+    pub physical_root_id: String,
+    pub projection_generation: u64,
+    pub source_discovery_generation: u64,
+    pub source_root_safety_generation: u64,
+    pub replay_input_fingerprint: String,
+    pub business_projection_applied_generation: Option<u64>,
+    pub state: MaterializedProjectionStateV1,
+}
+
+/// Local bookkeeping result for one complete overlay-aware business projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BusinessProjectionTransactionResultV1 {
+    Applied,
+    AlreadyApplied,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,6 +206,25 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
               REFERENCES s2_lite_prepared_intent_v1(root_id, intent_kind, remote_path)
               ON DELETE RESTRICT
          );
+         CREATE TABLE IF NOT EXISTS s2_lite_desktop_root_state_v1 (
+            root_id TEXT PRIMARY KEY NOT NULL,
+            state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
+            FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
+         CREATE TABLE IF NOT EXISTS s2_lite_outbound_batch_v1 (
+            root_id TEXT PRIMARY KEY NOT NULL,
+            batch_id TEXT NOT NULL UNIQUE,
+            intent_path TEXT NOT NULL,
+            intent_fingerprint TEXT NOT NULL,
+            state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
+            FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
+         CREATE TABLE IF NOT EXISTS s2_lite_materialized_projection_v1 (
+            root_id TEXT PRIMARY KEY NOT NULL,
+            projection_generation TEXT NOT NULL,
+            state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
+            FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
@@ -176,6 +272,82 @@ fn canonical_generation(value: &str) -> Result<u64> {
         return Err(STORE_CORRUPTION);
     }
     value.parse().map_err(|_| STORE_CORRUPTION)
+}
+
+fn valid_outbound_entity_kind(value: &str) -> bool {
+    matches!(
+        value,
+        "record" | "collection" | "collection-member" | "episode-completion"
+    )
+}
+
+fn validate_desktop_root_state(state: &DesktopRootStateV1, root_id: &str) -> Result<()> {
+    if state.state_version != 1
+        || state.physical_root_id != root_id
+        || validate_canonical_uuid_v4(&state.local_writer_id).is_err()
+        || state
+            .writer_head
+            .as_ref()
+            .is_some_and(|value| validate_commit_ref(value).is_err())
+        || state
+            .business_applied_projection_generation
+            .zip(state.materialized_projection_generation)
+            .is_some_and(|(applied, materialized)| applied > materialized)
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
+}
+
+fn validate_outbound_batch(batch: &OutboundBatchV1, root_id: &str) -> Result<()> {
+    if batch.state_version != 1
+        || batch.physical_root_id != root_id
+        || validate_canonical_uuid_v4(&batch.batch_id).is_err()
+        || validate_canonical_uuid_v4(&batch.writer_id).is_err()
+        || batch.captured_local_generation < 0
+        || batch.prepared_intent_path.is_empty()
+        || batch.prepared_intent_fingerprint.is_empty()
+        || batch
+            .previous_writer_ref
+            .as_ref()
+            .is_some_and(|value| validate_commit_ref(value).is_err())
+        || batch
+            .base_frontier
+            .iter()
+            .any(|value| validate_commit_ref(value).is_err())
+        || batch.mutations.is_empty()
+        || batch.mutations.iter().any(|mutation| {
+            !valid_outbound_entity_kind(&mutation.entity_kind)
+                || mutation.entity_id.is_empty()
+                || mutation.captured_last_generation < 0
+                || validate_canonical_uuid_v4(&mutation.local_mutation_id).is_err()
+        })
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
+}
+
+fn validate_materialized_projection(
+    projection: &DurableMaterializedProjectionV1,
+    root_id: &str,
+) -> Result<()> {
+    if projection.projection_version != 1
+        || projection.physical_root_id != root_id
+        || projection.state.state_version != 1
+        || projection.replay_input_fingerprint != projection.state.replay_input_fingerprint
+        || projection.replay_input_fingerprint.len() != 64
+        || !projection
+            .replay_input_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || projection
+            .business_projection_applied_generation
+            .is_some_and(|value| value > projection.projection_generation)
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
 }
 
 fn ensure_root_authority(conn: &Connection, root_id: &str) -> Result<()> {
@@ -392,6 +564,318 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
 
     pub fn root_id(&self) -> &str {
         self.root_id
+    }
+
+    pub fn load_desktop_root_state(&mut self) -> Result<Option<DesktopRootStateV1>> {
+        let conn = self.connection()?;
+        let bytes = database(
+            conn.query_row(
+                "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                [self.root_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional(),
+        )?;
+        bytes
+            .map(|bytes| {
+                let state: DesktopRootStateV1 = decode(&bytes)?;
+                validate_desktop_root_state(&state, self.root_id)?;
+                Ok(state)
+            })
+            .transpose()
+    }
+
+    pub fn load_materialized_projection(
+        &mut self,
+    ) -> Result<Option<DurableMaterializedProjectionV1>> {
+        let conn = self.connection()?;
+        let row = database(
+            conn.query_row(
+                "SELECT projection_generation, state_json FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+                [self.root_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional(),
+        )?;
+        row.map(|(generation, bytes)| {
+            let projection: DurableMaterializedProjectionV1 = decode(&bytes)?;
+            if projection.projection_generation != canonical_generation(&generation)? {
+                return Err(STORE_CORRUPTION);
+            }
+            validate_materialized_projection(&projection, self.root_id)?;
+            Ok(projection)
+        })
+        .transpose()
+    }
+
+    /// CAS persists only a replay made against the still-current discovery and
+    /// root-safety generations. A stale complete cache can never authorize a
+    /// later outbound freeze.
+    pub fn compare_and_swap_materialized_projection(
+        &mut self,
+        expected_projection_generation: Option<u64>,
+        projection: &DurableMaterializedProjectionV1,
+    ) -> Result<bool> {
+        validate_materialized_projection(projection, self.root_id)?;
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if safety.generation != projection.source_root_safety_generation {
+            return Ok(false);
+        }
+        let discovery = database(
+            transaction
+                .query_row(
+                    "SELECT storage_generation FROM s2_lite_discovery_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional(),
+        )?
+        .map(|value| canonical_generation(&value))
+        .transpose()?;
+        if discovery != Some(projection.source_discovery_generation) {
+            return Ok(false);
+        }
+        let current = database(
+            transaction
+                .query_row(
+                    "SELECT projection_generation FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional(),
+        )?
+        .map(|value| canonical_generation(&value))
+        .transpose()?;
+        if current != expected_projection_generation {
+            return Ok(false);
+        }
+        database(transaction.execute(
+            "INSERT INTO s2_lite_materialized_projection_v1(root_id, projection_generation, state_json)
+             VALUES(?1, ?2, ?3) ON CONFLICT(root_id) DO UPDATE SET
+             projection_generation=excluded.projection_generation, state_json=excluded.state_json",
+            params![self.root_id, projection.projection_generation.to_string(), encode(projection)?],
+        ))?;
+        database(transaction.commit())?;
+        Ok(true)
+    }
+
+    pub fn persist_desktop_root_state(&mut self, state: &DesktopRootStateV1) -> Result<()> {
+        validate_desktop_root_state(state, self.root_id)?;
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_desktop_root_state_v1(root_id, state_json) VALUES(?1, ?2)
+             ON CONFLICT(root_id) DO UPDATE SET state_json=excluded.state_json",
+            params![self.root_id, encode(state)?],
+        ))?;
+        database(transaction.commit())?;
+        Ok(())
+    }
+
+    /// Runs the local business projector under the same root-bound immediate
+    /// transaction that validates its exact durable projection inputs. Advancing
+    /// `businessAppliedProjectionGeneration` means fully processed locally; it
+    /// never asserts equality between business tables and canonical replay.
+    pub(crate) fn run_business_projection_transaction<T>(
+        &mut self,
+        expected_projection_generation: u64,
+        apply: impl FnOnce(&Connection, &DurableMaterializedProjectionV1) -> Result<T>,
+    ) -> Result<(BusinessProjectionTransactionResultV1, Option<T>)> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty() {
+            return Err(ROOT_MISMATCH);
+        }
+        let discovery_generation = database(transaction.query_row(
+            "SELECT storage_generation FROM s2_lite_discovery_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| row.get::<_, String>(0),
+        ))?;
+        let projection_row = database(transaction.query_row(
+            "SELECT projection_generation, state_json FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        ))?;
+        let (stored_generation, bytes) = projection_row;
+        let mut projection: DurableMaterializedProjectionV1 = decode(&bytes)?;
+        if canonical_generation(&stored_generation)? != expected_projection_generation
+            || projection.projection_generation != expected_projection_generation
+            || projection.source_discovery_generation
+                != canonical_generation(&discovery_generation)?
+            || projection.source_root_safety_generation != safety.generation
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        validate_materialized_projection(&projection, self.root_id)?;
+        if !matches!(
+            projection.state.status,
+            super::materialized_projection::MaterializedProjectionStatusV1::Complete
+        ) {
+            return Err(STORE_CORRUPTION);
+        }
+        let root_bytes = database(transaction.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        ))?;
+        let mut root_state: DesktopRootStateV1 = decode(&root_bytes)?;
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        if root_state.materialized_projection_generation != Some(expected_projection_generation) {
+            return Err(STORE_CORRUPTION);
+        }
+        if root_state.business_applied_projection_generation == Some(expected_projection_generation)
+        {
+            database(transaction.commit())?;
+            return Ok((BusinessProjectionTransactionResultV1::AlreadyApplied, None));
+        }
+        let output = apply(&transaction, &projection)?;
+        root_state.business_applied_projection_generation = Some(expected_projection_generation);
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        projection.business_projection_applied_generation = Some(expected_projection_generation);
+        validate_materialized_projection(&projection, self.root_id)?;
+        database(transaction.execute(
+            "UPDATE s2_lite_desktop_root_state_v1 SET state_json=?2 WHERE root_id=?1",
+            params![self.root_id, encode(&root_state)?],
+        ))?;
+        database(transaction.execute(
+            "UPDATE s2_lite_materialized_projection_v1 SET state_json=?2 WHERE root_id=?1 AND projection_generation=?3",
+            params![self.root_id, encode(&projection)?, expected_projection_generation.to_string()],
+        ))?;
+        database(transaction.commit())?;
+        Ok((BusinessProjectionTransactionResultV1::Applied, Some(output)))
+    }
+
+    pub fn load_unfinished_outbound_batch(&mut self) -> Result<Option<OutboundBatchV1>> {
+        let conn = self.connection()?;
+        let bytes = database(
+            conn.query_row(
+                "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
+                [self.root_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional(),
+        )?;
+        bytes
+            .map(|bytes| {
+                let batch: OutboundBatchV1 = decode(&bytes)?;
+                validate_outbound_batch(&batch, self.root_id)?;
+                if batch.bookkeeping_completed {
+                    return Ok(None);
+                }
+                Ok(Some(batch))
+            })
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    /// Binds a local batch and its immutable bytes in one SQLite transaction.
+    /// Neither record is externally publishable until this returns successfully.
+    pub fn persist_outbound_batch_with_intent(
+        &mut self,
+        batch: &OutboundBatchV1,
+        intent: &PreparedIntentV1,
+    ) -> Result<()> {
+        validate_outbound_batch(batch, self.root_id)?;
+        validate_prepared_intent_v1(intent)?;
+        if batch.prepared_intent_path != intent.remote_path
+            || batch.prepared_intent_fingerprint != intent.intent_fingerprint
+            || batch.writer_id != intent.commit_ref.writer_id
+            || batch.writer_sequence.to_string() != intent.commit_ref.writer_seq
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let frozen_commit = decode_frozen_wire_commit_v1(&intent.exact_bytes)?;
+        if batch.previous_writer_ref != frozen_commit.previous_writer_commit {
+            return Err(STORE_CORRUPTION);
+        }
+        let mut metadata = intent.clone();
+        let exact_bytes = std::mem::take(&mut metadata.exact_bytes);
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty() {
+            return Err(ProtocolError("ROOT_FROZEN"));
+        }
+        let existing = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?;
+        if let Some(bytes) = existing {
+            let existing: OutboundBatchV1 = decode(&bytes)?;
+            validate_outbound_batch(&existing, self.root_id)?;
+            if !existing.bookkeeping_completed {
+                return Err(STORE_CORRUPTION);
+            }
+        }
+        persist_intent_parts(
+            &transaction,
+            self.root_id,
+            "commit",
+            &intent.remote_path,
+            &intent.intent_fingerprint,
+            &metadata,
+            &exact_bytes,
+        )?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_outbound_batch_v1(root_id, batch_id, intent_path, intent_fingerprint, state_json)
+             VALUES(?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(root_id) DO UPDATE SET
+               batch_id=excluded.batch_id,
+               intent_path=excluded.intent_path,
+               intent_fingerprint=excluded.intent_fingerprint,
+               state_json=excluded.state_json",
+            params![
+                self.root_id,
+                batch.batch_id,
+                batch.prepared_intent_path,
+                batch.prepared_intent_fingerprint,
+                encode(batch)?
+            ],
+        ))?;
+        database(transaction.commit())?;
+        Ok(())
+    }
+
+    pub fn mark_outbound_batch_bookkeeping_complete(
+        &mut self,
+        batch: &OutboundBatchV1,
+    ) -> Result<()> {
+        validate_outbound_batch(batch, self.root_id)?;
+        let mut completed = batch.clone();
+        completed.bookkeeping_completed = true;
+        completed.bookkeeping_generation = completed
+            .bookkeeping_generation
+            .checked_add(1)
+            .ok_or(STORE_CORRUPTION)?;
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        let changed = database(transaction.execute(
+            "UPDATE s2_lite_outbound_batch_v1 SET state_json=?3
+             WHERE root_id=?1 AND batch_id=?2 AND state_json=?4",
+            params![
+                self.root_id,
+                batch.batch_id,
+                encode(&completed)?,
+                encode(batch)?
+            ],
+        ))?;
+        if changed > 1 {
+            return Err(STORE_CORRUPTION);
+        }
+        database(transaction.commit())?;
+        Ok(())
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>> {
