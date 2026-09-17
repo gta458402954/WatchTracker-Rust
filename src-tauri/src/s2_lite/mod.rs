@@ -9,6 +9,7 @@ pub mod immutable_publish;
 pub mod materialized_projection;
 pub mod migration_orchestration;
 pub mod ordinary_mutation;
+pub mod outbound_freeze;
 pub mod remote_discovery;
 pub mod semantic;
 pub mod target_root_binding;

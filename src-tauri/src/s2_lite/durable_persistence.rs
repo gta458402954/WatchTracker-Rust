@@ -82,6 +82,7 @@ pub struct TargetRootBindingV1 {
 pub struct OutboundBatchMutationV1 {
     pub entity_kind: String,
     pub entity_id: String,
+    pub entity_key: Value,
     pub captured_last_generation: i64,
     pub local_mutation_id: String,
 }
@@ -93,15 +94,22 @@ pub struct OutboundBatchMutationV1 {
 pub struct OutboundBatchV1 {
     pub state_version: u8,
     pub batch_id: String,
+    pub target_id: String,
+    pub target_epoch: u64,
     pub physical_root_id: String,
+    pub projection_generation: u64,
+    pub source_discovery_generation: u64,
+    pub source_root_safety_generation: u64,
     pub captured_local_generation: i64,
     pub mutations: Vec<OutboundBatchMutationV1>,
-    pub base_frontier: Vec<CommitRef>,
+    pub basis_clock: Vec<CommitRef>,
     pub writer_id: String,
     pub writer_sequence: u64,
     pub previous_writer_ref: Option<CommitRef>,
+    pub commit_ref: CommitRef,
     pub prepared_intent_path: String,
     pub prepared_intent_fingerprint: String,
+    pub state: String,
     pub bookkeeping_completed: bool,
     pub bookkeeping_generation: u64,
 }
@@ -126,6 +134,45 @@ pub struct DurableMaterializedProjectionV1 {
 pub enum BusinessProjectionTransactionResultV1 {
     Applied,
     AlreadyApplied,
+}
+
+/// Inputs captured under the outbound freezer's one authoritative SQLite
+/// transaction. Nothing in this value is a transport fact.
+#[derive(Clone, Debug)]
+pub(crate) struct OutboundFreezeTransactionContextV1 {
+    pub binding: TargetRootBindingV1,
+    pub root_state: DesktopRootStateV1,
+    pub projection: DurableMaterializedProjectionV1,
+    pub discovery_generation: u64,
+    pub root_safety_generation: u64,
+    pub staging: crate::sync_staging::SyncStaging,
+}
+
+pub(crate) enum OutboundFreezeTransactionPlanV1 {
+    NoSemanticMutation,
+    Blocked,
+    Frozen {
+        batch: Box<OutboundBatchV1>,
+        intent: Box<PreparedIntentV1>,
+    },
+}
+
+pub(crate) enum OutboundFreezeTransactionResultV1 {
+    Frozen {
+        batch: Box<OutboundBatchV1>,
+        intent: Box<PreparedIntentV1>,
+    },
+    ExistingPendingOutbound,
+    NoSemanticMutation,
+    TargetChanged,
+    Blocked,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OutboundFreezeFaultV1 {
+    AfterWriterReservation,
+    AfterBatchPersistence,
 }
 
 #[derive(Serialize)]
@@ -367,9 +414,14 @@ pub(crate) fn completed_migration_writer_seed(
 
 fn validate_outbound_batch(batch: &OutboundBatchV1, root_id: &str) -> Result<()> {
     if batch.state_version != 1
+        || batch.target_id.is_empty()
         || batch.physical_root_id != root_id
+        || batch.state != "frozen"
         || validate_canonical_uuid_v4(&batch.batch_id).is_err()
         || validate_canonical_uuid_v4(&batch.writer_id).is_err()
+        || validate_commit_ref(&batch.commit_ref).is_err()
+        || batch.commit_ref.writer_id != batch.writer_id
+        || canonical_generation(&batch.commit_ref.writer_seq)? != batch.writer_sequence
         || batch.captured_local_generation < 0
         || batch.prepared_intent_path.is_empty()
         || batch.prepared_intent_fingerprint.is_empty()
@@ -378,13 +430,14 @@ fn validate_outbound_batch(batch: &OutboundBatchV1, root_id: &str) -> Result<()>
             .as_ref()
             .is_some_and(|value| validate_commit_ref(value).is_err())
         || batch
-            .base_frontier
+            .basis_clock
             .iter()
             .any(|value| validate_commit_ref(value).is_err())
         || batch.mutations.is_empty()
         || batch.mutations.iter().any(|mutation| {
             !valid_outbound_entity_kind(&mutation.entity_kind)
                 || mutation.entity_id.is_empty()
+                || mutation.entity_key.is_null()
                 || mutation.captured_last_generation < 0
                 || validate_canonical_uuid_v4(&mutation.local_mutation_id).is_err()
         })
@@ -1113,6 +1166,300 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         ))?;
         database(transaction.commit())?;
         Ok(())
+    }
+
+    /// Captures every authority input and durably reserves one outbound commit
+    /// in a single `BEGIN IMMEDIATE` transaction.  The callback has no store
+    /// handle and therefore cannot publish or alter unrelated durable state.
+    pub(crate) fn run_outbound_freeze_transaction(
+        &mut self,
+        target_id: &str,
+        target_epoch: u64,
+        build: impl FnOnce(
+            &OutboundFreezeTransactionContextV1,
+        ) -> Result<OutboundFreezeTransactionPlanV1>,
+    ) -> Result<OutboundFreezeTransactionResultV1> {
+        self.run_outbound_freeze_transaction_inner(target_id, target_epoch, false, false, build)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_outbound_freeze_transaction_with_fault(
+        &mut self,
+        target_id: &str,
+        target_epoch: u64,
+        fault: OutboundFreezeFaultV1,
+        build: impl FnOnce(
+            &OutboundFreezeTransactionContextV1,
+        ) -> Result<OutboundFreezeTransactionPlanV1>,
+    ) -> Result<OutboundFreezeTransactionResultV1> {
+        self.run_outbound_freeze_transaction_inner(
+            target_id,
+            target_epoch,
+            fault == OutboundFreezeFaultV1::AfterWriterReservation,
+            fault == OutboundFreezeFaultV1::AfterBatchPersistence,
+            build,
+        )
+    }
+
+    fn run_outbound_freeze_transaction_inner(
+        &mut self,
+        target_id: &str,
+        target_epoch: u64,
+        fault_after_writer_reservation: bool,
+        fault_after_batch_persistence: bool,
+        build: impl FnOnce(
+            &OutboundFreezeTransactionContextV1,
+        ) -> Result<OutboundFreezeTransactionPlanV1>,
+    ) -> Result<OutboundFreezeTransactionResultV1> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+
+        // Re-derive the active target while the authoritative write lock is
+        // held.  The physical root is never a caller-selected value.
+        let registry = crate::sync_targets::registry(&transaction).map_err(|_| STORE_FAILURE)?;
+        let Some(registry) = registry else {
+            return Ok(OutboundFreezeTransactionResultV1::TargetChanged);
+        };
+        if registry.active_target_id.as_deref() != Some(target_id)
+            || registry.target_epoch != target_epoch
+        {
+            return Ok(OutboundFreezeTransactionResultV1::TargetChanged);
+        }
+        let Some(target) = registry
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+        else {
+            return Ok(OutboundFreezeTransactionResultV1::TargetChanged);
+        };
+        let root = super::webdav_adapter::webdav_root_v1(&target.normalized_url, &target.username)
+            .map_err(|_| STORE_CORRUPTION)?;
+        let candidate = TargetRootBindingV1 {
+            binding_version: 1,
+            target_id: target_id.to_string(),
+            target_epoch,
+            canonical_url: root.canonical_url,
+            normalized_account: root.normalized_account,
+            physical_root_id: root.physical_root_id,
+        };
+        if candidate.physical_root_id != self.root_id {
+            return Ok(OutboundFreezeTransactionResultV1::TargetChanged);
+        }
+        let binding = database(
+            transaction
+                .query_row(
+                    "SELECT binding_version, target_id, target_epoch, canonical_url,
+                            normalized_account, physical_root_id
+                     FROM s2_lite_target_root_binding_v1
+                     WHERE target_id=?1 AND target_epoch=?2",
+                    params![target_id, target_epoch.to_string()],
+                    |row| {
+                        Ok(TargetRootBindingV1 {
+                            binding_version: row.get(0)?,
+                            target_id: row.get(1)?,
+                            target_epoch: row
+                                .get::<_, String>(2)?
+                                .parse()
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            canonical_url: row.get(3)?,
+                            normalized_account: row.get(4)?,
+                            physical_root_id: row.get(5)?,
+                        })
+                    },
+                )
+                .optional(),
+        )?;
+        let Some(binding) = binding else {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        };
+        validate_target_root_binding(&binding)?;
+        if binding != candidate {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        }
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty() {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        }
+        let discovery_generation = database(
+            transaction
+                .query_row(
+                    "SELECT storage_generation FROM s2_lite_discovery_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional(),
+        )?
+        .map(|value| canonical_generation(&value))
+        .transpose()?
+        .ok_or(STORE_CORRUPTION)?;
+        let projection_row = database(
+            transaction
+                .query_row(
+                    "SELECT projection_generation, state_json FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                )
+                .optional(),
+        )?;
+        let Some((stored_projection_generation, projection_bytes)) = projection_row else {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        };
+        let projection: DurableMaterializedProjectionV1 = decode(&projection_bytes)?;
+        if projection.projection_generation != canonical_generation(&stored_projection_generation)?
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        validate_materialized_projection(&projection, self.root_id)?;
+        if !matches!(
+            projection.state.status,
+            super::materialized_projection::MaterializedProjectionStatusV1::Complete
+        ) || projection.source_discovery_generation != discovery_generation
+            || projection.source_root_safety_generation != safety.generation
+        {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        }
+        let root_bytes = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?;
+        let Some(root_bytes) = root_bytes else {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        };
+        let root_state: DesktopRootStateV1 = decode(&root_bytes)?;
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        if root_state.materialized_projection_generation != Some(projection.projection_generation)
+            || root_state.business_applied_projection_generation
+                != Some(projection.projection_generation)
+        {
+            return Ok(OutboundFreezeTransactionResultV1::Blocked);
+        }
+        let existing_batch = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?;
+        if let Some(bytes) = existing_batch {
+            let batch: OutboundBatchV1 = decode(&bytes)?;
+            validate_outbound_batch(&batch, self.root_id)?;
+            if !batch.bookkeeping_completed {
+                return Ok(OutboundFreezeTransactionResultV1::ExistingPendingOutbound);
+            }
+        }
+        let unresolved_intent = database(transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM s2_lite_prepared_intent_v1 AS intent
+                LEFT JOIN s2_lite_published_receipt_v1 AS receipt
+                  ON receipt.root_id=intent.root_id
+                 AND receipt.receipt_kind=intent.intent_kind
+                 AND receipt.remote_path=intent.remote_path
+                WHERE intent.root_id=?1 AND intent.intent_kind='commit'
+                  AND receipt.remote_path IS NULL
+             )",
+            [self.root_id],
+            |row| row.get::<_, i64>(0),
+        ))?;
+        if unresolved_intent != 0 {
+            return Ok(OutboundFreezeTransactionResultV1::ExistingPendingOutbound);
+        }
+        let staging = crate::sync_staging::get_staging(&transaction).map_err(|_| STORE_FAILURE)?;
+        let context = OutboundFreezeTransactionContextV1 {
+            binding,
+            root_state: root_state.clone(),
+            projection: projection.clone(),
+            discovery_generation,
+            root_safety_generation: safety.generation,
+            staging,
+        };
+        let plan = build(&context)?;
+        let OutboundFreezeTransactionPlanV1::Frozen { batch, intent } = plan else {
+            database(transaction.commit())?;
+            return Ok(match plan {
+                OutboundFreezeTransactionPlanV1::NoSemanticMutation => {
+                    OutboundFreezeTransactionResultV1::NoSemanticMutation
+                }
+                OutboundFreezeTransactionPlanV1::Blocked => {
+                    OutboundFreezeTransactionResultV1::Blocked
+                }
+                OutboundFreezeTransactionPlanV1::Frozen { .. } => unreachable!(),
+            });
+        };
+        validate_outbound_batch(&batch, self.root_id)?;
+        validate_prepared_intent_v1(&intent)?;
+        if batch.target_id != context.binding.target_id
+            || batch.target_epoch != context.binding.target_epoch
+            || batch.physical_root_id != context.binding.physical_root_id
+            || batch.projection_generation != context.projection.projection_generation
+            || batch.source_discovery_generation != context.discovery_generation
+            || batch.source_root_safety_generation != context.root_safety_generation
+            || batch.writer_id != root_state.local_writer_id
+            || batch.writer_sequence != root_state.next_writer_sequence
+            || batch.commit_ref != intent.commit_ref
+            || batch.prepared_intent_path != intent.remote_path
+            || batch.prepared_intent_fingerprint != intent.intent_fingerprint
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let frozen = decode_frozen_wire_commit_v1(&intent.exact_bytes)?;
+        if frozen.commit_ref() != batch.commit_ref
+            || frozen.previous_writer_commit != batch.previous_writer_ref
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let mut reserved_state = root_state;
+        reserved_state.next_writer_sequence = reserved_state
+            .next_writer_sequence
+            .checked_add(1)
+            .ok_or(STORE_CORRUPTION)?;
+        validate_desktop_root_state(&reserved_state, self.root_id)?;
+        database(transaction.execute(
+            "UPDATE s2_lite_desktop_root_state_v1 SET state_json=?2 WHERE root_id=?1",
+            params![self.root_id, encode(&reserved_state)?],
+        ))?;
+        if fault_after_writer_reservation {
+            return Err(STORE_FAILURE);
+        }
+        database(transaction.execute(
+            "INSERT INTO s2_lite_outbound_batch_v1(root_id, batch_id, intent_path, intent_fingerprint, state_json)
+             VALUES(?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(root_id) DO UPDATE SET
+               batch_id=excluded.batch_id,
+               intent_path=excluded.intent_path,
+               intent_fingerprint=excluded.intent_fingerprint,
+               state_json=excluded.state_json",
+            params![
+                self.root_id,
+                batch.batch_id,
+                batch.prepared_intent_path,
+                batch.prepared_intent_fingerprint,
+                encode(&batch)?
+            ],
+        ))?;
+        if fault_after_batch_persistence {
+            return Err(STORE_FAILURE);
+        }
+        let mut metadata = intent.clone();
+        let exact_bytes = std::mem::take(&mut metadata.exact_bytes);
+        persist_intent_parts(
+            &transaction,
+            self.root_id,
+            "commit",
+            &intent.remote_path,
+            &intent.intent_fingerprint,
+            &metadata,
+            &exact_bytes,
+        )?;
+        database(transaction.commit())?;
+        Ok(OutboundFreezeTransactionResultV1::Frozen { batch, intent })
     }
 
     pub fn mark_outbound_batch_bookkeeping_complete(

@@ -4,6 +4,7 @@
 //! Native entity/tombstone representation. It does not build commits, allocate
 //! UUIDs, inspect S1 staging bases, or perform publication.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::canonical::{
@@ -15,7 +16,8 @@ use super::semantic::{
 };
 use super::types::{CommitMutationV1, CommitRef, EntityKey};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalRecordV1 {
     pub id: String,
     pub original_name: String,
@@ -55,7 +57,8 @@ pub struct LocalRecordV1 {
     pub rev_actor: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalCollectionV1 {
     pub id: String,
     pub name: String,
@@ -71,7 +74,8 @@ pub struct LocalCollectionV1 {
     pub rev_actor: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalCollectionMemberV1 {
     pub id: String,
     pub collection_id: String,
@@ -84,7 +88,8 @@ pub struct LocalCollectionMemberV1 {
     pub rev_actor: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalEpisodeCompletionV1 {
     pub id: String,
     pub record_id: String,
