@@ -457,6 +457,32 @@ pub fn active_request_credentials(
     ))
 }
 
+/// Retrieves credentials for a historically bound target without consulting
+/// the active target or its epoch. Callers must still validate their immutable
+/// target/root binding before using this material for recovery.
+pub fn historical_request_credentials(
+    conn: &mut Connection,
+    paths: &AppPaths,
+    target_id: &str,
+) -> Result<Option<(String, String, zeroize::Zeroizing<String>)>, AppError> {
+    let registry = ensure_migrated(conn, paths)?;
+    let Some(target) = registry
+        .targets
+        .iter()
+        .find(|target| target.id == target_id)
+    else {
+        return Ok(None);
+    };
+    let Some(password) = resolve_target_secret(conn, target)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        target.normalized_url.clone(),
+        target.username.clone(),
+        password,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

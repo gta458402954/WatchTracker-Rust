@@ -10,7 +10,9 @@ pub mod materialized_projection;
 pub mod migration_orchestration;
 pub mod ordinary_mutation;
 pub mod outbound_freeze;
+pub mod outbound_publish;
 pub mod remote_discovery;
+pub mod root_coordinator;
 pub mod semantic;
 pub mod target_root_binding;
 pub mod types;
@@ -28,6 +30,8 @@ mod immutable_publish_tests;
 mod migration_orchestration_tests;
 #[cfg(test)]
 mod ordinary_mutation_tests;
+#[cfg(test)]
+mod outbound_publish_tests;
 #[cfg(test)]
 mod remote_discovery_tests;
 #[cfg(test)]

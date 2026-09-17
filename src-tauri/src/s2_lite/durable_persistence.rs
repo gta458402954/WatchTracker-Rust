@@ -1787,6 +1787,77 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         database(transaction.commit())?;
         Ok(())
     }
+
+    /// Common root authority primitive for both migration and ordinary S2
+    /// writes. Callers supply only their narrow admission validation; this
+    /// method owns BEGIN IMMEDIATE, root binding, and authoritative freeze
+    /// handling, and invokes the one admitted network operation before the
+    /// transaction is released.
+    fn run_root_publication_admission<T, R, FF, FA, F>(
+        &mut self,
+        root_id: &str,
+        on_frozen: FF,
+        admission: FA,
+        operation: F,
+    ) -> Result<std::result::Result<T, R>>
+    where
+        FF: FnOnce(&Connection, &MigrationRootSafetyStateV1) -> Result<R>,
+        FA: FnOnce(&Connection, &MigrationRootSafetyStateV1) -> Result<Option<R>>,
+        F: FnOnce() -> Result<T>,
+    {
+        self.require_root(root_id)?;
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, root_id)?;
+        let safety = load_root_safety_from(&transaction, root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty() {
+            let rejected = on_frozen(&transaction, &safety)?;
+            database(transaction.commit())?;
+            return Ok(Err(rejected));
+        }
+        if let Some(rejected) = admission(&transaction, &safety)? {
+            database(transaction.commit())?;
+            return Ok(Err(rejected));
+        }
+        let value = operation()?;
+        database(transaction.commit())?;
+        Ok(Ok(value))
+    }
+
+    /// Admits one ordinary S2 attempt only after its exact durable prepared
+    /// intent has been found under this physical root. Batch/lifecycle callers
+    /// retain their additional binding checks; this wrapper never fabricates a
+    /// migration state or upgrades a transport success to a receipt.
+    pub fn run_ordinary_publish_exclusive<T, F: FnOnce() -> Result<T>>(
+        &mut self,
+        root_id: &str,
+        intent: &PreparedIntentV1,
+        operation: F,
+    ) -> Result<OrdinaryPublishExclusiveResultV1<T>> {
+        validate_prepared_intent_v1(intent)?;
+        let remote_path = intent.remote_path.clone();
+        let fingerprint = intent.intent_fingerprint.clone();
+        let exact_bytes = intent.exact_bytes.clone();
+        match self.run_root_publication_admission(
+            root_id,
+            |_transaction, _safety| Ok(()),
+            move |transaction, safety| {
+                if safety.cutover_state.state_version != 1 {
+                    return Err(STORE_CORRUPTION);
+                }
+                let durable = load_commit_intent_from(transaction, root_id, &remote_path)?
+                    .ok_or(STORE_CORRUPTION)?;
+                if durable.intent_fingerprint != fingerprint || durable.exact_bytes != exact_bytes {
+                    return Err(STORE_CORRUPTION);
+                }
+                Ok(None::<()>)
+            },
+            operation,
+        )? {
+            Ok(value) => Ok(OrdinaryPublishExclusiveResultV1::Executed(value)),
+            Err(()) => Ok(OrdinaryPublishExclusiveResultV1::RejectedRootFrozen),
+        }
+    }
 }
 
 fn load_intent_parts(
@@ -2149,29 +2220,48 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
         expected_generation: u64,
         operation: F,
     ) -> Result<PublishExclusiveResultV1<T>> {
-        self.require_root(root_id)?;
-        let mut conn = self.connection()?;
-        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
-        let safety = load_root_safety_from(&transaction, root_id)?.ok_or(ROOT_MISMATCH)?;
-        let mut migration = load_migration_from(&transaction, root_id)?.ok_or(ROOT_MISMATCH)?;
-        let mut changed = false;
-        for fatal in &safety.root_fatal_signals {
-            changed |= add_fatal(&mut migration, &fatal.code)?;
+        let frozen_rejection = |transaction: &Connection,
+                                safety: &MigrationRootSafetyStateV1|
+         -> Result<MigrationStateV1> {
+            let mut migration = load_migration_from(transaction, root_id)?.ok_or(ROOT_MISMATCH)?;
+            let mut changed = false;
+            for fatal in &safety.root_fatal_signals {
+                changed |= add_fatal(&mut migration, &fatal.code)?;
+            }
+            if changed {
+                save_migration(transaction, &migration)?;
+            }
+            Ok(migration)
+        };
+        let admission = |transaction: &Connection,
+                         safety: &MigrationRootSafetyStateV1|
+         -> Result<Option<MigrationStateV1>> {
+            let mut migration = load_migration_from(transaction, root_id)?.ok_or(ROOT_MISMATCH)?;
+            let mut changed = false;
+            for fatal in &safety.root_fatal_signals {
+                changed |= add_fatal(&mut migration, &fatal.code)?;
+            }
+            if changed {
+                save_migration(transaction, &migration)?;
+            }
+            if migration.migration_id != migration_id
+                || migration.generation != expected_generation
+                || migration.status == MigrationStatusV1::RootFrozen
+                || !migration.root_fatal_signals.is_empty()
+            {
+                return Ok(Some(migration));
+            }
+            Ok(None)
+        };
+        match self.run_root_publication_admission(
+            root_id,
+            frozen_rejection,
+            admission,
+            operation,
+        )? {
+            Ok(value) => Ok(PublishExclusiveResultV1::Executed(value)),
+            Err(migration) => Ok(PublishExclusiveResultV1::Rejected(Box::new(migration))),
         }
-        if changed {
-            save_migration(&transaction, &migration)?;
-        }
-        if migration.migration_id != migration_id
-            || migration.generation != expected_generation
-            || migration.status == MigrationStatusV1::RootFrozen
-            || !migration.root_fatal_signals.is_empty()
-        {
-            database(transaction.commit())?;
-            return Ok(PublishExclusiveResultV1::Rejected(Box::new(migration)));
-        }
-        let value = operation()?;
-        database(transaction.commit())?;
-        Ok(PublishExclusiveResultV1::Executed(value))
     }
 }
 
