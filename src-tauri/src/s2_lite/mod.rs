@@ -11,6 +11,7 @@ pub mod migration_orchestration;
 pub mod ordinary_mutation;
 pub mod remote_discovery;
 pub mod semantic;
+pub mod target_root_binding;
 pub mod types;
 pub mod webdav_adapter;
 

@@ -365,7 +365,7 @@ mod tests {
                 state_version: 1,
                 physical_root_id: ROOT.into(),
                 local_writer_id: "30000000-0000-4000-8000-000000000001".into(),
-                next_writer_sequence: 0,
+                next_writer_sequence: 1,
                 writer_head: None,
                 lifecycle_generation: 0,
                 materialized_projection_generation: Some(7),

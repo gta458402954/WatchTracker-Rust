@@ -64,6 +64,19 @@ pub struct DesktopRootStateV1 {
     pub business_applied_projection_generation: Option<u64>,
 }
 
+/// Immutable local record binding one authoritative SyncTarget epoch to the
+/// frozen WebDAV physical-root identity. It is deliberately independent from
+/// lifecycle and publication state so old epochs remain recoverable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetRootBindingV1 {
+    pub binding_version: u8,
+    pub target_id: String,
+    pub target_epoch: u64,
+    pub canonical_url: String,
+    pub normalized_account: String,
+    pub physical_root_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutboundBatchMutationV1 {
@@ -225,6 +238,16 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
             state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
             FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
          );
+         CREATE TABLE IF NOT EXISTS s2_lite_target_root_binding_v1 (
+            binding_version INTEGER NOT NULL CHECK(binding_version = 1),
+            target_id TEXT NOT NULL,
+            target_epoch TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            normalized_account TEXT NOT NULL,
+            physical_root_id TEXT NOT NULL,
+            PRIMARY KEY(target_id, target_epoch),
+            FOREIGN KEY(physical_root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
@@ -285,10 +308,10 @@ fn validate_desktop_root_state(state: &DesktopRootStateV1, root_id: &str) -> Res
     if state.state_version != 1
         || state.physical_root_id != root_id
         || validate_canonical_uuid_v4(&state.local_writer_id).is_err()
-        || state
-            .writer_head
-            .as_ref()
-            .is_some_and(|value| validate_commit_ref(value).is_err())
+        || state.next_writer_sequence == 0
+        || state.writer_head.as_ref().is_some_and(|value| {
+            validate_commit_ref(value).is_err() || value.writer_id != state.local_writer_id
+        })
         || state
             .business_applied_projection_generation
             .zip(state.materialized_projection_generation)
@@ -297,6 +320,49 @@ fn validate_desktop_root_state(state: &DesktopRootStateV1, root_id: &str) -> Res
         return Err(STORE_CORRUPTION);
     }
     Ok(())
+}
+
+fn validate_target_root_binding(binding: &TargetRootBindingV1) -> Result<()> {
+    if binding.binding_version != 1
+        || binding.target_id.is_empty()
+        || binding.canonical_url.is_empty()
+        || binding.normalized_account.is_empty()
+        || binding.physical_root_id.is_empty()
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
+}
+
+pub(crate) fn completed_migration_writer_seed(
+    migration: &MigrationStateV1,
+    root_id: &str,
+) -> Result<Option<(String, Option<CommitRef>, u64)>> {
+    if migration.root_id != root_id {
+        return Err(STORE_CORRUPTION);
+    }
+    if migration.status != MigrationStatusV1::MigrationComplete {
+        return Ok(None);
+    }
+    let final_task = migration
+        .stage_b
+        .last()
+        .or_else(|| migration.stage_a.last());
+    let Some(final_task) = final_task else {
+        return Ok(Some((migration.writer_id.clone(), None, 1)));
+    };
+    if final_task.receipt.is_none()
+        || final_task.receipt_root_id.as_deref() != Some(root_id)
+        || final_task.intent.commit_ref.writer_id != migration.writer_id
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    let sequence = canonical_generation(&final_task.intent.commit_ref.writer_seq)?;
+    Ok(Some((
+        migration.writer_id.clone(),
+        Some(final_task.intent.commit_ref.clone()),
+        sequence.checked_add(1).ok_or(STORE_CORRUPTION)?,
+    )))
 }
 
 fn validate_outbound_batch(batch: &OutboundBatchV1, root_id: &str) -> Result<()> {
@@ -564,6 +630,207 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
 
     pub fn root_id(&self) -> &str {
         self.root_id
+    }
+
+    /// Loads a historical target/epoch binding without consulting the active
+    /// target registry. Recovery callers must use this exact record rather than
+    /// retargeting work to a newer active target.
+    pub fn load_target_root_binding_v1(
+        conn: &Mutex<Connection>,
+        target_id: &str,
+        target_epoch: u64,
+    ) -> Result<Option<TargetRootBindingV1>> {
+        if target_id.is_empty() {
+            return Err(STORE_CORRUPTION);
+        }
+        let guard = conn.lock().map_err(|_| STORE_FAILURE)?;
+        database(migrate_schema(&guard))?;
+        let row = database(
+            guard
+                .query_row(
+                    "SELECT binding_version, target_id, target_epoch, canonical_url,
+                            normalized_account, physical_root_id
+                     FROM s2_lite_target_root_binding_v1
+                     WHERE target_id=?1 AND target_epoch=?2",
+                    params![target_id, target_epoch.to_string()],
+                    |row| {
+                        Ok(TargetRootBindingV1 {
+                            binding_version: row.get(0)?,
+                            target_id: row.get(1)?,
+                            target_epoch: canonical_generation(&row.get::<_, String>(2)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            canonical_url: row.get(3)?,
+                            normalized_account: row.get(4)?,
+                            physical_root_id: row.get(5)?,
+                        })
+                    },
+                )
+                .optional(),
+        )?;
+        row.map(|binding| {
+            validate_target_root_binding(&binding)?;
+            if binding.target_id != target_id || binding.target_epoch != target_epoch {
+                return Err(STORE_CORRUPTION);
+            }
+            Ok(binding)
+        })
+        .transpose()
+    }
+
+    /// Claims or reuses an immutable binding. The root authority is created in
+    /// the same transaction, but an existing target/epoch row can never be
+    /// updated or rebound to a different root.
+    pub fn bind_target_root_v1(
+        &mut self,
+        candidate: &TargetRootBindingV1,
+    ) -> Result<TargetRootBindingV1> {
+        validate_target_root_binding(candidate)?;
+        if candidate.physical_root_id != self.root_id {
+            return Err(ROOT_MISMATCH);
+        }
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let existing = database(
+            transaction
+                .query_row(
+                    "SELECT binding_version, target_id, target_epoch, canonical_url,
+                            normalized_account, physical_root_id
+                     FROM s2_lite_target_root_binding_v1
+                     WHERE target_id=?1 AND target_epoch=?2",
+                    params![candidate.target_id, candidate.target_epoch.to_string()],
+                    |row| {
+                        Ok(TargetRootBindingV1 {
+                            binding_version: row.get(0)?,
+                            target_id: row.get(1)?,
+                            target_epoch: canonical_generation(&row.get::<_, String>(2)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            canonical_url: row.get(3)?,
+                            normalized_account: row.get(4)?,
+                            physical_root_id: row.get(5)?,
+                        })
+                    },
+                )
+                .optional(),
+        )?;
+        let resolved = match existing {
+            Some(existing) => {
+                validate_target_root_binding(&existing)?;
+                if existing != *candidate {
+                    return Err(ROOT_MISMATCH);
+                }
+                existing
+            }
+            None => {
+                database(transaction.execute(
+                    "INSERT INTO s2_lite_target_root_binding_v1(
+                        binding_version, target_id, target_epoch, canonical_url,
+                        normalized_account, physical_root_id
+                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        candidate.binding_version,
+                        candidate.target_id,
+                        candidate.target_epoch.to_string(),
+                        candidate.canonical_url,
+                        candidate.normalized_account,
+                        candidate.physical_root_id,
+                    ],
+                ))?;
+                candidate.clone()
+            }
+        };
+
+        // All root-scoped rows are loaded through their authoritative root
+        // key. Their strict decoders reject a copied or mismatched root id.
+        if let Some(bytes) = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )? {
+            let state: DesktopRootStateV1 = decode(&bytes)?;
+            validate_desktop_root_state(&state, self.root_id)?;
+        }
+        if let Some(batch_bytes) = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )? {
+            let batch: OutboundBatchV1 = decode(&batch_bytes)?;
+            validate_outbound_batch(&batch, self.root_id)?;
+        }
+        if let Some(migration) = load_migration_from(&transaction, self.root_id)? {
+            let _ = completed_migration_writer_seed(&migration, self.root_id)?;
+        }
+        database(transaction.commit())?;
+        Ok(resolved)
+    }
+
+    /// Initializes the ordinary writer once per physical root. This establishes
+    /// authority only; it does not reserve a sequence or publish anything.
+    pub fn initialize_desktop_writer_v1(&mut self) -> Result<DesktopRootStateV1> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let migration = load_migration_from(&transaction, self.root_id)?;
+        let migration_seed = migration
+            .as_ref()
+            .map(|state| completed_migration_writer_seed(state, self.root_id))
+            .transpose()?
+            .flatten();
+        let existing = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?;
+        let state = match existing {
+            Some(bytes) => {
+                let state: DesktopRootStateV1 = decode(&bytes)?;
+                validate_desktop_root_state(&state, self.root_id)?;
+                if let Some((writer_id, writer_head, minimum_next_sequence)) = migration_seed {
+                    if state.local_writer_id != writer_id
+                        || state.writer_head != writer_head
+                        || state.next_writer_sequence < minimum_next_sequence
+                    {
+                        return Err(STORE_CORRUPTION);
+                    }
+                }
+                state
+            }
+            None => {
+                let (local_writer_id, writer_head, next_writer_sequence) =
+                    migration_seed.unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), None, 1));
+                let state = DesktopRootStateV1 {
+                    state_version: 1,
+                    physical_root_id: self.root_id.to_string(),
+                    local_writer_id,
+                    next_writer_sequence,
+                    writer_head,
+                    lifecycle_generation: 0,
+                    materialized_projection_generation: None,
+                    business_applied_projection_generation: None,
+                };
+                validate_desktop_root_state(&state, self.root_id)?;
+                database(transaction.execute(
+                    "INSERT INTO s2_lite_desktop_root_state_v1(root_id, state_json) VALUES(?1, ?2)",
+                    params![self.root_id, encode(&state)?],
+                ))?;
+                state
+            }
+        };
+        database(transaction.commit())?;
+        Ok(state)
     }
 
     pub fn load_desktop_root_state(&mut self) -> Result<Option<DesktopRootStateV1>> {
