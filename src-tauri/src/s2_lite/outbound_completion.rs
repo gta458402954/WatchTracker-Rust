@@ -20,7 +20,11 @@ pub fn complete_verified_outbound_batch_v1(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Mutex,
+    };
 
     use rusqlite::Connection;
     use serde_json::json;
@@ -46,6 +50,37 @@ mod tests {
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry};
 
     const TIME: &str = "2026-09-18T00:00:00.000Z";
+
+    struct TempDatabase {
+        path: PathBuf,
+    }
+
+    impl TempDatabase {
+        fn new(name: &str) -> Self {
+            Self {
+                path: std::env::temp_dir().join(format!(
+                    "watchtracker-s2-completion-{name}-{}.db",
+                    uuid::Uuid::new_v4()
+                )),
+            }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDatabase {
+        fn drop(&mut self) {
+            for path in [
+                self.path.clone(),
+                PathBuf::from(format!("{}-wal", self.path.display())),
+                PathBuf::from(format!("{}-shm", self.path.display())),
+            ] {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
 
     struct ExactRemote {
         root: String,
@@ -95,7 +130,10 @@ mod tests {
     }
 
     fn setup() -> Fixture {
-        let conn = Connection::open_in_memory().unwrap();
+        setup_with_connection(Connection::open_in_memory().unwrap())
+    }
+
+    fn setup_with_connection(conn: Connection) -> Fixture {
         crate::db::setup_db(&conn).unwrap();
         let conn = Mutex::new(conn);
         let url = sync_targets::normalize_url("https://dav.example.test/root/").unwrap();
@@ -208,6 +246,23 @@ mod tests {
             .load_desktop_root_state()
             .unwrap()
             .unwrap()
+    }
+
+    fn persist_projection_generation(fixture: &Fixture, generation: u64) {
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root).unwrap();
+        let mut projection = store.load_materialized_projection().unwrap().unwrap();
+        let expected = projection.projection_generation;
+        projection.projection_generation = generation;
+        assert!(store
+            .compare_and_swap_materialized_projection(Some(expected), &projection)
+            .unwrap());
+    }
+
+    fn two_connection_fixture(name: &str) -> (TempDatabase, Fixture, Mutex<Connection>) {
+        let database = TempDatabase::new(name);
+        let fixture = setup_with_connection(Connection::open(database.path()).unwrap());
+        let second = Mutex::new(Connection::open(database.path()).unwrap());
+        (database, fixture, second)
     }
 
     fn switch_active_target(fixture: &Fixture, target: SyncTarget, epoch: u64) {
@@ -561,5 +616,57 @@ mod tests {
             get_staging(&fixture.conn.lock().unwrap()).unwrap(),
             b_staging
         );
+    }
+
+    #[test]
+    fn projection_bookkeeping_after_receipt_completion_preserves_new_writer_authority() {
+        let (_database, fixture, second_connection) = two_connection_fixture("projection-after");
+        let batch = freeze(&fixture, vec![staged_record("record-1", 7)]);
+        let stale_root_snapshot = state(&fixture);
+        persist_projection_generation(&fixture, 2);
+
+        let mut completion = SqliteS2LiteStoreV1::open(&second_connection, &fixture.root).unwrap();
+        assert_eq!(
+            completion.complete_verified_outbound_batch().unwrap(),
+            OutboundCompletionResultV1::Completed
+        );
+        let mut projection = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root).unwrap();
+        projection
+            .update_materialized_projection_generation(2)
+            .unwrap();
+
+        let final_state = state(&fixture);
+        assert_eq!(final_state.writer_head, Some(batch.commit_ref));
+        assert_eq!(final_state.next_writer_sequence, 2);
+        assert_eq!(
+            final_state.local_writer_id,
+            stale_root_snapshot.local_writer_id
+        );
+        assert_eq!(final_state.materialized_projection_generation, Some(2));
+        assert_eq!(
+            final_state.business_applied_projection_generation,
+            stale_root_snapshot.business_applied_projection_generation
+        );
+    }
+
+    #[test]
+    fn receipt_completion_after_projection_bookkeeping_preserves_both_updates() {
+        let (_database, fixture, second_connection) = two_connection_fixture("projection-before");
+        let batch = freeze(&fixture, vec![staged_record("record-1", 7)]);
+        persist_projection_generation(&fixture, 2);
+        let mut projection = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root).unwrap();
+        projection
+            .update_materialized_projection_generation(2)
+            .unwrap();
+
+        let mut completion = SqliteS2LiteStoreV1::open(&second_connection, &fixture.root).unwrap();
+        assert_eq!(
+            completion.complete_verified_outbound_batch().unwrap(),
+            OutboundCompletionResultV1::Completed
+        );
+        let final_state = state(&fixture);
+        assert_eq!(final_state.writer_head, Some(batch.commit_ref));
+        assert_eq!(final_state.next_writer_sequence, 2);
+        assert_eq!(final_state.materialized_projection_generation, Some(2));
     }
 }

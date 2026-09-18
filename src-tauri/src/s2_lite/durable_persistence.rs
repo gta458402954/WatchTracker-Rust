@@ -1085,6 +1085,55 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         Ok(())
     }
 
+    /// Advances only the materialized-projection bookkeeping owned by the
+    /// lifecycle. The root state is read *after* acquiring SQLite's immediate
+    /// write admission and written with its exact prior bytes as a CAS guard,
+    /// so a stale lifecycle snapshot can never overwrite writer authority
+    /// advanced by receipt completion.
+    pub fn update_materialized_projection_generation(
+        &mut self,
+        projection_generation: u64,
+    ) -> Result<()> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+
+        let projection_row = database(transaction.query_row(
+            "SELECT projection_generation, state_json
+             FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        ))?;
+        let (stored_generation, projection_bytes) = projection_row;
+        let projection: DurableMaterializedProjectionV1 = decode(&projection_bytes)?;
+        if canonical_generation(&stored_generation)? != projection_generation
+            || projection.projection_generation != projection_generation
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        validate_materialized_projection(&projection, self.root_id)?;
+
+        let root_bytes = database(transaction.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        ))?;
+        let mut root_state: DesktopRootStateV1 = decode(&root_bytes)?;
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        root_state.materialized_projection_generation = Some(projection_generation);
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        let changed = database(transaction.execute(
+            "UPDATE s2_lite_desktop_root_state_v1 SET state_json=?2
+             WHERE root_id=?1 AND state_json=?3",
+            params![self.root_id, encode(&root_state)?, root_bytes],
+        ))?;
+        if changed != 1 {
+            return Err(STORE_CORRUPTION);
+        }
+        database(transaction.commit())?;
+        Ok(())
+    }
+
     /// Runs the local business projector under the same root-bound immediate
     /// transaction that validates its exact durable projection inputs. Advancing
     /// `businessAppliedProjectionGeneration` means fully processed locally; it

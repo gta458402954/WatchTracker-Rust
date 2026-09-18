@@ -178,14 +178,7 @@ where
     if !store.compare_and_swap_materialized_projection(expected_projection, &projection)? {
         return Ok(DesktopS2LifecycleResultV1::PendingDiscoveryDependencies);
     }
-    let mut root_state =
-        store
-            .load_desktop_root_state()?
-            .ok_or(super::canonical::ProtocolError(
-                "desktop_root_state_missing",
-            ))?;
-    root_state.materialized_projection_generation = Some(projection_generation);
-    store.persist_desktop_root_state(&root_state)?;
+    store.update_materialized_projection_generation(projection_generation)?;
     match projection.state.status {
         MaterializedProjectionStatusV1::Complete => {}
         MaterializedProjectionStatusV1::PendingDependencies { .. } => {
