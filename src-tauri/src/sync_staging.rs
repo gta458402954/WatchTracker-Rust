@@ -163,6 +163,24 @@ pub fn get_staging(conn: &Connection) -> Result<SyncStaging, AppError> {
     get_staging_for_key(conn, &key(conn, STAGING_KEY, "staging_v1")?)
 }
 
+/// Loads staging for one explicit target without consulting the active-target
+/// registry.  Historical S2 completion uses this to acknowledge the authority
+/// captured by its frozen batch rather than whatever target became active
+/// later.
+pub fn get_staging_for_target(
+    conn: &Connection,
+    target_id: &str,
+) -> Result<Option<SyncStaging>, AppError> {
+    if target_id.is_empty() {
+        return Err(AppError::General("Invalid staging target".into()));
+    }
+    let staging_key = crate::sync_targets::scoped_key(target_id, "staging_v1");
+    if get_setting_tx(conn, &staging_key)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(get_staging_for_key(conn, &staging_key)?))
+}
+
 fn get_staging_for_key(conn: &Connection, staging_key: &str) -> Result<SyncStaging, AppError> {
     let Some(raw) = get_setting_tx(conn, staging_key)? else {
         return Ok(SyncStaging::default());
@@ -280,6 +298,27 @@ pub fn set_staging(conn: &Connection, staging: &SyncStaging) -> Result<(), AppEr
         AppError::General(format!("Could not serialize {STAGING_KEY}: {error}"))
     })?;
     set_setting_tx(conn, &key(conn, STAGING_KEY, "staging_v1")?, &raw)?;
+    Ok(())
+}
+
+/// Persists staging for one explicit historical target.  This intentionally
+/// does not resolve, validate, or switch the currently active target.
+pub fn set_staging_for_target(
+    conn: &Connection,
+    target_id: &str,
+    staging: &SyncStaging,
+) -> Result<(), AppError> {
+    if target_id.is_empty() {
+        return Err(AppError::General("Invalid staging target".into()));
+    }
+    let raw = serde_json::to_string(staging).map_err(|error| {
+        AppError::General(format!("Could not serialize {STAGING_KEY}: {error}"))
+    })?;
+    set_setting_tx(
+        conn,
+        &crate::sync_targets::scoped_key(target_id, "staging_v1"),
+        &raw,
+    )?;
     Ok(())
 }
 

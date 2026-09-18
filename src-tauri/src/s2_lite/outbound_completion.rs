@@ -33,12 +33,16 @@ mod tests {
         ImmutableObjectRemoteV1, RemoteExactGetResultV1, RemotePutResultV1,
     };
     use super::super::materialized_projection::{
-        MaterializedProjectionStateV1, MaterializedProjectionStatusV1,
+        MaterializedProjectionEntityV1, MaterializedProjectionStateV1,
+        MaterializedProjectionStatusV1,
     };
     use super::super::outbound_freeze::{freeze_active_outbound_v1, OutboundFreezeResultV1};
     use super::super::remote_discovery::create_discovery_state_v1;
     use super::*;
-    use crate::sync_staging::{get_staging, set_staging, StagedRecord, SyncStaging};
+    use crate::sync_staging::{
+        get_staging, get_staging_for_target, set_staging, set_staging_for_target,
+        StagedDeleteDescriptor, StagedRecord, SyncStaging,
+    };
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry};
 
     const TIME: &str = "2026-09-18T00:00:00.000Z";
@@ -206,6 +210,40 @@ mod tests {
             .unwrap()
     }
 
+    fn switch_active_target(fixture: &Fixture, target: SyncTarget, epoch: u64) {
+        let mut registry = sync_targets::registry(&fixture.conn.lock().unwrap())
+            .unwrap()
+            .unwrap();
+        if !registry.targets.iter().any(|item| item.id == target.id) {
+            registry.targets.push(target.clone());
+        }
+        registry.active_target_id = Some(target.id);
+        registry.target_epoch = epoch;
+        fixture
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE settings SET value=?2 WHERE key=?1",
+                [
+                    sync_targets::REGISTRY_KEY,
+                    &serde_json::to_string(&registry).unwrap(),
+                ],
+            )
+            .unwrap();
+    }
+
+    fn target(url: &str, username: &str) -> SyncTarget {
+        let normalized_url = sync_targets::normalize_url(url).unwrap();
+        SyncTarget {
+            id: sync_targets::target_id(&normalized_url, username),
+            normalized_url,
+            username: username.into(),
+            created_at: TIME.into(),
+            last_activated_at: TIME.into(),
+        }
+    }
+
     #[test]
     fn receipt_acknowledges_staging_advances_head_and_is_idempotent_after_restart() {
         let fixture = setup();
@@ -368,5 +406,160 @@ mod tests {
         };
         assert_eq!(successor.writer_sequence, 2);
         assert_eq!(successor.previous_writer_ref, Some(batch.commit_ref));
+    }
+
+    #[test]
+    fn historical_target_completion_acks_only_original_staging_after_switch_and_restart() {
+        let fixture = setup();
+        let batch = freeze(
+            &fixture,
+            vec![staged_record("a-covered", 7), staged_record("a-newer", 7)],
+        );
+        let mut a_staging =
+            get_staging_for_target(&fixture.conn.lock().unwrap(), &fixture.target_id)
+                .unwrap()
+                .unwrap();
+        a_staging.entries[1].last_generation = 8;
+        a_staging.entries[1].local = Some(record("a-newer-after-freeze"));
+        set_staging_for_target(
+            &fixture.conn.lock().unwrap(),
+            &fixture.target_id,
+            &a_staging,
+        )
+        .unwrap();
+
+        let target_b = target("https://dav.example.test/other/", "Bob");
+        switch_active_target(&fixture, target_b.clone(), 2);
+        let b_staging = SyncStaging {
+            version: 2,
+            entries: vec![staged_record("b-untouched", 12)],
+        };
+        set_staging_for_target(&fixture.conn.lock().unwrap(), &target_b.id, &b_staging).unwrap();
+
+        // Reopening the durable store models lifecycle restart after the
+        // active target changed. Completion must still use batch target A.
+        let mut restarted = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root).unwrap();
+        assert_eq!(
+            restarted.complete_verified_outbound_batch().unwrap(),
+            OutboundCompletionResultV1::Completed
+        );
+        assert_eq!(
+            get_staging_for_target(&fixture.conn.lock().unwrap(), &fixture.target_id)
+                .unwrap()
+                .unwrap()
+                .entries,
+            vec![StagedRecord {
+                entity_kind: "record".into(),
+                id: "a-newer".into(),
+                operation: "upsert".into(),
+                base: None,
+                local: Some(record("a-newer-after-freeze")),
+                first_generation: 7,
+                last_generation: 8,
+                delete_descriptor: None,
+            }]
+        );
+        assert_eq!(
+            get_staging(&fixture.conn.lock().unwrap()).unwrap(),
+            b_staging,
+            "current target B staging must never be used for historical completion"
+        );
+        assert_eq!(state(&fixture).writer_head, Some(batch.commit_ref.clone()));
+        assert_eq!(
+            complete_verified_outbound_batch_v1(&fixture.conn, &fixture.root).unwrap(),
+            OutboundCompletionResultV1::AlreadyCompleted
+        );
+
+        switch_active_target(
+            &fixture,
+            target("https://dav.example.test/root/", "Alice"),
+            3,
+        );
+        super::super::target_root_binding::resolve_active_target_root_authority_v1(
+            &fixture.conn,
+            &fixture.target_id,
+            3,
+        )
+        .unwrap();
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root).unwrap();
+        let mut projection = store.load_materialized_projection().unwrap().unwrap();
+        projection.state.basis_clock = vec![batch.commit_ref.clone()];
+        assert!(store
+            .compare_and_swap_materialized_projection(Some(1), &projection)
+            .unwrap());
+        let OutboundFreezeResultV1::Frozen {
+            batch: successor, ..
+        } = freeze_active_outbound_v1(&fixture.conn, &fixture.target_id, 3, TIME).unwrap()
+        else {
+            panic!("historical completion must unblock successor freeze")
+        };
+        assert_eq!(successor.writer_sequence, 2);
+        assert_eq!(successor.previous_writer_ref, Some(batch.commit_ref));
+    }
+
+    #[test]
+    fn historical_completion_uses_composite_delete_descriptor_identity() {
+        let fixture = setup();
+        let member_id =
+            super::super::canonical::sha256_hex(b"collection-member:v1\0collection-a\0record-a");
+        let entity_key = json!(["collection-member", "collection-a", "record-a"]);
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root).unwrap();
+        let mut projection = store.load_materialized_projection().unwrap().unwrap();
+        projection
+            .state
+            .entities
+            .push(MaterializedProjectionEntityV1 {
+                entity_key: entity_key.clone(),
+                semantic_state: Some(json!({"state":"live"})),
+                business_value: Some(json!({})),
+                frontier: vec![],
+                conflict: false,
+            });
+        assert!(store
+            .compare_and_swap_materialized_projection(Some(1), &projection)
+            .unwrap());
+        let batch = freeze(
+            &fixture,
+            vec![StagedRecord {
+                entity_kind: "collection-member".into(),
+                id: member_id.clone(),
+                operation: "delete".into(),
+                base: None,
+                local: None,
+                first_generation: 7,
+                last_generation: 7,
+                delete_descriptor: Some(StagedDeleteDescriptor::CollectionMember {
+                    id: member_id,
+                    collection_id: "collection-a".into(),
+                    record_id: "record-a".into(),
+                    deleted_at: TIME.into(),
+                    rev: 1,
+                    rev_actor: "local".into(),
+                }),
+            }],
+        );
+        assert_eq!(batch.mutations[0].entity_key, entity_key);
+        let target_b = target("https://dav.example.test/other/", "Bob");
+        switch_active_target(&fixture, target_b.clone(), 2);
+        let b_staging = SyncStaging {
+            version: 2,
+            entries: vec![staged_record("b-untouched", 12)],
+        };
+        set_staging_for_target(&fixture.conn.lock().unwrap(), &target_b.id, &b_staging).unwrap();
+        assert_eq!(
+            complete_verified_outbound_batch_v1(&fixture.conn, &fixture.root).unwrap(),
+            OutboundCompletionResultV1::Completed
+        );
+        assert!(
+            get_staging_for_target(&fixture.conn.lock().unwrap(), &fixture.target_id)
+                .unwrap()
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        assert_eq!(
+            get_staging(&fixture.conn.lock().unwrap()).unwrap(),
+            b_staging
+        );
     }
 }

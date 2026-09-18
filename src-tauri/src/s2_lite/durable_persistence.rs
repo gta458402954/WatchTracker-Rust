@@ -1624,18 +1624,35 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         let batch: OutboundBatchV1 = decode(&batch_bytes)?;
         validate_outbound_batch(&batch, self.root_id)?;
 
-        let binding_root = database(
+        let binding = database(
             transaction
                 .query_row(
-                    "SELECT physical_root_id FROM s2_lite_target_root_binding_v1
+                    "SELECT binding_version, target_id, target_epoch, canonical_url,
+                            normalized_account, physical_root_id
+                     FROM s2_lite_target_root_binding_v1
                      WHERE target_id=?1 AND target_epoch=?2",
                     params![batch.target_id, batch.target_epoch.to_string()],
-                    |row| row.get::<_, String>(0),
+                    |row| {
+                        Ok(TargetRootBindingV1 {
+                            binding_version: row.get(0)?,
+                            target_id: row.get(1)?,
+                            target_epoch: canonical_generation(&row.get::<_, String>(2)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            canonical_url: row.get(3)?,
+                            normalized_account: row.get(4)?,
+                            physical_root_id: row.get(5)?,
+                        })
+                    },
                 )
                 .optional(),
         )?
         .ok_or(STORE_CORRUPTION)?;
-        if binding_root != batch.physical_root_id {
+        validate_target_root_binding(&binding)?;
+        if binding.target_id != batch.target_id
+            || binding.target_epoch != batch.target_epoch
+            || binding.physical_root_id != batch.physical_root_id
+            || binding.physical_root_id != self.root_id
+        {
             return Err(ROOT_MISMATCH);
         }
 
@@ -1681,14 +1698,19 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             return Ok(OutboundCompletionResultV1::AlreadyCompleted);
         }
 
+        // Completion belongs to the immutable target/epoch/root captured by
+        // the batch.  A later active-target switch cannot invalidate that
+        // authority or redirect acknowledgement to its new staging key.
         let registry = crate::sync_targets::registry(&transaction).map_err(|_| STORE_FAILURE)?;
         let Some(registry) = registry else {
             return Err(STORE_CORRUPTION);
         };
-        if registry.active_target_id.as_deref() != Some(batch.target_id.as_str())
-            || registry.target_epoch != batch.target_epoch
+        if !registry
+            .targets
+            .iter()
+            .any(|target| target.id == batch.target_id)
         {
-            return Err(ROOT_MISMATCH);
+            return Err(STORE_CORRUPTION);
         }
         let root_state_bytes = database(
             transaction
@@ -1714,7 +1736,9 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         }
 
         let mut staging =
-            crate::sync_staging::get_staging(&transaction).map_err(|_| STORE_FAILURE)?;
+            crate::sync_staging::get_staging_for_target(&transaction, &batch.target_id)
+                .map_err(|_| STORE_FAILURE)?
+                .ok_or(STORE_CORRUPTION)?;
         let mut captured_keys = Vec::new();
         let mut remove_indices = Vec::new();
         for mutation in &batch.mutations {
@@ -1748,7 +1772,8 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         for index in remove_indices.into_iter().rev() {
             staging.entries.remove(index);
         }
-        crate::sync_staging::set_staging(&transaction, &staging).map_err(|_| STORE_FAILURE)?;
+        crate::sync_staging::set_staging_for_target(&transaction, &batch.target_id, &staging)
+            .map_err(|_| STORE_FAILURE)?;
         if cfg!(test) && fault_after_staging_acknowledgement {
             return Err(STORE_FAILURE);
         }
