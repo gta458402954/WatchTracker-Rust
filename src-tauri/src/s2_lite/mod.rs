@@ -31,6 +31,8 @@ mod durable_persistence_tests;
 #[cfg(test)]
 mod immutable_publish_tests;
 #[cfg(test)]
+mod materialized_projection_tests;
+#[cfg(test)]
 mod migration_orchestration_tests;
 #[cfg(test)]
 mod ordinary_mutation_tests;
