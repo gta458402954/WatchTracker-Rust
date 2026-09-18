@@ -125,6 +125,7 @@ pub fn run() {
 
             app.manage(paths);
             app.manage(db_state);
+            app.manage(s2_lite::root_coordinator::RootExecutionCoordinatorV1::default());
             app.manage(poster_cache::PosterDownloadState::default());
             Ok(())
         })

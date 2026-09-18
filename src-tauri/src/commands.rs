@@ -7,6 +7,15 @@ use crate::sync_state;
 use serde_json::Value;
 use tauri::State;
 
+use crate::s2_lite::activation_cutover::{
+    decide_legacy_put_v1, recover_activation_cutover_v1, LegacyPutDecisionV1,
+};
+use crate::s2_lite::durable_persistence::SqliteS2LiteStoreV1;
+use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
+use crate::s2_lite::remote_discovery::create_discovery_state_v1;
+use crate::s2_lite::root_coordinator::RootExecutionCoordinatorV1;
+use crate::s2_lite::webdav_adapter::webdav_root_v1;
+
 pub(crate) fn lock_database(
     state: &DbState,
 ) -> Result<std::sync::MutexGuard<'_, rusqlite::Connection>, crate::error::AppError> {
@@ -808,6 +817,7 @@ pub fn clean_poster_cache(
 pub async fn webdav_request(
     state: State<'_, DbState>,
     paths: State<'_, AppPaths>,
+    root_coordinator: State<'_, RootExecutionCoordinatorV1>,
     request: net::StoredWebDavRequest,
 ) -> Result<net::WebDavResponse, crate::error::AppError> {
     if !matches!(
@@ -827,9 +837,10 @@ pub async fn webdav_request(
             request.target_epoch,
         )?
     };
+    let legacy_put_url = format!("{base_url}records-v3.json");
     let allowed_url = request.url == base_url
-        || request.url == format!("{base_url}records-v3.json")
-        || request.url == format!("{base_url}records.json");
+        || request.url == legacy_put_url
+        || (request.method != "PUT" && request.url == format!("{base_url}records.json"));
     if !allowed_url {
         return Err(crate::error::AppError::General(
             "Invalid WebDAV URL".to_string(),
@@ -847,6 +858,58 @@ pub async fn webdav_request(
         request.if_dav_etag.as_deref(),
         request.range.as_deref(),
     )?;
+    // This is the sole stored-credential write choke point. The target
+    // credentials above are authoritative, and the guard remains held until
+    // the old S1 request has completed so an activation/fatal transition in
+    // this process cannot interleave between decision and PUT.
+    let _legacy_put_guard = if request.method == "PUT" {
+        if request.url != legacy_put_url {
+            return Err(crate::error::AppError::General(
+                "s2_legacy_put_path_denied".to_string(),
+            ));
+        }
+        let root = webdav_root_v1(&base_url, &username).map_err(|_| {
+            crate::error::AppError::General("s2_legacy_put_root_invalid".to_string())
+        })?;
+        let guard = root_coordinator
+            .acquire(&root.physical_root_id)
+            .await
+            .map_err(|_| crate::error::AppError::General("s2_legacy_put_lock".to_string()))?;
+        {
+            let mut store = SqliteS2LiteStoreV1::open(&state.inner().conn, &root.physical_root_id)
+                .map_err(|_| crate::error::AppError::General("s2_legacy_put_store".to_string()))?;
+            let safety =
+                MigrationStateStoreV1::load_root_safety(&mut store, &root.physical_root_id)
+                    .map_err(|_| {
+                        crate::error::AppError::General("s2_legacy_put_store".to_string())
+                    })?;
+            if !safety.root_fatal_signals.is_empty() {
+                return Err(crate::error::AppError::General(
+                    "s2_legacy_put_root_frozen".to_string(),
+                ));
+            }
+            let discovery = store
+                .load_discovery_state()
+                .map_err(|_| crate::error::AppError::General("s2_legacy_put_store".to_string()))?
+                .map(|state| state.state)
+                .unwrap_or_else(create_discovery_state_v1);
+            let cutover =
+                MigrationStateStoreV1::load_cutover_state(&mut store, &root.physical_root_id)
+                    .map_err(|_| {
+                        crate::error::AppError::General("s2_legacy_put_store".to_string())
+                    })?;
+            if decide_legacy_put_v1(&recover_activation_cutover_v1(&discovery, cutover.as_ref()))
+                != LegacyPutDecisionV1::AllowedS2NotActivated
+            {
+                return Err(crate::error::AppError::General(
+                    "s2_legacy_put_activation_latched".to_string(),
+                ));
+            }
+        }
+        Some(guard)
+    } else {
+        None
+    };
     net::webdav_request(net::WebDavRequest {
         method: request.method,
         url: request.url,

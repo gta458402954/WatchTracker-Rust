@@ -4,11 +4,13 @@ pub mod business_projection;
 pub mod canonical;
 pub mod causal;
 pub mod conflict;
+pub mod desktop_lifecycle;
 pub mod durable_persistence;
 pub mod immutable_publish;
 pub mod materialized_projection;
 pub mod migration_orchestration;
 pub mod ordinary_mutation;
+pub mod outbound_completion;
 pub mod outbound_freeze;
 pub mod outbound_publish;
 pub mod remote_discovery;
@@ -22,6 +24,8 @@ pub mod webdav_adapter;
 mod activation_cutover_tests;
 #[cfg(test)]
 mod causal_tests;
+#[cfg(test)]
+mod desktop_lifecycle_tests;
 #[cfg(test)]
 mod durable_persistence_tests;
 #[cfg(test)]

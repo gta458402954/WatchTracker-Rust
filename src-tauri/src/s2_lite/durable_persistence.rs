@@ -136,6 +136,15 @@ pub enum BusinessProjectionTransactionResultV1 {
     AlreadyApplied,
 }
 
+/// Result of applying local bookkeeping for an exactly receipted outbound
+/// batch. A missing receipt deliberately has no acknowledgement authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutboundCompletionResultV1 {
+    Completed,
+    AlreadyCompleted,
+    PendingReceipt,
+}
+
 /// Inputs captured under the outbound freezer's one authoritative SQLite
 /// transaction. Nothing in this value is a transport fact.
 #[derive(Clone, Debug)]
@@ -173,6 +182,13 @@ pub(crate) enum OutboundFreezeTransactionResultV1 {
 pub(crate) enum OutboundFreezeFaultV1 {
     AfterWriterReservation,
     AfterBatchPersistence,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OutboundCompletionFaultV1 {
+    AfterStagingAcknowledgement,
+    AfterWriterHeadAdvance,
 }
 
 #[derive(Serialize)]
@@ -1492,6 +1508,208 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         Ok(())
     }
 
+    /// Atomically acknowledges only the staging tokens captured by one exact
+    /// receipted batch, advances its writer head, and marks its bookkeeping
+    /// complete.  It has no remote collaborator: receipt persistence is the
+    /// sole publication authority admitted here.
+    pub fn complete_verified_outbound_batch(&mut self) -> Result<OutboundCompletionResultV1> {
+        self.complete_verified_outbound_batch_inner(false, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn complete_verified_outbound_batch_with_fault(
+        &mut self,
+        fault: OutboundCompletionFaultV1,
+    ) -> Result<OutboundCompletionResultV1> {
+        self.complete_verified_outbound_batch_inner(
+            fault == OutboundCompletionFaultV1::AfterStagingAcknowledgement,
+            fault == OutboundCompletionFaultV1::AfterWriterHeadAdvance,
+        )
+    }
+
+    fn complete_verified_outbound_batch_inner(
+        &mut self,
+        fault_after_staging_acknowledgement: bool,
+        fault_after_writer_head_advance: bool,
+    ) -> Result<OutboundCompletionResultV1> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let batch_bytes = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?;
+        let Some(batch_bytes) = batch_bytes else {
+            database(transaction.commit())?;
+            return Ok(OutboundCompletionResultV1::AlreadyCompleted);
+        };
+        let batch: OutboundBatchV1 = decode(&batch_bytes)?;
+        validate_outbound_batch(&batch, self.root_id)?;
+
+        let binding_root = database(
+            transaction
+                .query_row(
+                    "SELECT physical_root_id FROM s2_lite_target_root_binding_v1
+                     WHERE target_id=?1 AND target_epoch=?2",
+                    params![batch.target_id, batch.target_epoch.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional(),
+        )?
+        .ok_or(STORE_CORRUPTION)?;
+        if binding_root != batch.physical_root_id {
+            return Err(ROOT_MISMATCH);
+        }
+
+        let intent =
+            load_commit_intent_from(&transaction, self.root_id, &batch.prepared_intent_path)?
+                .ok_or(STORE_CORRUPTION)?;
+        if intent.remote_path != batch.prepared_intent_path
+            || intent.intent_fingerprint != batch.prepared_intent_fingerprint
+            || intent.commit_ref != batch.commit_ref
+            || intent.commit_ref.writer_id != batch.writer_id
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let frozen = decode_frozen_wire_commit_v1(&intent.exact_bytes)?;
+        if frozen.commit_ref() != batch.commit_ref
+            || frozen.previous_writer_commit != batch.previous_writer_ref
+            || frozen.basis_clock != batch.basis_clock
+            || frozen.mutations.len() != batch.mutations.len()
+            || batch.mutations.iter().any(|captured| {
+                !frozen.mutations.iter().any(|mutation| {
+                    mutation.local_mutation_id == captured.local_mutation_id
+                        && mutation.entity_type == captured.entity_kind
+                        && mutation.entity_key == captured.entity_key
+                })
+            })
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let receipt = load_commit_receipt_from(&transaction, self.root_id, &intent.remote_path)?;
+        let Some(receipt) = receipt else {
+            database(transaction.commit())?;
+            return Ok(OutboundCompletionResultV1::PendingReceipt);
+        };
+        if receipt.remote_path != intent.remote_path
+            || receipt.content_hash != intent.content_hash
+            || receipt.commit_ref != batch.commit_ref
+            || receipt.prepared_intent_fingerprint != intent.intent_fingerprint
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        if batch.bookkeeping_completed {
+            database(transaction.commit())?;
+            return Ok(OutboundCompletionResultV1::AlreadyCompleted);
+        }
+
+        let registry = crate::sync_targets::registry(&transaction).map_err(|_| STORE_FAILURE)?;
+        let Some(registry) = registry else {
+            return Err(STORE_CORRUPTION);
+        };
+        if registry.active_target_id.as_deref() != Some(batch.target_id.as_str())
+            || registry.target_epoch != batch.target_epoch
+        {
+            return Err(ROOT_MISMATCH);
+        }
+        let root_state_bytes = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?
+        .ok_or(STORE_CORRUPTION)?;
+        let mut root_state: DesktopRootStateV1 = decode(&root_state_bytes)?;
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        let reserved_sequence = batch
+            .writer_sequence
+            .checked_add(1)
+            .ok_or(STORE_CORRUPTION)?;
+        if root_state.local_writer_id != batch.writer_id
+            || root_state.next_writer_sequence != reserved_sequence
+            || root_state.writer_head != batch.previous_writer_ref
+        {
+            return Err(STORE_CORRUPTION);
+        }
+
+        let mut staging =
+            crate::sync_staging::get_staging(&transaction).map_err(|_| STORE_FAILURE)?;
+        let mut captured_keys = Vec::new();
+        let mut remove_indices = Vec::new();
+        for mutation in &batch.mutations {
+            if captured_keys
+                .iter()
+                .any(|value: &Value| value == &mutation.entity_key)
+            {
+                return Err(STORE_CORRUPTION);
+            }
+            captured_keys.push(mutation.entity_key.clone());
+            let mut matching = Vec::new();
+            for (index, entry) in staging.entries.iter().enumerate() {
+                let key = crate::sync_staging::staged_entry_entity_key(entry)
+                    .map_err(|_| STORE_CORRUPTION)?;
+                if key == mutation.entity_key {
+                    matching.push((index, entry.last_generation));
+                }
+            }
+            if matching.len() > 1 {
+                return Err(STORE_CORRUPTION);
+            }
+            if matching
+                .first()
+                .is_some_and(|(_, generation)| *generation == mutation.captured_last_generation)
+            {
+                remove_indices.push(matching[0].0);
+            }
+        }
+        remove_indices.sort_unstable();
+        remove_indices.dedup();
+        for index in remove_indices.into_iter().rev() {
+            staging.entries.remove(index);
+        }
+        crate::sync_staging::set_staging(&transaction, &staging).map_err(|_| STORE_FAILURE)?;
+        if cfg!(test) && fault_after_staging_acknowledgement {
+            return Err(STORE_FAILURE);
+        }
+
+        root_state.writer_head = Some(batch.commit_ref.clone());
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        database(transaction.execute(
+            "UPDATE s2_lite_desktop_root_state_v1 SET state_json=?2 WHERE root_id=?1",
+            params![self.root_id, encode(&root_state)?],
+        ))?;
+        if cfg!(test) && fault_after_writer_head_advance {
+            return Err(STORE_FAILURE);
+        }
+
+        let mut completed = batch.clone();
+        completed.bookkeeping_completed = true;
+        completed.bookkeeping_generation = completed
+            .bookkeeping_generation
+            .checked_add(1)
+            .ok_or(STORE_CORRUPTION)?;
+        database(transaction.execute(
+            "UPDATE s2_lite_outbound_batch_v1 SET state_json=?3
+             WHERE root_id=?1 AND batch_id=?2 AND state_json=?4",
+            params![
+                self.root_id,
+                batch.batch_id,
+                encode(&completed)?,
+                batch_bytes,
+            ],
+        ))?;
+        database(transaction.commit())?;
+        Ok(OutboundCompletionResultV1::Completed)
+    }
+
     fn connection(&self) -> Result<MutexGuard<'_, Connection>> {
         self.conn.lock().map_err(|_| STORE_FAILURE)
     }
@@ -1628,6 +1846,31 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
     pub fn load_prepared_intent(&self, remote_path: &str) -> Result<Option<PreparedIntentV1>> {
         let conn = self.connection()?;
         load_commit_intent_from(&conn, self.root_id, remote_path)
+    }
+
+    /// Enumerates the durable commit work that must be recovered before a
+    /// lifecycle is allowed to prepare a successor ordinary publication.
+    pub fn list_prepared_unreceipted_intents(&self) -> Result<Vec<PreparedIntentV1>> {
+        let conn = self.connection()?;
+        let mut statement = database(conn.prepare(
+            "SELECT remote_path FROM s2_lite_prepared_intent_v1 AS intent
+             WHERE intent.root_id=?1 AND intent.intent_kind='commit'
+               AND NOT EXISTS (
+                 SELECT 1 FROM s2_lite_published_receipt_v1 AS receipt
+                 WHERE receipt.root_id=intent.root_id
+                   AND receipt.receipt_kind='commit'
+                   AND receipt.remote_path=intent.remote_path
+               )
+             ORDER BY remote_path",
+        ))?;
+        let rows = database(statement.query_map([self.root_id], |row| row.get::<_, String>(0)))?;
+        let paths = database(rows.collect::<std::result::Result<Vec<_>, _>>())?;
+        paths
+            .into_iter()
+            .map(|path| {
+                load_commit_intent_from(&conn, self.root_id, &path)?.ok_or(STORE_CORRUPTION)
+            })
+            .collect()
     }
 
     pub fn load_published_receipt(
