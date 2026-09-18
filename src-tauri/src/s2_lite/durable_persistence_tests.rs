@@ -14,8 +14,8 @@ use super::activation_cutover::{
 };
 use super::canonical::sha256_hex;
 use super::durable_persistence::{
-    persistence_schema_version, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
-    S2_LITE_PERSISTENCE_SCHEMA_VERSION,
+    persistence_schema_version, LegacyS1PublishAdmissionV1, OrdinaryPublishExclusiveResultV1,
+    SqliteS2LiteStoreV1, VersionedDiscoveryStateV1, S2_LITE_PERSISTENCE_SCHEMA_VERSION,
 };
 use super::immutable_publish::{
     ImmutableObjectRemoteV1, PreparedActivationIntentStoreV1, PreparedIntentStoreV1,
@@ -30,7 +30,7 @@ use super::migration_orchestration::{
     LegacySnapshotEntryV1, MigrationRootFatalV1, MigrationStateStoreV1, MigrationStateV1,
     MigrationStatusV1, PublishExclusiveResultV1,
 };
-use super::remote_discovery::{create_discovery_state_v1, ObservedCandidateV1};
+use super::remote_discovery::{create_discovery_state_v1, ObservedCandidateV1, RootFatalSignalV1};
 use super::types::{BootstrapEntity, LegacySemanticAdapterV1};
 
 const TIMESTAMP: &str = "2026-09-13T00:00:00.000Z";
@@ -391,6 +391,103 @@ fn schema_uses_existing_database_migration_path() {
             .unwrap();
         assert_eq!(db_version, crate::db::CURRENT_DB_VERSION.to_string());
     });
+}
+
+#[test]
+fn discovery_fatal_commit_latches_root_authority_before_second_connection_admission() {
+    let database = TempDatabase::new("discovery-fatal-publication-admission");
+    let connection_a = Connection::open(&database.path).unwrap();
+    crate::db::setup_db(&connection_a).unwrap();
+    let connection_b = Connection::open(&database.path).unwrap();
+    connection_b
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let connection_a = Mutex::new(connection_a);
+    let connection_b = Mutex::new(connection_b);
+    let mut discovery_writer = SqliteS2LiteStoreV1::open(&connection_a, ROOT_A).unwrap();
+    let mut publisher = SqliteS2LiteStoreV1::open(&connection_b, ROOT_A).unwrap();
+    let (_, _, planned) = migration_states(ROOT_A, MIGRATION_A, WRITER_A, 1);
+    let intent = planned.stage_a[0].intent.clone();
+    PreparedIntentStoreV1::persist(&mut publisher, &intent).unwrap();
+    let mut fatal_discovery = create_discovery_state_v1();
+    fatal_discovery.root_fatal_signals.push(RootFatalSignalV1 {
+        code: "DISCOVERY_WRITER_FORK".into(),
+        path: "writers/fork.json".into(),
+        writer_id: Some("writer-a".into()),
+        writer_seq: Some("1".into()),
+        safe_writer_frontier: None,
+    });
+    assert!(discovery_writer
+        .compare_and_swap_discovery_state(None, &fatal_discovery)
+        .unwrap());
+    let mut s2_put_calls = 0;
+    assert_eq!(
+        publisher
+            .run_ordinary_publish_exclusive(ROOT_A, &intent, || {
+                s2_put_calls += 1;
+                Ok(())
+            })
+            .unwrap(),
+        OrdinaryPublishExclusiveResultV1::RejectedRootFrozen
+    );
+    assert_eq!(s2_put_calls, 0);
+    assert_eq!(
+        publisher
+            .load_root_safety(ROOT_A)
+            .unwrap()
+            .root_fatal_signals,
+        vec![MigrationRootFatalV1 {
+            code: "DISCOVERY_WRITER_FORK".into()
+        }]
+    );
+}
+
+#[test]
+fn legacy_s1_admission_rejects_activation_or_fatal_from_a_second_connection() {
+    let database = TempDatabase::new("legacy-s1-publication-admission");
+    let connection_a = Connection::open(&database.path).unwrap();
+    crate::db::setup_db(&connection_a).unwrap();
+    let connection_b = Connection::open(&database.path).unwrap();
+    connection_b
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let connection_a = Mutex::new(connection_a);
+    let connection_b = Mutex::new(connection_b);
+    let (_, _, planned) = migration_states(ROOT_A, MIGRATION_A, WRITER_A, 1);
+    let mut authority_writer = SqliteS2LiteStoreV1::open(&connection_a, ROOT_A).unwrap();
+    authority_writer
+        .persist_cutover_state(
+            ROOT_A,
+            &canonical_cutover(&planned, "activations/race.json"),
+        )
+        .unwrap();
+    let mut publisher = SqliteS2LiteStoreV1::open(&connection_b, ROOT_A).unwrap();
+    let mut activation_puts = 0;
+    assert_eq!(
+        publisher
+            .run_legacy_s1_publish_exclusive(ROOT_A, || {
+                activation_puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        LegacyS1PublishAdmissionV1::RejectedActivation
+    );
+    assert_eq!(activation_puts, 0);
+
+    authority_writer
+        .persist_root_fatal(ROOT_A, "S1_FATAL_WINS")
+        .unwrap();
+    let mut fatal_puts = 0;
+    assert_eq!(
+        publisher
+            .run_legacy_s1_publish_exclusive(ROOT_A, || {
+                fatal_puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        LegacyS1PublishAdmissionV1::RejectedRootFrozen
+    );
+    assert_eq!(fatal_puts, 0);
 }
 
 #[test]

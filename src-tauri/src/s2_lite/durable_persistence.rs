@@ -14,7 +14,10 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
-use super::activation_cutover::ActivationCutoverStateV1;
+use super::activation_cutover::{
+    decide_legacy_put_v1, recover_activation_cutover_v1, ActivationCutoverStateV1,
+    LegacyPutDecisionV1,
+};
 use super::canonical::{validate_canonical_uuid_v4, validate_commit_ref, ProtocolError, Result};
 use super::causal::decode_frozen_wire_commit_v1;
 use super::immutable_publish::{
@@ -32,7 +35,7 @@ use super::migration_orchestration::{
     MigrationRootFatalV1, MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1,
     MigrationStatusV1, PublishExclusiveResultV1,
 };
-use super::remote_discovery::DiscoveryStateV1;
+use super::remote_discovery::{create_discovery_state_v1, DiscoveryStateV1};
 use super::types::CommitRef;
 
 const STORE_FAILURE: ProtocolError = ProtocolError("S2_DURABLE_PERSISTENCE_FAILURE");
@@ -47,6 +50,22 @@ const PERSISTENCE_FORMAT_VERSION: u8 = 1;
 pub enum OrdinaryPublishExclusiveResultV1<T> {
     Executed(T),
     RejectedRootFrozen,
+}
+
+/// Admission outcome for the legacy S1 writer. A process lock can supplement
+/// this path, but only this SQLite transaction decides whether its one PUT is
+/// admitted across independent desktop processes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LegacyS1PublishAdmissionV1<T> {
+    Executed(T),
+    RejectedRootFrozen,
+    RejectedActivation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LegacyS1PublicationRejectionV1 {
+    RootFrozen,
+    Activation,
 }
 
 /// Local-only desktop bookkeeping. Frozen root safety, discovery, activation,
@@ -644,6 +663,60 @@ fn add_fatal(state: &mut MigrationStateV1, code: &str) -> Result<bool> {
         .root_fatal_signals
         .sort_by(|left, right| left.code.cmp(&right.code));
     Ok(true)
+}
+
+/// Discovery facts are independently durable authority. A discovery CAS that
+/// commits a root-fatal fact must latch the root in the very same transaction;
+/// waiting for a later replay would leave a publication-admission window.
+fn merge_discovery_fatals_into_root_authority(
+    conn: &Connection,
+    root_id: &str,
+    discovery: &DiscoveryStateV1,
+) -> Result<()> {
+    if discovery
+        .root_fatal_signals
+        .iter()
+        .any(|signal| signal.code.is_empty())
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    if discovery.root_fatal_signals.is_empty() {
+        return Ok(());
+    }
+    let mut safety = load_root_safety_from(conn, root_id)?.ok_or(STORE_CORRUPTION)?;
+    let mut codes = safety
+        .root_fatal_signals
+        .iter()
+        .map(|fatal| fatal.code.clone())
+        .chain(
+            discovery
+                .root_fatal_signals
+                .iter()
+                .map(|signal| signal.code.clone()),
+        )
+        .collect::<Vec<_>>();
+    codes.sort();
+    codes.dedup();
+    if codes.len() == safety.root_fatal_signals.len() {
+        return Ok(());
+    }
+    safety.generation = safety.generation.checked_add(1).ok_or(STORE_CORRUPTION)?;
+    safety.root_fatal_signals = codes
+        .iter()
+        .cloned()
+        .map(|code| MigrationRootFatalV1 { code })
+        .collect();
+    save_root_safety(conn, &safety)?;
+    if let Some(mut migration) = load_migration_from(conn, root_id)? {
+        let mut changed = false;
+        for code in codes {
+            changed |= add_fatal(&mut migration, &code)?;
+        }
+        if changed {
+            save_migration(conn, &migration)?;
+        }
+    }
+    Ok(())
 }
 
 fn inherit_root_fatals_on_claim(
@@ -1723,26 +1796,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
 
     pub fn load_discovery_state(&self) -> Result<Option<VersionedDiscoveryStateV1>> {
         let conn = self.connection()?;
-        let row = database(
-            conn.query_row(
-                "SELECT storage_generation, state_json FROM s2_lite_discovery_v1
-                 WHERE root_id=?1",
-                [self.root_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
-            )
-            .optional(),
-        )?;
-        let Some((generation, bytes)) = row else {
-            return Ok(None);
-        };
-        let state: DiscoveryStateV1 = decode(&bytes)?;
-        if state.state_version != 1 {
-            return Err(STORE_CORRUPTION);
-        }
-        Ok(Some(VersionedDiscoveryStateV1 {
-            storage_generation: canonical_generation(&generation)?,
-            state,
-        }))
+        load_discovery_state_from(&conn, self.root_id)
     }
 
     pub fn compare_and_swap_discovery_state(
@@ -1777,6 +1831,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
              storage_generation=excluded.storage_generation, state_json=excluded.state_json",
             params![self.root_id, next.to_string(), encode(state)?],
         ))?;
+        merge_discovery_fatals_into_root_authority(&transaction, self.root_id, state)?;
         database(transaction.commit())?;
         Ok(true)
     }
@@ -2101,6 +2156,68 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             Err(()) => Ok(OrdinaryPublishExclusiveResultV1::RejectedRootFrozen),
         }
     }
+
+    /// Holds the root's authoritative `BEGIN IMMEDIATE` admission through one
+    /// legacy S1 PUT. Both activation and root-fatal state are checked from
+    /// the same transaction that admits the supplied operation.
+    pub fn run_legacy_s1_publish_exclusive<T, F: FnOnce() -> Result<T>>(
+        &mut self,
+        root_id: &str,
+        operation: F,
+    ) -> Result<LegacyS1PublishAdmissionV1<T>> {
+        match self.run_root_publication_admission(
+            root_id,
+            |_transaction, _safety| Ok(LegacyS1PublicationRejectionV1::RootFrozen),
+            |transaction, safety| {
+                let discovery = load_discovery_state_from(transaction, root_id)?
+                    .map(|value| value.state)
+                    .unwrap_or_else(create_discovery_state_v1);
+                if decide_legacy_put_v1(&recover_activation_cutover_v1(
+                    &discovery,
+                    Some(&safety.cutover_state),
+                )) != LegacyPutDecisionV1::AllowedS2NotActivated
+                {
+                    return Ok(Some(LegacyS1PublicationRejectionV1::Activation));
+                }
+                Ok(None::<LegacyS1PublicationRejectionV1>)
+            },
+            operation,
+        )? {
+            Ok(value) => Ok(LegacyS1PublishAdmissionV1::Executed(value)),
+            Err(LegacyS1PublicationRejectionV1::RootFrozen) => {
+                Ok(LegacyS1PublishAdmissionV1::RejectedRootFrozen)
+            }
+            Err(LegacyS1PublicationRejectionV1::Activation) => {
+                Ok(LegacyS1PublishAdmissionV1::RejectedActivation)
+            }
+        }
+    }
+}
+
+fn load_discovery_state_from(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Option<VersionedDiscoveryStateV1>> {
+    let row = database(
+        conn.query_row(
+            "SELECT storage_generation, state_json FROM s2_lite_discovery_v1
+             WHERE root_id=?1",
+            [root_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional(),
+    )?;
+    let Some((generation, bytes)) = row else {
+        return Ok(None);
+    };
+    let state: DiscoveryStateV1 = decode(&bytes)?;
+    if state.state_version != 1 {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(Some(VersionedDiscoveryStateV1 {
+        storage_generation: canonical_generation(&generation)?,
+        state,
+    }))
 }
 
 fn load_intent_parts(
