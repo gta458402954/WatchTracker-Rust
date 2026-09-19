@@ -15,7 +15,9 @@ use super::outbound_publish::{
 };
 use super::root_coordinator::RootExecutionCoordinatorV1;
 use super::target_root_binding::resolve_active_target_root_authority_v1;
-use crate::sync_staging::{get_staging, set_staging, StagedRecord, SyncStaging};
+use crate::sync_staging::{
+    get_staging, set_staging, StagedCausalAnchorV1, StagedRecord, SyncStaging,
+};
 use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry};
 
 const TIME: &str = "2026-09-17T00:00:00.000Z";
@@ -272,6 +274,9 @@ fn exact_existing_and_definitely_absent_both_persist_only_verified_receipts() {
             first_generation: 4,
             last_generation: 4,
             delete_descriptor: None,
+            causal_anchor: StagedCausalAnchorV1::Unavailable {
+                reason: "test".into(),
+            },
         }],
     };
     set_staging(&absent_conn.lock().unwrap(), &staged).unwrap();

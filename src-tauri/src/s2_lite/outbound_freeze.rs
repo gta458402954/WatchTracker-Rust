@@ -37,6 +37,7 @@ pub enum OutboundFreezeResultV1 {
     NoSemanticMutation,
     TargetChanged,
     Blocked,
+    BlockedStaleEntityBases,
 }
 
 fn staged_payload(entry: &crate::sync_staging::StagedRecord) -> Result<OrdinaryPayloadV1> {
@@ -207,6 +208,16 @@ fn build_freeze_plan(
         else {
             return Ok(OutboundFreezeTransactionPlanV1::Blocked);
         };
+        if !crate::sync_staging::staged_anchor_matches_current_causal_base_v1(
+            entry,
+            &context.binding.physical_root_id,
+            &causal_base,
+            &base_frontier,
+        )
+        .map_err(|_| FREEZE_FAILURE)?
+        {
+            return Ok(OutboundFreezeTransactionPlanV1::BlockedStaleEntityBases);
+        }
         if let Some(expected) = &basis_clock {
             if expected != &entity_basis {
                 return Err(FREEZE_FAILURE);
@@ -325,6 +336,9 @@ fn map_transaction_result(result: OutboundFreezeTransactionResultV1) -> Outbound
         }
         OutboundFreezeTransactionResultV1::TargetChanged => OutboundFreezeResultV1::TargetChanged,
         OutboundFreezeTransactionResultV1::Blocked => OutboundFreezeResultV1::Blocked,
+        OutboundFreezeTransactionResultV1::BlockedStaleEntityBases => {
+            OutboundFreezeResultV1::BlockedStaleEntityBases
+        }
     }
 }
 
@@ -361,7 +375,10 @@ mod tests {
     use super::super::semantic::canonical_semantic_value;
     use super::super::types::CommitRef;
     use super::*;
-    use crate::sync_staging::{set_staging, StagedDeleteDescriptor, StagedRecord, SyncStaging};
+    use crate::sync_staging::{
+        capture_staged_causal_anchor_v1, get_staging, set_staging, stage_entity_upsert,
+        StagedCausalAnchorV1, StagedDeleteDescriptor, StagedRecord, SyncStaging,
+    };
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry};
 
     const TIME: &str = "2026-09-17T00:00:00.000Z";
@@ -457,15 +474,21 @@ mod tests {
                 first_generation: 4,
                 last_generation: 5,
                 delete_descriptor: None,
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         );
     }
 
-    fn stage_entries(conn: &Mutex<Connection>, entries: Vec<StagedRecord>) {
+    fn stage_entries(conn: &Mutex<Connection>, mut entries: Vec<StagedRecord>) {
+        for entry in &mut entries {
+            entry.causal_anchor = capture_staged_causal_anchor_v1(&conn.lock().unwrap(), entry);
+        }
         set_staging(
             &conn.lock().unwrap(),
             &SyncStaging {
-                version: 2,
+                version: 3,
                 entries,
             },
         )
@@ -619,6 +642,303 @@ mod tests {
     }
 
     #[test]
+    fn production_staging_captures_and_preserves_exact_entity_anchor() {
+        let (conn, _target_id, root) = setup();
+        stage_entity_upsert(
+            &conn.lock().unwrap(),
+            "record",
+            "record-1",
+            record("record-1"),
+            4,
+        )
+        .unwrap();
+        let first = get_staging(&conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .remove(0);
+        let StagedCausalAnchorV1::Ready {
+            physical_root_id,
+            entity_key,
+            base_state,
+            base_frontier,
+            fingerprint,
+            projection_generation,
+        } = first.causal_anchor.clone()
+        else {
+            panic!("expected ready causal anchor")
+        };
+        assert_eq!(physical_root_id, root);
+        assert_eq!(entity_key, json!(["record", "record-1"]));
+        assert!(matches!(
+            base_state,
+            crate::sync_staging::S2CausalAnchorBaseStateV1::Absent
+        ));
+        assert!(base_frontier.is_empty());
+        assert_eq!(projection_generation, 1);
+
+        let mut edited = record("record-1");
+        edited["originalName"] = json!("edited locally");
+        stage_entity_upsert(&conn.lock().unwrap(), "record", "record-1", edited, 5).unwrap();
+        let second = get_staging(&conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .remove(0);
+        assert_eq!(second.causal_anchor, first.causal_anchor);
+        let restarted = get_staging(&conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .remove(0);
+        assert_eq!(restarted.causal_anchor, first.causal_anchor);
+        assert_eq!(
+            match restarted.causal_anchor {
+                StagedCausalAnchorV1::Ready {
+                    fingerprint: value, ..
+                } => value,
+                StagedCausalAnchorV1::Unavailable { .. } => unreachable!(),
+            },
+            fingerprint
+        );
+    }
+
+    #[test]
+    fn entity_anchor_allows_unrelated_advance_but_blocks_same_entity_frontier_changes() {
+        let (unrelated_conn, unrelated_target, unrelated_root) = setup();
+        stage_one_record(&unrelated_conn);
+        replace_projection_state(
+            &unrelated_conn,
+            &unrelated_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "other"]),
+                    vec![reference(2)],
+                    record("other"),
+                )],
+            ),
+        );
+        assert!(matches!(
+            freeze_active_outbound_v1(&unrelated_conn, &unrelated_target, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::Frozen { .. }
+        ));
+
+        for (name, returned_to_same_value) in [("different", false), ("returned", true)] {
+            let (conn, target_id, root) = setup();
+            let original = record("record-1");
+            replace_projection_state(
+                &conn,
+                &root,
+                projection_state(
+                    MaterializedProjectionStatusV1::Complete,
+                    vec![],
+                    vec![live_entity(
+                        json!(["record", "record-1"]),
+                        vec![reference(1)],
+                        canonical_semantic_value(&original).unwrap(),
+                    )],
+                ),
+            );
+            let mut local = original.clone();
+            local["originalName"] = json!("local title");
+            stage_entity_upsert(&conn.lock().unwrap(), "record", "record-1", local, 4).unwrap();
+            let mut remote = original.clone();
+            if !returned_to_same_value {
+                remote["notes"] = json!(format!("remote notes {name}"));
+            }
+            replace_projection_state(
+                &conn,
+                &root,
+                projection_state(
+                    MaterializedProjectionStatusV1::Complete,
+                    vec![],
+                    vec![live_entity(
+                        json!(["record", "record-1"]),
+                        vec![reference(2)],
+                        canonical_semantic_value(&remote).unwrap(),
+                    )],
+                ),
+            );
+            assert_eq!(
+                freeze_active_outbound_v1(&conn, &target_id, 1, TIME).unwrap(),
+                OutboundFreezeResultV1::BlockedStaleEntityBases
+            );
+            assert_no_outbound_state(&conn, &root);
+        }
+    }
+
+    #[test]
+    fn stale_local_title_cannot_publish_remote_notes_and_discard_can_reanchor() {
+        let (conn, target_id, root) = setup();
+        let original = record("record-1");
+        replace_projection_state(
+            &conn,
+            &root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(1)],
+                    canonical_semantic_value(&original).unwrap(),
+                )],
+            ),
+        );
+        let mut local = original.clone();
+        local["originalName"] = json!("local title");
+        stage_entity_upsert(
+            &conn.lock().unwrap(),
+            "record",
+            "record-1",
+            local.clone(),
+            4,
+        )
+        .unwrap();
+        let mut remote = original;
+        remote["notes"] = json!("remote notes");
+        replace_projection_state(
+            &conn,
+            &root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    canonical_semantic_value(&remote).unwrap(),
+                )],
+            ),
+        );
+        assert_eq!(
+            freeze_active_outbound_v1(&conn, &target_id, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::BlockedStaleEntityBases
+        );
+        assert_no_outbound_state(&conn, &root);
+        set_staging(&conn.lock().unwrap(), &SyncStaging::default()).unwrap();
+        stage_entity_upsert(&conn.lock().unwrap(), "record", "record-1", local, 5).unwrap();
+        assert!(matches!(
+            freeze_active_outbound_v1(&conn, &target_id, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::Frozen { .. }
+        ));
+    }
+
+    #[test]
+    fn legacy_staging_is_persisted_unavailable_and_cannot_reserve_outbound_state() {
+        let (conn, target_id, root) = setup();
+        set_staging(
+            &conn.lock().unwrap(),
+            &SyncStaging {
+                version: 2,
+                entries: vec![StagedRecord {
+                    entity_kind: "record".into(),
+                    id: "record-1".into(),
+                    operation: "upsert".into(),
+                    base: None,
+                    local: Some(record("record-1")),
+                    first_generation: 1,
+                    last_generation: 1,
+                    delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
+                }],
+            },
+        )
+        .unwrap();
+        let migrated = get_staging(&conn.lock().unwrap()).unwrap();
+        assert_eq!(migrated.version, 3);
+        assert!(matches!(
+            migrated.entries[0].causal_anchor,
+            StagedCausalAnchorV1::Unavailable { .. }
+        ));
+        assert_eq!(
+            freeze_active_outbound_v1(&conn, &target_id, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::BlockedStaleEntityBases
+        );
+        assert_no_outbound_state(&conn, &root);
+    }
+
+    #[test]
+    fn absent_create_and_local_delete_both_block_when_their_entity_advances_remotely() {
+        let (create_conn, create_target, create_root) = setup();
+        stage_one_record(&create_conn);
+        replace_projection_state(
+            &create_conn,
+            &create_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(1)],
+                    canonical_semantic_value(&record("record-1")).unwrap(),
+                )],
+            ),
+        );
+        assert_eq!(
+            freeze_active_outbound_v1(&create_conn, &create_target, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::BlockedStaleEntityBases
+        );
+        assert_no_outbound_state(&create_conn, &create_root);
+
+        let (delete_conn, delete_target, delete_root) = setup();
+        let base = record("record-1");
+        replace_projection_state(
+            &delete_conn,
+            &delete_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(1)],
+                    canonical_semantic_value(&base).unwrap(),
+                )],
+            ),
+        );
+        stage_entries(
+            &delete_conn,
+            vec![StagedRecord {
+                entity_kind: "record".into(),
+                id: "record-1".into(),
+                operation: "delete".into(),
+                base: Some(base.clone()),
+                local: None,
+                first_generation: 4,
+                last_generation: 4,
+                delete_descriptor: Some(StagedDeleteDescriptor::Record {
+                    id: "record-1".into(),
+                    deleted_at: TIME.into(),
+                    rev: 2,
+                    rev_actor: "local".into(),
+                }),
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
+            }],
+        );
+        let mut remote = base;
+        remote["notes"] = json!("remote update");
+        replace_projection_state(
+            &delete_conn,
+            &delete_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    canonical_semantic_value(&remote).unwrap(),
+                )],
+            ),
+        );
+        assert_eq!(
+            freeze_active_outbound_v1(&delete_conn, &delete_target, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::BlockedStaleEntityBases
+        );
+        assert_no_outbound_state(&delete_conn, &delete_root);
+    }
+
+    #[test]
     fn business_applied_projection_generation_mismatch_does_not_freeze() {
         let (conn, target_id, root) = setup();
         set_staging(
@@ -634,6 +954,9 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 }],
             },
         )
@@ -687,6 +1010,9 @@ mod tests {
                 first_generation: 4,
                 last_generation: 5,
                 delete_descriptor: None,
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         );
         let OutboundFreezeResultV1::Frozen { batch, intent } =
@@ -788,6 +1114,9 @@ mod tests {
                     rev: 2,
                     rev_actor: "local".into(),
                 }),
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         );
         assert!(matches!(
@@ -817,6 +1146,9 @@ mod tests {
                 first_generation: 1,
                 last_generation: 2,
                 delete_descriptor: None,
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         );
         let OutboundFreezeResultV1::Frozen { intent, .. } =
@@ -863,6 +1195,9 @@ mod tests {
                     rev: 7,
                     rev_actor: "local".into(),
                 }),
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         );
         let OutboundFreezeResultV1::Frozen { intent, .. } =
@@ -931,6 +1266,9 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 },
                 StagedRecord {
                     entity_kind: "record".into(),
@@ -941,6 +1279,9 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 },
             ],
         );

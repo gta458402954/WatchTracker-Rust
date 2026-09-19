@@ -44,8 +44,9 @@ mod tests {
     use super::super::remote_discovery::create_discovery_state_v1;
     use super::*;
     use crate::sync_staging::{
-        get_staging, get_staging_for_target, set_staging, set_staging_for_target,
-        StagedDeleteDescriptor, StagedRecord, SyncStaging,
+        capture_staged_causal_anchor_v1, get_staging, get_staging_for_target, set_staging,
+        set_staging_for_target, StagedCausalAnchorV1, StagedDeleteDescriptor, StagedRecord,
+        SyncStaging,
     };
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry};
 
@@ -126,6 +127,9 @@ mod tests {
             first_generation: generation,
             last_generation: generation,
             delete_descriptor: None,
+            causal_anchor: StagedCausalAnchorV1::Unavailable {
+                reason: "test".into(),
+            },
         }
     }
 
@@ -213,12 +217,16 @@ mod tests {
 
     fn freeze(
         fixture: &Fixture,
-        entries: Vec<StagedRecord>,
+        mut entries: Vec<StagedRecord>,
     ) -> super::super::durable_persistence::OutboundBatchV1 {
+        for entry in &mut entries {
+            entry.causal_anchor =
+                capture_staged_causal_anchor_v1(&fixture.conn.lock().unwrap(), entry);
+        }
         set_staging(
             &fixture.conn.lock().unwrap(),
             &SyncStaging {
-                version: 2,
+                version: 3,
                 entries,
             },
         )
@@ -238,6 +246,21 @@ mod tests {
             .verify_and_persist_commit_receipt(&intent, &mut remote, TIME)
             .unwrap();
         *batch
+    }
+
+    fn set_anchored_staging(fixture: &Fixture, mut entries: Vec<StagedRecord>) {
+        for entry in &mut entries {
+            entry.causal_anchor =
+                capture_staged_causal_anchor_v1(&fixture.conn.lock().unwrap(), entry);
+        }
+        set_staging(
+            &fixture.conn.lock().unwrap(),
+            &SyncStaging {
+                version: 3,
+                entries,
+            },
+        )
+        .unwrap();
     }
 
     fn state(fixture: &Fixture) -> DesktopRootStateV1 {
@@ -344,14 +367,7 @@ mod tests {
     #[test]
     fn no_receipt_or_writer_head_mismatch_changes_no_local_state() {
         let fixture = setup();
-        set_staging(
-            &fixture.conn.lock().unwrap(),
-            &SyncStaging {
-                version: 2,
-                entries: vec![staged_record("record-1", 7)],
-            },
-        )
-        .unwrap();
+        set_anchored_staging(&fixture, vec![staged_record("record-1", 7)]);
         let OutboundFreezeResultV1::Frozen { batch, .. } =
             freeze_active_outbound_v1(&fixture.conn, &fixture.target_id, 1, TIME).unwrap()
         else {
@@ -445,14 +461,7 @@ mod tests {
         assert!(store
             .compare_and_swap_materialized_projection(Some(1), &projection)
             .unwrap());
-        set_staging(
-            &fixture.conn.lock().unwrap(),
-            &SyncStaging {
-                version: 2,
-                entries: vec![staged_record("record-2", 8)],
-            },
-        )
-        .unwrap();
+        set_anchored_staging(&fixture, vec![staged_record("record-2", 8)]);
         let OutboundFreezeResultV1::Frozen {
             batch: successor, ..
         } = freeze_active_outbound_v1(&fixture.conn, &fixture.target_id, 1, TIME).unwrap()
@@ -474,6 +483,7 @@ mod tests {
             get_staging_for_target(&fixture.conn.lock().unwrap(), &fixture.target_id)
                 .unwrap()
                 .unwrap();
+        let preserved_anchor = a_staging.entries[1].causal_anchor.clone();
         a_staging.entries[1].last_generation = 8;
         a_staging.entries[1].local = Some(record("a-newer-after-freeze"));
         set_staging_for_target(
@@ -486,7 +496,7 @@ mod tests {
         let target_b = target("https://dav.example.test/other/", "Bob");
         switch_active_target(&fixture, target_b.clone(), 2);
         let b_staging = SyncStaging {
-            version: 2,
+            version: 3,
             entries: vec![staged_record("b-untouched", 12)],
         };
         set_staging_for_target(&fixture.conn.lock().unwrap(), &target_b.id, &b_staging).unwrap();
@@ -512,6 +522,7 @@ mod tests {
                 first_generation: 7,
                 last_generation: 8,
                 delete_descriptor: None,
+                causal_anchor: preserved_anchor,
             }]
         );
         assert_eq!(
@@ -591,13 +602,16 @@ mod tests {
                     rev: 1,
                     rev_actor: "local".into(),
                 }),
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         );
         assert_eq!(batch.mutations[0].entity_key, entity_key);
         let target_b = target("https://dav.example.test/other/", "Bob");
         switch_active_target(&fixture, target_b.clone(), 2);
         let b_staging = SyncStaging {
-            version: 2,
+            version: 3,
             entries: vec![staged_record("b-untouched", 12)],
         };
         set_staging_for_target(&fixture.conn.lock().unwrap(), &target_b.id, &b_staging).unwrap();

@@ -179,6 +179,7 @@ pub(crate) struct OutboundFreezeTransactionContextV1 {
 pub(crate) enum OutboundFreezeTransactionPlanV1 {
     NoSemanticMutation,
     Blocked,
+    BlockedStaleEntityBases,
     Frozen {
         batch: Box<OutboundBatchV1>,
         intent: Box<PreparedIntentV1>,
@@ -194,6 +195,7 @@ pub(crate) enum OutboundFreezeTransactionResultV1 {
     NoSemanticMutation,
     TargetChanged,
     Blocked,
+    BlockedStaleEntityBases,
 }
 
 #[cfg(test)]
@@ -502,6 +504,33 @@ fn validate_materialized_projection(
         return Err(STORE_CORRUPTION);
     }
     Ok(())
+}
+
+/// Strictly loads the current projection while a local business mutation is
+/// already inside its SQLite transaction. Staging uses this only to capture an
+/// entity-specific causal anchor; it cannot create or update projection state.
+pub(crate) fn load_materialized_projection_for_staging_v1(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Option<DurableMaterializedProjectionV1>> {
+    let row = database(
+        conn.query_row(
+            "SELECT projection_generation, state_json
+             FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+            [root_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional(),
+    )?;
+    row.map(|(generation, bytes)| {
+        let projection: DurableMaterializedProjectionV1 = decode(&bytes)?;
+        if projection.projection_generation != canonical_generation(&generation)? {
+            return Err(STORE_CORRUPTION);
+        }
+        validate_materialized_projection(&projection, root_id)?;
+        Ok(projection)
+    })
+    .transpose()
 }
 
 fn ensure_root_authority(conn: &Connection, root_id: &str) -> Result<()> {
@@ -1527,6 +1556,9 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 }
                 OutboundFreezeTransactionPlanV1::Blocked => {
                     OutboundFreezeTransactionResultV1::Blocked
+                }
+                OutboundFreezeTransactionPlanV1::BlockedStaleEntityBases => {
+                    OutboundFreezeTransactionResultV1::BlockedStaleEntityBases
                 }
                 OutboundFreezeTransactionPlanV1::Frozen { .. } => unreachable!(),
             });

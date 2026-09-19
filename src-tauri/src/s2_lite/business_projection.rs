@@ -289,7 +289,7 @@ mod tests {
     };
     use super::super::remote_discovery::create_discovery_state_v1;
     use super::*;
-    use crate::sync_staging::{set_staging, StagedRecord, SyncStaging};
+    use crate::sync_staging::{set_staging, StagedCausalAnchorV1, StagedRecord, SyncStaging};
 
     const ROOT: &str = "s2-root-v1:business-projection-test";
 
@@ -436,6 +436,9 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 }],
             },
         )
@@ -484,6 +487,9 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 }],
             },
         )
@@ -691,7 +697,7 @@ mod tests {
         )
         .unwrap();
         let staging = SyncStaging {
-            version: 2,
+            version: 3,
             entries: vec![StagedRecord {
                 entity_kind: "collection".into(),
                 id: "collection-2".into(),
@@ -701,6 +707,9 @@ mod tests {
                 first_generation: 1,
                 last_generation: 1,
                 delete_descriptor: None,
+                causal_anchor: StagedCausalAnchorV1::Unavailable {
+                    reason: "test".into(),
+                },
             }],
         };
         set_staging(&conn.lock().unwrap(), &staging).unwrap();
@@ -774,7 +783,7 @@ mod tests {
         )
         .unwrap();
         let staging = SyncStaging {
-            version: 2,
+            version: 3,
             entries: vec![
                 StagedRecord {
                     entity_kind: "collection-member".into(),
@@ -794,6 +803,9 @@ mod tests {
                             rev_actor: "local".into(),
                         },
                     ),
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 },
                 StagedRecord {
                     entity_kind: "episode-completion".into(),
@@ -809,6 +821,9 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: StagedCausalAnchorV1::Unavailable {
+                        reason: "test".into(),
+                    },
                 },
             ],
         };

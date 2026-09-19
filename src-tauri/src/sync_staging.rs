@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
+use crate::s2_lite::canonical::{jcs_bytes, sha256_hex};
+use crate::s2_lite::materialized_projection::{
+    resolve_ordinary_causal_base_v1, OrdinaryCausalBaseResolutionV1,
+};
+use crate::s2_lite::ordinary_mutation::OrdinaryCausalBaseV1;
+use crate::s2_lite::types::CommitRef;
+
 pub const STAGING_KEY: &str = "sync_staging_v1";
 pub const PUBLISH_INTENT_KEY: &str = "sync_publish_intent_v1";
 const BASELINE_KEY: &str = "sync_v3_baseline";
@@ -29,6 +36,41 @@ pub struct StagedRecord {
     pub last_generation: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_descriptor: Option<StagedDeleteDescriptor>,
+    /// Immutable S2 causal authority captured when this local entity first
+    /// enters staging. `Unavailable` is deliberate fail-closed state, never a
+    /// reason to infer a new base later.
+    #[serde(default = "legacy_causal_anchor")]
+    pub causal_anchor: StagedCausalAnchorV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "state", deny_unknown_fields)]
+pub enum S2CausalAnchorBaseStateV1 {
+    Absent,
+    Tombstone,
+    Live { value: Value },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "status", deny_unknown_fields)]
+pub enum StagedCausalAnchorV1 {
+    Ready {
+        physical_root_id: String,
+        entity_key: Value,
+        base_state: S2CausalAnchorBaseStateV1,
+        base_frontier: Vec<CommitRef>,
+        fingerprint: String,
+        projection_generation: u64,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+fn legacy_causal_anchor() -> StagedCausalAnchorV1 {
+    StagedCausalAnchorV1::Unavailable {
+        reason: "legacy_staging_without_causal_origin".into(),
+    }
 }
 
 /// Stable identity retained when a composite source row has been deleted.
@@ -76,7 +118,7 @@ pub struct SyncStaging {
 impl Default for SyncStaging {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             entries: Vec::new(),
         }
     }
@@ -187,7 +229,7 @@ fn get_staging_for_key(conn: &Connection, staging_key: &str) -> Result<SyncStagi
     };
     let mut staging: SyncStaging = serde_json::from_str(&raw)
         .map_err(|error| AppError::General(format!("Invalid {STAGING_KEY}: {error}")))?;
-    if !matches!(staging.version, 1 | 2)
+    if !matches!(staging.version, 1..=3)
         || staging.entries.iter().any(|entry| {
             !valid_entity_kind(&entry.entity_kind)
                 || entry.id.trim().is_empty()
@@ -204,10 +246,22 @@ fn get_staging_for_key(conn: &Connection, staging_key: &str) -> Result<SyncStagi
     {
         return Err(AppError::General(format!("Invalid {STAGING_KEY} state")));
     }
+    let migrated_legacy = staging.version < 3;
     for entry in &staging.entries {
         staged_entry_entity_key(entry)?;
+        if !migrated_legacy {
+            validate_staged_causal_anchor(entry)?;
+        }
     }
-    staging.version = 2;
+    if migrated_legacy {
+        for entry in &mut staging.entries {
+            entry.causal_anchor = legacy_causal_anchor();
+        }
+        staging.version = 3;
+        let migrated = serde_json::to_string(&staging)
+            .map_err(|error| AppError::General(format!("Invalid {STAGING_KEY}: {error}")))?;
+        set_setting_tx(conn, staging_key, &migrated)?;
+    }
     staging
         .entries
         .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
@@ -293,6 +347,151 @@ pub fn staged_entry_entity_key(entry: &StagedRecord) -> Result<Value, AppError> 
     }
 }
 
+fn anchor_base_state(base: &OrdinaryCausalBaseV1) -> S2CausalAnchorBaseStateV1 {
+    match base {
+        OrdinaryCausalBaseV1::Absent => S2CausalAnchorBaseStateV1::Absent,
+        OrdinaryCausalBaseV1::Tombstone => S2CausalAnchorBaseStateV1::Tombstone,
+        OrdinaryCausalBaseV1::Live(value) => S2CausalAnchorBaseStateV1::Live {
+            value: value.clone(),
+        },
+    }
+}
+
+fn anchor_fingerprint(
+    physical_root_id: &str,
+    entity_key: &Value,
+    base_state: &S2CausalAnchorBaseStateV1,
+    base_frontier: &[CommitRef],
+) -> Result<String, AppError> {
+    let value = serde_json::json!({
+        "physicalRootId": physical_root_id,
+        "entityKey": entity_key,
+        "baseState": base_state,
+        "baseFrontier": base_frontier,
+    });
+    jcs_bytes(&value)
+        .map(|bytes| sha256_hex(&bytes))
+        .map_err(|error| AppError::General(error.0.into()))
+}
+
+/// Captures an entity-local causal anchor while the caller's local mutation
+/// transaction is still open. Failure to obtain exact causal authority is
+/// retained as explicit unavailable state rather than guessed later.
+pub fn capture_staged_causal_anchor_v1(
+    conn: &Connection,
+    entry: &StagedRecord,
+) -> StagedCausalAnchorV1 {
+    let unavailable = |reason: &str| StagedCausalAnchorV1::Unavailable {
+        reason: reason.to_string(),
+    };
+    let Ok(entity_key) = staged_entry_entity_key(entry) else {
+        return unavailable("entity_key_unavailable");
+    };
+    let Ok(Some(registry)) = crate::sync_targets::registry(conn) else {
+        return unavailable("active_target_unavailable");
+    };
+    let Some(target_id) = registry.active_target_id.as_deref() else {
+        return unavailable("active_target_unavailable");
+    };
+    let Some(target) = registry
+        .targets
+        .iter()
+        .find(|target| target.id == target_id)
+    else {
+        return unavailable("active_target_unavailable");
+    };
+    let Ok(root) =
+        crate::s2_lite::webdav_adapter::webdav_root_v1(&target.normalized_url, &target.username)
+    else {
+        return unavailable("root_unavailable");
+    };
+    let Ok(Some(projection)) =
+        crate::s2_lite::durable_persistence::load_materialized_projection_for_staging_v1(
+            conn,
+            &root.physical_root_id,
+        )
+    else {
+        return unavailable("projection_unavailable");
+    };
+    let Ok(resolution) = resolve_ordinary_causal_base_v1(&projection.state, &entity_key) else {
+        return unavailable("causal_base_unavailable");
+    };
+    let OrdinaryCausalBaseResolutionV1::Ready {
+        causal_base,
+        base_frontier,
+        ..
+    } = resolution
+    else {
+        return unavailable("causal_base_not_ready");
+    };
+    let base_state = anchor_base_state(&causal_base);
+    let Ok(fingerprint) = anchor_fingerprint(
+        &root.physical_root_id,
+        &entity_key,
+        &base_state,
+        &base_frontier,
+    ) else {
+        return unavailable("anchor_fingerprint_unavailable");
+    };
+    StagedCausalAnchorV1::Ready {
+        physical_root_id: root.physical_root_id,
+        entity_key,
+        base_state,
+        base_frontier,
+        fingerprint,
+        projection_generation: projection.projection_generation,
+    }
+}
+
+pub fn validate_staged_causal_anchor(entry: &StagedRecord) -> Result<(), AppError> {
+    match &entry.causal_anchor {
+        StagedCausalAnchorV1::Unavailable { reason } if !reason.trim().is_empty() => Ok(()),
+        StagedCausalAnchorV1::Unavailable { .. } => {
+            Err(AppError::General("Invalid causal staging anchor".into()))
+        }
+        StagedCausalAnchorV1::Ready {
+            physical_root_id,
+            entity_key,
+            base_state,
+            base_frontier,
+            fingerprint,
+            ..
+        } => {
+            if physical_root_id.is_empty()
+                || staged_entry_entity_key(entry)? != *entity_key
+                || anchor_fingerprint(physical_root_id, entity_key, base_state, base_frontier)?
+                    != *fingerprint
+            {
+                return Err(AppError::General("Invalid causal staging anchor".into()));
+            }
+            Ok(())
+        }
+    }
+}
+
+pub fn staged_anchor_matches_current_causal_base_v1(
+    entry: &StagedRecord,
+    physical_root_id: &str,
+    causal_base: &OrdinaryCausalBaseV1,
+    base_frontier: &[CommitRef],
+) -> Result<bool, AppError> {
+    validate_staged_causal_anchor(entry)?;
+    let StagedCausalAnchorV1::Ready {
+        physical_root_id: anchored_root,
+        entity_key,
+        base_state,
+        base_frontier: anchored_frontier,
+        ..
+    } = &entry.causal_anchor
+    else {
+        return Ok(false);
+    };
+    Ok(anchored_root == physical_root_id
+        && *entity_key == staged_entry_entity_key(entry)?
+        && *base_state == anchor_base_state(causal_base)
+        && *anchored_frontier == base_frontier)
+}
+
 pub fn set_staging(conn: &Connection, staging: &SyncStaging) -> Result<(), AppError> {
     let raw = serde_json::to_string(staging).map_err(|error| {
         AppError::General(format!("Could not serialize {STAGING_KEY}: {error}"))
@@ -369,7 +568,14 @@ fn stage_value(
         } else {
             None
         },
+        causal_anchor: existing
+            .map(|position| staging.entries[position].causal_anchor.clone())
+            .unwrap_or_else(legacy_causal_anchor),
     };
+    let mut entry = entry;
+    if existing.is_none() {
+        entry.causal_anchor = capture_staged_causal_anchor_v1(conn, &entry);
+    }
     if let Some(position) = existing {
         staging.entries[position] = entry;
     } else {
@@ -452,6 +658,7 @@ pub fn stage_entity_delete_with_descriptor(
             first_generation: staging.entries[position].first_generation,
             last_generation: generation,
             delete_descriptor: Some(descriptor),
+            causal_anchor: staging.entries[position].causal_anchor.clone(),
         };
     } else {
         staging.entries.push(StagedRecord {
@@ -463,7 +670,11 @@ pub fn stage_entity_delete_with_descriptor(
             first_generation: generation,
             last_generation: generation,
             delete_descriptor: Some(descriptor),
+            causal_anchor: legacy_causal_anchor(),
         });
+        let position = staging.entries.len() - 1;
+        staging.entries[position].causal_anchor =
+            capture_staged_causal_anchor_v1(conn, &staging.entries[position]);
     }
     staging
         .entries
@@ -663,6 +874,7 @@ fn append_entity_diff(
             first_generation: generation,
             last_generation: generation,
             delete_descriptor,
+            causal_anchor: legacy_causal_anchor(),
         });
     }
     Ok(())
@@ -782,6 +994,7 @@ pub fn rebuild_from_current(conn: &Connection, generation: i64) -> Result<SyncSt
             first_generation: generation,
             last_generation: generation,
             delete_descriptor,
+            causal_anchor: legacy_causal_anchor(),
         });
     }
     append_collection_entries(conn, generation, &deleted_at, &rev_actor, &mut entries)?;
@@ -789,7 +1002,7 @@ pub fn rebuild_from_current(conn: &Connection, generation: i64) -> Result<SyncSt
     entries
         .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
     let staging = SyncStaging {
-        version: 2,
+        version: 3,
         entries,
     };
     set_staging(conn, &staging)?;
@@ -857,6 +1070,7 @@ pub fn rebuild_from_current_for_target(
             first_generation: generation,
             last_generation: generation,
             delete_descriptor,
+            causal_anchor: legacy_causal_anchor(),
         });
     }
     let baseline_map = |field: &str| -> BTreeMap<String, Value> {
@@ -927,7 +1141,7 @@ pub fn rebuild_from_current_for_target(
     entries
         .sort_by(|left, right| (&left.entity_kind, &left.id).cmp(&(&right.entity_kind, &right.id)));
     let staging = SyncStaging {
-        version: 2,
+        version: 3,
         entries,
     };
     let raw =
@@ -1109,6 +1323,7 @@ mod tests {
                     first_generation: 1,
                     last_generation: 1,
                     delete_descriptor: None,
+                    causal_anchor: legacy_causal_anchor(),
                 }],
             },
         )
@@ -1165,6 +1380,7 @@ mod tests {
                 rev: 2,
                 rev_actor: "device-a".into(),
             }),
+            causal_anchor: legacy_causal_anchor(),
         };
         assert_eq!(
             staged_entry_entity_key(&entry).unwrap(),
