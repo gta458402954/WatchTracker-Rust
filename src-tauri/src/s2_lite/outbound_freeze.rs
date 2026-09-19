@@ -363,8 +363,12 @@ fn freeze_active_outbound_with_fault_v1(
 
 #[cfg(test)]
 mod tests {
-    use super::super::business_projection::apply_complete_projection_v1;
+    use super::super::business_projection::{
+        apply_complete_projection_v1, resolve_staged_entity_from_current_projection_v1,
+        resolve_staged_entity_with_injected_failure_v1,
+    };
     use super::super::durable_persistence::{
+        entity_projection_overlay_blocker_exists_v1, load_entity_projection_overlay_blocker_v1,
         DesktopRootStateV1, DurableMaterializedProjectionV1, OutboundFreezeFaultV1,
         SqliteS2LiteStoreV1,
     };
@@ -535,14 +539,17 @@ mod tests {
     ) {
         let mut store = SqliteS2LiteStoreV1::open(conn, root).unwrap();
         let mut projection = store.load_materialized_projection().unwrap().unwrap();
-        assert_eq!(projection.projection_generation, 1);
-        projection.projection_generation = 2;
+        let previous_generation = projection.projection_generation;
+        let next_generation = previous_generation + 1;
+        projection.projection_generation = next_generation;
         projection.business_projection_applied_generation = None;
         projection.state = state;
         assert!(store
-            .compare_and_swap_materialized_projection(Some(1), &projection)
+            .compare_and_swap_materialized_projection(Some(previous_generation), &projection)
             .unwrap());
-        store.update_materialized_projection_generation(2).unwrap();
+        store
+            .update_materialized_projection_generation(next_generation)
+            .unwrap();
     }
 
     fn projection_state(
@@ -778,11 +785,113 @@ mod tests {
             staged_before_apply.causal_anchor
         );
         assert_eq!(staged_after_apply.local.as_ref().unwrap()["notes"], "");
+        assert!(entity_projection_overlay_blocker_exists_v1(
+            &stale_conn.lock().unwrap(),
+            &stale_root,
+            &stale_target,
+            &json!(["record", "record-1"]),
+        )
+        .unwrap());
+
+        // A plain staging deletion cannot assert that the stale business row
+        // was repaired.  The durable blocker survives and rejects the next
+        // local edit even though root-level bookkeeping says N+1 was applied.
+        set_staging(&stale_conn.lock().unwrap(), &SyncStaging::default()).unwrap();
+        assert!(entity_projection_overlay_blocker_exists_v1(
+            &stale_conn.lock().unwrap(),
+            &stale_root,
+            &stale_target,
+            &json!(["record", "record-1"]),
+        )
+        .unwrap());
+        let mut stale_after_discard = record("record-1");
+        stale_after_discard["originalName"] = json!("Second local title");
+        crate::db_atomic_crud::insert_record_atomic(
+            &mut stale_conn.lock().unwrap(),
+            serde_json::from_value(stale_after_discard).unwrap(),
+            "local",
+        )
+        .unwrap();
+        assert_eq!(
+            get_staging(&stale_conn.lock().unwrap())
+                .unwrap()
+                .entries
+                .remove(0)
+                .causal_anchor,
+            StagedCausalAnchorV1::Unavailable {
+                reason: "entity_projection_not_applied".into(),
+            }
+        );
         assert_eq!(
             freeze_active_outbound_v1(&stale_conn, &stale_target, 1, TIME).unwrap(),
             OutboundFreezeResultV1::BlockedStaleEntityBases
         );
         assert_no_outbound_state(&stale_conn, &stale_root);
+
+        // The sole safe discard path applies the exact current projected
+        // entity, removes the staged overlay, and clears the blocker together.
+        let mut store = SqliteS2LiteStoreV1::open(&stale_conn, &stale_root).unwrap();
+        resolve_staged_entity_from_current_projection_v1(
+            &mut store,
+            2,
+            &json!(["record", "record-1"]),
+        )
+        .unwrap();
+        assert!(!entity_projection_overlay_blocker_exists_v1(
+            &stale_conn.lock().unwrap(),
+            &stale_root,
+            &stale_target,
+            &json!(["record", "record-1"]),
+        )
+        .unwrap());
+        assert!(get_staging(&stale_conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .is_empty());
+        assert_eq!(
+            crate::db::get_record(&stale_conn.lock().unwrap(), "record-1")
+                .unwrap()
+                .unwrap()
+                .notes,
+            "Remote note"
+        );
+        replace_projection_state(
+            &stale_conn,
+            &stale_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    canonical_semantic_value(&remote).unwrap(),
+                )],
+            ),
+        );
+        let mut resolved_local = remote.clone();
+        resolved_local["originalName"] = json!("Resolved local title");
+        crate::db_atomic_crud::insert_record_atomic(
+            &mut stale_conn.lock().unwrap(),
+            serde_json::from_value(resolved_local).unwrap(),
+            "local",
+        )
+        .unwrap();
+        assert!(matches!(
+            get_staging(&stale_conn.lock().unwrap())
+                .unwrap()
+                .entries
+                .remove(0)
+                .causal_anchor,
+            StagedCausalAnchorV1::Ready {
+                projection_generation: 2,
+                base_frontier,
+                ..
+            } if base_frontier == vec![reference(2)]
+        ));
+        assert!(matches!(
+            freeze_active_outbound_v1(&stale_conn, &stale_target, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::Frozen { .. }
+        ));
 
         let (applied_conn, applied_target, applied_root) = setup();
         let mut applied_remote = record("record-1");
@@ -843,6 +952,149 @@ mod tests {
             freeze_active_outbound_v1(&applied_conn, &applied_target, 1, TIME).unwrap(),
             OutboundFreezeResultV1::Frozen { .. }
         ));
+    }
+
+    #[test]
+    fn overlay_blockers_are_entity_scoped_durable_and_resolution_failures_roll_back() {
+        let (conn, target_id, root) = setup();
+        let mut original = record("record-1");
+        original["notes"] = json!("old");
+        crate::db::insert_record(
+            &conn.lock().unwrap(),
+            serde_json::from_value(original.clone()).unwrap(),
+        )
+        .unwrap();
+        let mut remote = original.clone();
+        remote["notes"] = json!("Remote note");
+        advance_projection_without_business_application(
+            &conn,
+            &root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    remote.clone(),
+                )],
+            ),
+        );
+        let mut local = original;
+        local["originalName"] = json!("Local title");
+        crate::db_atomic_crud::insert_record_atomic(
+            &mut conn.lock().unwrap(),
+            serde_json::from_value(local).unwrap(),
+            "local",
+        )
+        .unwrap();
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        apply_complete_projection_v1(&mut store, 2).unwrap();
+        let key = json!(["record", "record-1"]);
+        assert_eq!(
+            load_entity_projection_overlay_blocker_v1(
+                &conn.lock().unwrap(),
+                &root,
+                &target_id,
+                &key,
+            )
+            .unwrap()
+            .unwrap()
+            .projection_generation,
+            2
+        );
+
+        // A subsequent overlay pass updates the same durable record rather
+        // than treating root-level bookkeeping as entity application.
+        let mut newer_remote = remote.clone();
+        newer_remote["notes"] = json!("Remote note 2");
+        advance_projection_without_business_application(
+            &conn,
+            &root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    key.clone(),
+                    vec![reference(3)],
+                    newer_remote.clone(),
+                )],
+            ),
+        );
+        let mut reopened = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        apply_complete_projection_v1(&mut reopened, 3).unwrap();
+        assert_eq!(
+            load_entity_projection_overlay_blocker_v1(
+                &conn.lock().unwrap(),
+                &root,
+                &target_id,
+                &key,
+            )
+            .unwrap()
+            .unwrap()
+            .projection_generation,
+            3
+        );
+        // A fresh store handle is the restart boundary for this durable fact.
+        let _restart = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert!(entity_projection_overlay_blocker_exists_v1(
+            &conn.lock().unwrap(),
+            &root,
+            &target_id,
+            &key,
+        )
+        .unwrap());
+
+        // This blocker cannot taint another canonical entity or target key.
+        let other = record("other-record");
+        stage_entity_upsert(&conn.lock().unwrap(), "record", "other-record", other, 8).unwrap();
+        let other_entry = get_staging(&conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.id == "other-record")
+            .unwrap();
+        assert!(matches!(
+            other_entry.causal_anchor,
+            StagedCausalAnchorV1::Ready { .. }
+        ));
+        assert!(!entity_projection_overlay_blocker_exists_v1(
+            &conn.lock().unwrap(),
+            &root,
+            "different-target",
+            &key,
+        )
+        .unwrap());
+        assert!(!entity_projection_overlay_blocker_exists_v1(
+            &conn.lock().unwrap(),
+            "s2-root-v1:other-physical-root",
+            &target_id,
+            &key,
+        )
+        .unwrap());
+
+        // An injected crash after the projected business write must preserve
+        // the old business row, staging overlay, and blocker atomically.
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert!(resolve_staged_entity_with_injected_failure_v1(&mut store, 3, &key).is_err());
+        assert_eq!(
+            crate::db::get_record(&conn.lock().unwrap(), "record-1")
+                .unwrap()
+                .unwrap()
+                .notes,
+            "old"
+        );
+        assert!(get_staging(&conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| entry.id == "record-1"));
+        assert!(entity_projection_overlay_blocker_exists_v1(
+            &conn.lock().unwrap(),
+            &root,
+            &target_id,
+            &key,
+        )
+        .unwrap());
     }
 
     #[test]

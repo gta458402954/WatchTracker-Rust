@@ -18,7 +18,9 @@ use super::activation_cutover::{
     decide_legacy_put_v1, recover_activation_cutover_v1, ActivationCutoverStateV1,
     LegacyPutDecisionV1,
 };
-use super::canonical::{validate_canonical_uuid_v4, validate_commit_ref, ProtocolError, Result};
+use super::canonical::{
+    jcs_bytes, sha256_hex, validate_canonical_uuid_v4, validate_commit_ref, ProtocolError, Result,
+};
 use super::causal::decode_frozen_wire_commit_v1;
 use super::immutable_publish::{
     restart_durable_activation_publish_v1, restart_durable_publish_v1,
@@ -28,7 +30,9 @@ use super::immutable_publish::{
     PreparedIntentStoreV1, PreparedIntentV1, PublishedActivationReceiptV1,
     RecoverActivationIntentResultV1, RecoverPreparedIntentResultV1, RemotePublishedReceiptV1,
 };
-use super::materialized_projection::MaterializedProjectionStateV1;
+use super::materialized_projection::{
+    MaterializedProjectionEntityV1, MaterializedProjectionStateV1,
+};
 use super::migration_orchestration::{
     create_migration_root_safety_state_v1, merge_migration_root_cutover_state_v1,
     reconcile_migration_state_v1, validate_attempt_transition, ActivationCutoverStateStoreV1,
@@ -146,6 +150,20 @@ pub struct DurableMaterializedProjectionV1 {
     pub replay_input_fingerprint: String,
     pub business_projection_applied_generation: Option<u64>,
     pub state: MaterializedProjectionStateV1,
+}
+
+/// Local provenance proving that a projection pass deliberately left one
+/// entity's business row untouched because its target-scoped staging overlay
+/// was present.  It is not protocol, receipt, or publication authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EntityProjectionOverlayBlockerV1 {
+    pub state_version: u8,
+    pub physical_root_id: String,
+    pub target_id: String,
+    pub entity_key: Value,
+    pub projection_generation: u64,
+    pub projection_entity_fingerprint: String,
 }
 
 /// The authority available to a local mutation that is about to capture an
@@ -341,6 +359,14 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
             PRIMARY KEY(target_id, target_epoch),
             FOREIGN KEY(physical_root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
          );
+         CREATE TABLE IF NOT EXISTS s2_lite_entity_projection_overlay_blocker_v1 (
+            root_id TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            entity_key_jcs BLOB NOT NULL CHECK(typeof(entity_key_jcs) = 'blob'),
+            state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
+            PRIMARY KEY(root_id, target_id, entity_key_jcs),
+            FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
@@ -512,6 +538,109 @@ fn validate_materialized_projection(
     {
         return Err(STORE_CORRUPTION);
     }
+    Ok(())
+}
+
+fn validate_entity_projection_overlay_blocker(
+    blocker: &EntityProjectionOverlayBlockerV1,
+    root_id: &str,
+    target_id: &str,
+    entity_key: &Value,
+) -> Result<()> {
+    if blocker.state_version != 1
+        || blocker.physical_root_id != root_id
+        || blocker.target_id != target_id
+        || blocker.entity_key != *entity_key
+        || blocker.projection_entity_fingerprint.len() != 64
+        || !blocker
+            .projection_entity_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
+}
+
+fn entity_projection_fingerprint(entity: &MaterializedProjectionEntityV1) -> Result<String> {
+    jcs_bytes(entity).map(|bytes| sha256_hex(&bytes))
+}
+
+pub(crate) fn upsert_entity_projection_overlay_blocker_v1(
+    conn: &Connection,
+    root_id: &str,
+    target_id: &str,
+    projection_generation: u64,
+    entity: &MaterializedProjectionEntityV1,
+) -> Result<()> {
+    if root_id.is_empty() || target_id.is_empty() {
+        return Err(STORE_CORRUPTION);
+    }
+    let key = jcs_bytes(&entity.entity_key)?;
+    let blocker = EntityProjectionOverlayBlockerV1 {
+        state_version: 1,
+        physical_root_id: root_id.to_string(),
+        target_id: target_id.to_string(),
+        entity_key: entity.entity_key.clone(),
+        projection_generation,
+        projection_entity_fingerprint: entity_projection_fingerprint(entity)?,
+    };
+    validate_entity_projection_overlay_blocker(&blocker, root_id, target_id, &entity.entity_key)?;
+    database(conn.execute(
+        "INSERT INTO s2_lite_entity_projection_overlay_blocker_v1(
+            root_id, target_id, entity_key_jcs, state_json
+         ) VALUES(?1, ?2, ?3, ?4)
+         ON CONFLICT(root_id, target_id, entity_key_jcs) DO UPDATE SET state_json=excluded.state_json",
+        params![root_id, target_id, key, encode(&blocker)?],
+    ))?;
+    Ok(())
+}
+
+pub(crate) fn load_entity_projection_overlay_blocker_v1(
+    conn: &Connection,
+    root_id: &str,
+    target_id: &str,
+    entity_key: &Value,
+) -> Result<Option<EntityProjectionOverlayBlockerV1>> {
+    let key = jcs_bytes(entity_key)?;
+    let row = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_entity_projection_overlay_blocker_v1
+         WHERE root_id=?1 AND target_id=?2 AND entity_key_jcs=?3",
+            params![root_id, target_id, key],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?;
+    let Some(bytes) = row else {
+        return Ok(None);
+    };
+    let blocker: EntityProjectionOverlayBlockerV1 = decode(&bytes)?;
+    validate_entity_projection_overlay_blocker(&blocker, root_id, target_id, entity_key)?;
+    Ok(Some(blocker))
+}
+
+pub(crate) fn entity_projection_overlay_blocker_exists_v1(
+    conn: &Connection,
+    root_id: &str,
+    target_id: &str,
+    entity_key: &Value,
+) -> Result<bool> {
+    Ok(load_entity_projection_overlay_blocker_v1(conn, root_id, target_id, entity_key)?.is_some())
+}
+
+pub(crate) fn clear_entity_projection_overlay_blocker_v1(
+    conn: &Connection,
+    root_id: &str,
+    target_id: &str,
+    entity_key: &Value,
+) -> Result<()> {
+    let key = jcs_bytes(entity_key)?;
+    database(conn.execute(
+        "DELETE FROM s2_lite_entity_projection_overlay_blocker_v1
+         WHERE root_id=?1 AND target_id=?2 AND entity_key_jcs=?3",
+        params![root_id, target_id, key],
+    ))?;
     Ok(())
 }
 
@@ -1329,6 +1458,67 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         ))?;
         database(transaction.commit())?;
         Ok((BusinessProjectionTransactionResultV1::Applied, Some(output)))
+    }
+
+    /// Resolves one previously overlay-preserved entity under the current,
+    /// already-applied projection.  The callback owns the entity write,
+    /// staging removal, and blocker clear; any failure rolls all three back.
+    pub(crate) fn run_entity_projection_resolution_transaction<T>(
+        &mut self,
+        expected_projection_generation: u64,
+        resolve: impl FnOnce(&Connection, &DurableMaterializedProjectionV1) -> Result<T>,
+    ) -> Result<T> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty() {
+            return Err(ROOT_MISMATCH);
+        }
+        let discovery_generation = database(transaction.query_row(
+            "SELECT storage_generation FROM s2_lite_discovery_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| row.get::<_, String>(0),
+        ))?;
+        let (stored_generation, projection_bytes) = database(transaction.query_row(
+            "SELECT projection_generation, state_json FROM s2_lite_materialized_projection_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        ))?;
+        let projection: DurableMaterializedProjectionV1 = decode(&projection_bytes)?;
+        if canonical_generation(&stored_generation)? != expected_projection_generation
+            || projection.projection_generation != expected_projection_generation
+            || projection.source_discovery_generation
+                != canonical_generation(&discovery_generation)?
+            || projection.source_root_safety_generation != safety.generation
+            || projection.business_projection_applied_generation
+                != Some(expected_projection_generation)
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        validate_materialized_projection(&projection, self.root_id)?;
+        if !matches!(
+            projection.state.status,
+            super::materialized_projection::MaterializedProjectionStatusV1::Complete
+        ) {
+            return Err(STORE_CORRUPTION);
+        }
+        let root_bytes = database(transaction.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [self.root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        ))?;
+        let root_state: DesktopRootStateV1 = decode(&root_bytes)?;
+        validate_desktop_root_state(&root_state, self.root_id)?;
+        if root_state.materialized_projection_generation != Some(expected_projection_generation)
+            || root_state.business_applied_projection_generation
+                != Some(expected_projection_generation)
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let output = resolve(&transaction, &projection)?;
+        database(transaction.commit())?;
+        Ok(output)
     }
 
     pub fn load_unfinished_outbound_batch(&mut self) -> Result<Option<OutboundBatchV1>> {

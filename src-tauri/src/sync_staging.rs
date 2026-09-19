@@ -416,6 +416,16 @@ pub fn capture_staged_causal_anchor_v1(
         )) => return unavailable(reason),
         Err(_) => return unavailable("projection_authority_invalid"),
     };
+    match crate::s2_lite::durable_persistence::entity_projection_overlay_blocker_exists_v1(
+        conn,
+        &root.physical_root_id,
+        target_id,
+        &entity_key,
+    ) {
+        Ok(true) => return unavailable("entity_projection_not_applied"),
+        Ok(false) => {}
+        Err(_) => return unavailable("entity_projection_blocker_invalid"),
+    }
     let Ok(resolution) = resolve_ordinary_causal_base_v1(&projection.state, &entity_key) else {
         return unavailable("causal_base_unavailable");
     };

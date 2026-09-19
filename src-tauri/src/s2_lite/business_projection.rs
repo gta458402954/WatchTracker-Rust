@@ -41,6 +41,30 @@ fn key_id(key: &Value) -> ProtocolResult<Vec<u8>> {
     jcs_bytes(key)
 }
 
+/// Returns the active target only when it is bound to this projector's exact
+/// physical root.  Legacy/no-target operation retains its pre-S2 behavior;
+/// target-scoped overlay provenance is required only once target authority is
+/// present.
+fn active_target_for_root_v1(conn: &Connection, root_id: &str) -> ProtocolResult<Option<String>> {
+    let Some(registry) = crate::sync_targets::registry(conn).map_err(failure)? else {
+        return Ok(None);
+    };
+    let Some(target_id) = registry.active_target_id else {
+        return Ok(None);
+    };
+    let target = registry
+        .targets
+        .iter()
+        .find(|target| target.id == target_id)
+        .ok_or(ProtocolError("projector_active_target_unavailable"))?;
+    let root = super::webdav_adapter::webdav_root_v1(&target.normalized_url, &target.username)
+        .map_err(|_| ProtocolError("projector_target_root_invalid"))?;
+    if root.physical_root_id != root_id {
+        return Err(ProtocolError("projector_target_root_mismatch"));
+    }
+    Ok(Some(target_id))
+}
+
 fn key_parts(key: &Value) -> ProtocolResult<(&str, &[Value])> {
     let values = key
         .as_array()
@@ -108,7 +132,11 @@ fn apply_tombstone(
     conn: &Connection,
     entity: &MaterializedProjectionEntityV1,
 ) -> ProtocolResult<()> {
-    let (kind, key) = key_parts(&entity.entity_key)?;
+    apply_absent_entity_key(conn, &entity.entity_key)
+}
+
+fn apply_absent_entity_key(conn: &Connection, entity_key: &Value) -> ProtocolResult<()> {
+    let (kind, key) = key_parts(entity_key)?;
     match kind {
         "record" if key.len() == 1 => {
             remote_delete_record_no_stage_tx(conn, key_string(&key[0])?).map_err(failure)
@@ -130,6 +158,30 @@ fn apply_tombstone(
     }
 }
 
+fn entity_from_current_projection<'a>(
+    projection: &'a DurableMaterializedProjectionV1,
+    entity_key: &Value,
+) -> ProtocolResult<Option<&'a MaterializedProjectionEntityV1>> {
+    let id = key_id(entity_key)?;
+    if projection
+        .state
+        .relation_blocked_entity_keys
+        .iter()
+        .any(|key| key_id(key).is_ok_and(|candidate| candidate == id))
+    {
+        return Err(ProtocolError("projector_resolution_conflict"));
+    }
+    let entity = projection
+        .state
+        .entities
+        .iter()
+        .find(|entity| key_id(&entity.entity_key).is_ok_and(|candidate| candidate == id));
+    if entity.is_some_and(|entity| entity.conflict) {
+        return Err(ProtocolError("projector_resolution_conflict"));
+    }
+    Ok(entity)
+}
+
 /// Applies exactly one complete durable projection. Local staging is an
 /// overlay: it blocks the matching canonical entity but is never modified or
 /// acknowledged here.
@@ -144,6 +196,7 @@ pub fn apply_complete_projection_v1(
         expected_projection_generation,
         |conn, projection: &DurableMaterializedProjectionV1| {
             let staging = crate::sync_staging::get_staging(conn).map_err(failure)?;
+            let target_id = active_target_for_root_v1(conn, &projection.physical_root_id)?;
             let overlays = staging
                 .entries
                 .iter()
@@ -165,6 +218,15 @@ pub fn apply_complete_projection_v1(
                 let outcome = if entity.conflict || relation_conflicts.contains(&id) {
                     BusinessProjectionOutcomeV1::ConflictPreserved
                 } else if overlays.contains(&id) {
+                    if let Some(target_id) = target_id.as_deref() {
+                        super::durable_persistence::upsert_entity_projection_overlay_blocker_v1(
+                            conn,
+                            &projection.physical_root_id,
+                            target_id,
+                            expected_projection_generation,
+                            entity,
+                        )?;
+                    }
                     BusinessProjectionOutcomeV1::OverlayPreserved
                 } else if entity
                     .semantic_state
@@ -172,6 +234,14 @@ pub fn apply_complete_projection_v1(
                     .is_some_and(|state| state["state"] == "live")
                 {
                     apply_live(conn, entity)?;
+                    if let Some(target_id) = target_id.as_deref() {
+                        super::durable_persistence::clear_entity_projection_overlay_blocker_v1(
+                            conn,
+                            &projection.physical_root_id,
+                            target_id,
+                            &entity.entity_key,
+                        )?;
+                    }
                     BusinessProjectionOutcomeV1::AppliedRemoteValue
                 } else if entity
                     .semantic_state
@@ -179,6 +249,14 @@ pub fn apply_complete_projection_v1(
                     .is_some_and(|state| state["state"] == "tombstone")
                 {
                     apply_tombstone(conn, entity)?;
+                    if let Some(target_id) = target_id.as_deref() {
+                        super::durable_persistence::clear_entity_projection_overlay_blocker_v1(
+                            conn,
+                            &projection.physical_root_id,
+                            target_id,
+                            &entity.entity_key,
+                        )?;
+                    }
                     BusinessProjectionOutcomeV1::AppliedRemoteTombstone
                 } else {
                     return Err(ProtocolError("projector_unresolved_entity"));
@@ -190,6 +268,97 @@ pub fn apply_complete_projection_v1(
                 outcomes,
             })
         },
+    )
+}
+
+fn resolve_staged_entity_from_current_projection_inner_v1(
+    store: &mut SqliteS2LiteStoreV1<'_>,
+    expected_projection_generation: u64,
+    entity_key: &Value,
+    fail_after_business_write: bool,
+) -> ProtocolResult<()> {
+    let root_id = store.root_id().to_string();
+    store.run_entity_projection_resolution_transaction(
+        expected_projection_generation,
+        |conn, projection| {
+            let target_id = active_target_for_root_v1(conn, &root_id)?
+                .ok_or(ProtocolError("projector_active_target_unavailable"))?;
+            let mut staging = crate::sync_staging::get_staging(conn).map_err(failure)?;
+            let wanted = key_id(entity_key)?;
+            let mut position = None;
+            for (index, entry) in staging.entries.iter().enumerate() {
+                let candidate = crate::sync_staging::staged_entry_entity_key(entry)
+                    .map_err(failure)
+                    .and_then(|key| key_id(&key))?;
+                if candidate == wanted {
+                    position = Some(index);
+                    break;
+                }
+            }
+            let Some(position) = position else {
+                return Err(ProtocolError("projector_resolution_staging_missing"));
+            };
+            match entity_from_current_projection(projection, entity_key)? {
+                Some(entity)
+                    if entity
+                        .semantic_state
+                        .as_ref()
+                        .is_some_and(|state| state["state"] == "live") =>
+                {
+                    apply_live(conn, entity)?;
+                }
+                Some(entity)
+                    if entity
+                        .semantic_state
+                        .as_ref()
+                        .is_some_and(|state| state["state"] == "tombstone") =>
+                {
+                    apply_tombstone(conn, entity)?;
+                }
+                Some(_) => return Err(ProtocolError("projector_resolution_unresolved_entity")),
+                None => apply_absent_entity_key(conn, entity_key)?,
+            }
+            if fail_after_business_write {
+                return Err(ProtocolError("projector_resolution_injected_failure"));
+            }
+            staging.entries.remove(position);
+            crate::sync_staging::set_staging(conn, &staging).map_err(failure)?;
+            super::durable_persistence::clear_entity_projection_overlay_blocker_v1(
+                conn, &root_id, &target_id, entity_key,
+            )?;
+            Ok(())
+        },
+    )
+}
+
+/// Explicitly resolves one old staging overlay against the exact current
+/// projection.  A plain staging deletion intentionally cannot use this path:
+/// the projected entity write, staging removal, and blocker clear commit as
+/// one durable transaction.
+pub fn resolve_staged_entity_from_current_projection_v1(
+    store: &mut SqliteS2LiteStoreV1<'_>,
+    expected_projection_generation: u64,
+    entity_key: &Value,
+) -> ProtocolResult<()> {
+    resolve_staged_entity_from_current_projection_inner_v1(
+        store,
+        expected_projection_generation,
+        entity_key,
+        false,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_staged_entity_with_injected_failure_v1(
+    store: &mut SqliteS2LiteStoreV1<'_>,
+    expected_projection_generation: u64,
+    entity_key: &Value,
+) -> ProtocolResult<()> {
+    resolve_staged_entity_from_current_projection_inner_v1(
+        store,
+        expected_projection_generation,
+        entity_key,
+        true,
     )
 }
 
