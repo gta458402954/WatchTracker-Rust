@@ -148,6 +148,15 @@ pub struct DurableMaterializedProjectionV1 {
     pub state: MaterializedProjectionStateV1,
 }
 
+/// The authority available to a local mutation that is about to capture an
+/// immutable S2 entity anchor.  A materialized projection is not sufficient
+/// by itself: the business rows being edited must have been completely
+/// projected from that exact generation.
+pub(crate) enum StagingAnchorProjectionAdmissionV1 {
+    Ready(Box<DurableMaterializedProjectionV1>),
+    Unavailable(&'static str),
+}
+
 /// Local bookkeeping result for one complete overlay-aware business projection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BusinessProjectionTransactionResultV1 {
@@ -531,6 +540,90 @@ pub(crate) fn load_materialized_projection_for_staging_v1(
         Ok(projection)
     })
     .transpose()
+}
+
+/// Loads the sole projection generation that can be used as causal authority
+/// for a newly staged local entity.  This deliberately runs on the caller's
+/// mutation transaction: the business-row edit, its staging record, and the
+/// proof that those rows already reflect the projection are one SQLite view.
+pub(crate) fn admit_applied_projection_for_staging_anchor_v1(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<StagingAnchorProjectionAdmissionV1> {
+    let Some(projection) = load_materialized_projection_for_staging_v1(conn, root_id)? else {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "materialized_projection_missing",
+        ));
+    };
+    if !matches!(
+        projection.state.status,
+        super::materialized_projection::MaterializedProjectionStatusV1::Complete
+    ) {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "materialized_projection_incomplete",
+        ));
+    }
+    if projection.business_projection_applied_generation != Some(projection.projection_generation) {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "projection_business_not_applied",
+        ));
+    }
+
+    let Some(safety) = load_root_safety_from(conn, root_id)? else {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "root_safety_unavailable",
+        ));
+    };
+    if !safety.root_fatal_signals.is_empty() {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "root_fatal",
+        ));
+    }
+    if projection.source_root_safety_generation != safety.generation {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "projection_root_safety_generation_stale",
+        ));
+    }
+
+    let Some(discovery) = load_discovery_state_from(conn, root_id)? else {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "discovery_unavailable",
+        ));
+    };
+    if projection.source_discovery_generation != discovery.storage_generation {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "projection_discovery_generation_stale",
+        ));
+    }
+
+    let root_bytes = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?;
+    let Some(root_bytes) = root_bytes else {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "desktop_root_state_missing",
+        ));
+    };
+    let root_state: DesktopRootStateV1 = decode(&root_bytes)?;
+    validate_desktop_root_state(&root_state, root_id)?;
+    if root_state.materialized_projection_generation != Some(projection.projection_generation) {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "desktop_materialized_projection_generation_stale",
+        ));
+    }
+    if root_state.business_applied_projection_generation != Some(projection.projection_generation) {
+        return Ok(StagingAnchorProjectionAdmissionV1::Unavailable(
+            "desktop_business_projection_not_applied",
+        ));
+    }
+    Ok(StagingAnchorProjectionAdmissionV1::Ready(Box::new(
+        projection,
+    )))
 }
 
 fn ensure_root_authority(conn: &Connection, root_id: &str) -> Result<()> {

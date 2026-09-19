@@ -363,6 +363,7 @@ fn freeze_active_outbound_with_fault_v1(
 
 #[cfg(test)]
 mod tests {
+    use super::super::business_projection::apply_complete_projection_v1;
     use super::super::durable_persistence::{
         DesktopRootStateV1, DurableMaterializedProjectionV1, OutboundFreezeFaultV1,
         SqliteS2LiteStoreV1,
@@ -525,6 +526,23 @@ mod tests {
         assert!(store
             .compare_and_swap_materialized_projection(Some(generation), &projection)
             .unwrap());
+    }
+
+    fn advance_projection_without_business_application(
+        conn: &Mutex<Connection>,
+        root: &str,
+        state: MaterializedProjectionStateV1,
+    ) {
+        let mut store = SqliteS2LiteStoreV1::open(conn, root).unwrap();
+        let mut projection = store.load_materialized_projection().unwrap().unwrap();
+        assert_eq!(projection.projection_generation, 1);
+        projection.projection_generation = 2;
+        projection.business_projection_applied_generation = None;
+        projection.state = state;
+        assert!(store
+            .compare_and_swap_materialized_projection(Some(1), &projection)
+            .unwrap());
+        store.update_materialized_projection_generation(2).unwrap();
     }
 
     fn projection_state(
@@ -698,6 +716,133 @@ mod tests {
             },
             fingerprint
         );
+    }
+
+    #[test]
+    fn staging_anchor_requires_the_projection_to_be_applied_to_business_rows() {
+        let (stale_conn, stale_target, stale_root) = setup();
+        let original = record("record-1");
+        crate::db::insert_record(
+            &stale_conn.lock().unwrap(),
+            serde_json::from_value(original.clone()).unwrap(),
+        )
+        .unwrap();
+        let mut remote = original.clone();
+        remote["notes"] = json!("Remote note");
+        advance_projection_without_business_application(
+            &stale_conn,
+            &stale_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    remote.clone(),
+                )],
+            ),
+        );
+
+        // The local business row is still generation 1.  Staging a title edit
+        // here must retain unavailable evidence rather than bind old notes to
+        // the N+1 frontier.
+        let mut stale_local = original;
+        stale_local["originalName"] = json!("Local title");
+        crate::db_atomic_crud::insert_record_atomic(
+            &mut stale_conn.lock().unwrap(),
+            serde_json::from_value(stale_local).unwrap(),
+            "local",
+        )
+        .unwrap();
+        let staged_before_apply = get_staging(&stale_conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .remove(0);
+        assert_eq!(
+            staged_before_apply.causal_anchor,
+            StagedCausalAnchorV1::Unavailable {
+                reason: "projection_business_not_applied".into(),
+            }
+        );
+
+        // Applying N+1 observes the staged overlay, marks N+1 applied, but
+        // must never silently upgrade the original unavailable evidence.
+        let mut store = SqliteS2LiteStoreV1::open(&stale_conn, &stale_root).unwrap();
+        apply_complete_projection_v1(&mut store, 2).unwrap();
+        let staged_after_apply = get_staging(&stale_conn.lock().unwrap())
+            .unwrap()
+            .entries
+            .remove(0);
+        assert_eq!(
+            staged_after_apply.causal_anchor,
+            staged_before_apply.causal_anchor
+        );
+        assert_eq!(staged_after_apply.local.as_ref().unwrap()["notes"], "");
+        assert_eq!(
+            freeze_active_outbound_v1(&stale_conn, &stale_target, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::BlockedStaleEntityBases
+        );
+        assert_no_outbound_state(&stale_conn, &stale_root);
+
+        let (applied_conn, applied_target, applied_root) = setup();
+        let mut applied_remote = record("record-1");
+        applied_remote["notes"] = json!("Remote note");
+        advance_projection_without_business_application(
+            &applied_conn,
+            &applied_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    applied_remote.clone(),
+                )],
+            ),
+        );
+        let mut store = SqliteS2LiteStoreV1::open(&applied_conn, &applied_root).unwrap();
+        apply_complete_projection_v1(&mut store, 2).unwrap();
+        // The projector consumes the application-shaped record while the
+        // frozen ordinary mapper consumes its canonical semantic form.  Keep
+        // the same fully-applied generation while expressing that test value
+        // in the latter representation for the freeze assertion.
+        replace_projection_state(
+            &applied_conn,
+            &applied_root,
+            projection_state(
+                MaterializedProjectionStatusV1::Complete,
+                vec![],
+                vec![live_entity(
+                    json!(["record", "record-1"]),
+                    vec![reference(2)],
+                    canonical_semantic_value(&applied_remote).unwrap(),
+                )],
+            ),
+        );
+        let mut applied_local = applied_remote;
+        applied_local["originalName"] = json!("Local title");
+        crate::db_atomic_crud::insert_record_atomic(
+            &mut applied_conn.lock().unwrap(),
+            serde_json::from_value(applied_local).unwrap(),
+            "local",
+        )
+        .unwrap();
+        assert!(matches!(
+            get_staging(&applied_conn.lock().unwrap())
+                .unwrap()
+                .entries
+                .remove(0)
+                .causal_anchor,
+            StagedCausalAnchorV1::Ready {
+                projection_generation: 2,
+                base_frontier,
+                ..
+            } if base_frontier == vec![reference(2)]
+        ));
+        assert!(matches!(
+            freeze_active_outbound_v1(&applied_conn, &applied_target, 1, TIME).unwrap(),
+            OutboundFreezeResultV1::Frozen { .. }
+        ));
     }
 
     #[test]

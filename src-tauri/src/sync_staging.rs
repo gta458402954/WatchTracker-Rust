@@ -405,13 +405,16 @@ pub fn capture_staged_causal_anchor_v1(
     else {
         return unavailable("root_unavailable");
     };
-    let Ok(Some(projection)) =
-        crate::s2_lite::durable_persistence::load_materialized_projection_for_staging_v1(
-            conn,
-            &root.physical_root_id,
-        )
-    else {
-        return unavailable("projection_unavailable");
+    let projection = match crate::s2_lite::durable_persistence::
+        admit_applied_projection_for_staging_anchor_v1(conn, &root.physical_root_id)
+    {
+        Ok(crate::s2_lite::durable_persistence::StagingAnchorProjectionAdmissionV1::Ready(
+            projection,
+        )) => projection,
+        Ok(crate::s2_lite::durable_persistence::StagingAnchorProjectionAdmissionV1::Unavailable(
+            reason,
+        )) => return unavailable(reason),
+        Err(_) => return unavailable("projection_authority_invalid"),
     };
     let Ok(resolution) = resolve_ordinary_causal_base_v1(&projection.state, &entity_key) else {
         return unavailable("causal_base_unavailable");
