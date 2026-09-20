@@ -902,6 +902,9 @@ pub async fn webdav_request(
             LegacyS1PublishAdmissionV1::RejectedActivation => Err(crate::error::AppError::General(
                 "s2_legacy_put_activation_latched".to_string(),
             )),
+            LegacyS1PublishAdmissionV1::RejectedMigrationSourceProtected => Err(
+                crate::error::AppError::General("s2_legacy_put_migration_protected".to_string()),
+            ),
         };
     }
     net::webdav_request(net::WebDavRequest {

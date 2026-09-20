@@ -8,6 +8,7 @@ pub mod desktop_lifecycle;
 pub mod durable_persistence;
 pub mod immutable_publish;
 pub mod materialized_projection;
+pub mod migration_admission;
 pub mod migration_orchestration;
 pub mod ordinary_mutation;
 pub mod outbound_completion;

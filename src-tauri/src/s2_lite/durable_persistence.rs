@@ -34,10 +34,12 @@ use super::materialized_projection::{
     MaterializedProjectionEntityV1, MaterializedProjectionStateV1,
 };
 use super::migration_orchestration::{
-    create_migration_root_safety_state_v1, merge_migration_root_cutover_state_v1,
-    reconcile_migration_state_v1, validate_attempt_transition, ActivationCutoverStateStoreV1,
-    MigrationRootFatalV1, MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1,
-    MigrationStatusV1, PublishExclusiveResultV1,
+    create_migration_root_safety_state_v1, create_migration_state_v1,
+    merge_migration_root_cutover_state_v1, plan_captured_migration_v1,
+    reconcile_migration_state_v1, retain_captured_snapshot_v1, validate_attempt_transition,
+    ActivationCutoverStateStoreV1, CapturedLegacySnapshotV1, MigrationRootFatalV1,
+    MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1, MigrationStatusV1,
+    PublishExclusiveResultV1,
 };
 use super::remote_discovery::{create_discovery_state_v1, DiscoveryStateV1};
 use super::types::CommitRef;
@@ -64,12 +66,31 @@ pub enum LegacyS1PublishAdmissionV1<T> {
     Executed(T),
     RejectedRootFrozen,
     RejectedActivation,
+    RejectedMigrationSourceProtected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LegacyS1PublicationRejectionV1 {
     RootFrozen,
     Activation,
+    MigrationSourceProtected,
+}
+
+/// Immutable input needed to admit the first local bootstrap capture. The
+/// writer is the future migration writer, never an ordinary desktop writer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationAdmissionInputV1 {
+    pub target_binding: TargetRootBindingV1,
+    pub migration_id: String,
+    pub migration_writer_id: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationAdmissionResultV1 {
+    pub execution_binding: MigrationExecutionBindingV1,
+    pub state: MigrationStateV1,
+    pub attached_existing: bool,
 }
 
 /// Local-only desktop bookkeeping. Frozen root safety, discovery, activation,
@@ -379,6 +400,12 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
             state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
             FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
          );
+         CREATE TABLE IF NOT EXISTS s2_lite_migration_source_guard_v1 (
+            root_id TEXT PRIMARY KEY NOT NULL,
+            migration_id TEXT NOT NULL,
+            captured_records_generation TEXT NOT NULL,
+            FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
          CREATE TABLE IF NOT EXISTS s2_lite_entity_projection_overlay_blocker_v1 (
             root_id TEXT NOT NULL,
             target_id TEXT NOT NULL,
@@ -390,7 +417,41 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
-    transaction.commit()
+    transaction.commit()?;
+    install_migration_source_guard_triggers(conn)
+}
+
+fn install_migration_source_guard_triggers(conn: &Connection) -> rusqlite::Result<()> {
+    let tables = [
+        "records",
+        "episode_completions",
+        "collections",
+        "collection_members",
+    ];
+    if tables.iter().any(|table| {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_or(true, |exists| exists == 0)
+    }) {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS s2_lite_guard_records_insert_v1 BEFORE INSERT ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_records_update_v1 BEFORE UPDATE ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_records_delete_v1 BEFORE DELETE ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_episode_insert_v1 BEFORE INSERT ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_episode_update_v1 BEFORE UPDATE ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_episode_delete_v1 BEFORE DELETE ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_collections_insert_v1 BEFORE INSERT ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_collections_update_v1 BEFORE UPDATE ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_collections_delete_v1 BEFORE DELETE ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_members_insert_v1 BEFORE INSERT ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_members_update_v1 BEFORE UPDATE ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_members_delete_v1 BEFORE DELETE ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;",
+    )
 }
 
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
@@ -541,6 +602,52 @@ fn validate_migration_execution_target_authority(
     if target_binding.physical_root_id != binding.physical_root_id
         || binding.physical_root_id != root_id
     {
+        return Err(ROOT_MISMATCH);
+    }
+    Ok(())
+}
+
+fn migration_source_guard_exists(conn: &Connection, root_id: &str) -> Result<bool> {
+    Ok(database(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1 WHERE root_id=?1)",
+        [root_id],
+        |row| row.get::<_, i64>(0),
+    ))? != 0)
+}
+
+fn validate_active_migration_binding(
+    conn: &Connection,
+    candidate: &TargetRootBindingV1,
+    root_id: &str,
+) -> Result<()> {
+    validate_target_root_binding(candidate)?;
+    if candidate.physical_root_id != root_id {
+        return Err(ROOT_MISMATCH);
+    }
+    let registry = crate::sync_targets::registry(conn).map_err(|_| STORE_FAILURE)?;
+    let registry = registry.ok_or(ROOT_MISMATCH)?;
+    if registry.active_target_id.as_deref() != Some(candidate.target_id.as_str())
+        || registry.target_epoch != candidate.target_epoch
+    {
+        return Err(ROOT_MISMATCH);
+    }
+    let target = registry
+        .targets
+        .iter()
+        .find(|target| target.id == candidate.target_id)
+        .ok_or(ROOT_MISMATCH)?;
+    let root = super::webdav_adapter::webdav_root_v1(&target.normalized_url, &target.username)
+        .map_err(|_| ROOT_MISMATCH)?;
+    if root.canonical_url != candidate.canonical_url
+        || root.normalized_account != candidate.normalized_account
+        || root.physical_root_id != candidate.physical_root_id
+    {
+        return Err(ROOT_MISMATCH);
+    }
+    let durable =
+        load_target_root_binding_from(conn, &candidate.target_id, candidate.target_epoch)?
+            .ok_or(ROOT_MISMATCH)?;
+    if durable != *candidate {
         return Err(ROOT_MISMATCH);
     }
     Ok(())
@@ -1335,6 +1442,142 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         };
         database(transaction.commit())?;
         Ok(resolved)
+    }
+
+    /// Captures the one immutable legacy bootstrap source under the same
+    /// SQLite admission that records its migration identity and source guard.
+    /// The callback receives the transaction's consistent business view; it
+    /// has no network collaborator and cannot allocate an ordinary writer.
+    pub fn admit_and_capture_migration_v1<F>(
+        &mut self,
+        input: &MigrationAdmissionInputV1,
+        capture: F,
+    ) -> Result<MigrationAdmissionResultV1>
+    where
+        F: FnOnce(&Connection) -> Result<(i64, CapturedLegacySnapshotV1)>,
+    {
+        if input.target_binding.physical_root_id != self.root_id {
+            return Err(ROOT_MISMATCH);
+        }
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        validate_active_migration_binding(&transaction, &input.target_binding, self.root_id)?;
+        database(install_migration_source_guard_triggers(&transaction))?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(ROOT_MISMATCH)?;
+        if !safety.root_fatal_signals.is_empty()
+            || decide_legacy_put_v1(&recover_activation_cutover_v1(
+                &load_discovery_state_from(&transaction, self.root_id)?
+                    .map(|state| state.state)
+                    .unwrap_or_else(create_discovery_state_v1),
+                Some(&safety.cutover_state),
+            )) != LegacyPutDecisionV1::AllowedS2NotActivated
+        {
+            return Err(ROOT_MISMATCH);
+        }
+
+        if let Some(existing_state) = load_migration_from(&transaction, self.root_id)? {
+            let existing_binding = transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(|_| STORE_FAILURE)?
+                .ok_or(STORE_CORRUPTION)?;
+            let execution_binding: MigrationExecutionBindingV1 = decode(&existing_binding)?;
+            validate_migration_execution_binding(&execution_binding)?;
+            validate_migration_execution_target_authority(
+                &transaction,
+                &execution_binding,
+                self.root_id,
+            )?;
+            if execution_binding.target_id != input.target_binding.target_id
+                || execution_binding.target_epoch != input.target_binding.target_epoch
+                || execution_binding.physical_root_id != self.root_id
+                || existing_state.migration_id != execution_binding.migration_id
+                || existing_state
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.legacy_fingerprint.as_str())
+                    != execution_binding.legacy_fingerprint.as_deref()
+                || !migration_source_guard_exists(&transaction, self.root_id)?
+            {
+                return Err(STORE_CORRUPTION);
+            }
+            database(transaction.commit())?;
+            return Ok(MigrationAdmissionResultV1 {
+                execution_binding,
+                state: existing_state,
+                attached_existing: true,
+            });
+        }
+
+        if transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1)",
+                [self.root_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| STORE_FAILURE)?
+            != 0
+            || migration_source_guard_exists(&transaction, self.root_id)?
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let (captured_records_generation, snapshot) = capture(&transaction)?;
+        if captured_records_generation < 0 || snapshot.snapshot_version != 1 {
+            return Err(STORE_CORRUPTION);
+        }
+        // `reconcile` recomputes this exact fingerprint from the frozen
+        // canonical entity representation, preventing a caller supplied hash.
+        let initial = create_migration_state_v1(
+            &input.migration_id,
+            self.root_id,
+            &input.migration_writer_id,
+            &input.created_at,
+            "legacy-bootstrap",
+        )?;
+        let captured = retain_captured_snapshot_v1(&initial, &snapshot)?;
+        let state = plan_captured_migration_v1(&captured)?;
+        let state = reconcile_migration_state_v1(&state)?;
+        let execution_binding = MigrationExecutionBindingV1 {
+            binding_version: 1,
+            physical_root_id: self.root_id.to_string(),
+            target_id: input.target_binding.target_id.clone(),
+            target_epoch: input.target_binding.target_epoch,
+            captured_records_generation,
+            legacy_fingerprint: Some(snapshot.legacy_fingerprint.clone()),
+            migration_id: input.migration_id.clone(),
+        };
+        validate_migration_execution_binding(&execution_binding)?;
+        insert_migration(&transaction, &state)?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_migration_execution_binding_v1(root_id, state_json)
+             VALUES(?1, ?2)",
+            params![self.root_id, encode(&execution_binding)?],
+        ))?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_migration_source_guard_v1(
+                 root_id, migration_id, captured_records_generation
+             ) VALUES(?1, ?2, ?3)",
+            params![
+                self.root_id,
+                execution_binding.migration_id,
+                execution_binding.captured_records_generation.to_string(),
+            ],
+        ))?;
+        database(transaction.commit())?;
+        Ok(MigrationAdmissionResultV1 {
+            execution_binding,
+            state,
+            attached_existing: false,
+        })
+    }
+
+    pub fn migration_source_protected_v1(&self) -> Result<bool> {
+        let conn = self.connection()?;
+        migration_source_guard_exists(&conn, self.root_id)
     }
 
     /// Initializes the ordinary writer once per physical root. This establishes
@@ -2729,6 +2972,11 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             root_id,
             |_transaction, _safety| Ok(LegacyS1PublicationRejectionV1::RootFrozen),
             |transaction, safety| {
+                if migration_source_guard_exists(transaction, root_id)? {
+                    return Ok(Some(
+                        LegacyS1PublicationRejectionV1::MigrationSourceProtected,
+                    ));
+                }
                 let discovery = load_discovery_state_from(transaction, root_id)?
                     .map(|value| value.state)
                     .unwrap_or_else(create_discovery_state_v1);
@@ -2749,6 +2997,9 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             }
             Err(LegacyS1PublicationRejectionV1::Activation) => {
                 Ok(LegacyS1PublishAdmissionV1::RejectedActivation)
+            }
+            Err(LegacyS1PublicationRejectionV1::MigrationSourceProtected) => {
+                Ok(LegacyS1PublishAdmissionV1::RejectedMigrationSourceProtected)
             }
         }
     }
