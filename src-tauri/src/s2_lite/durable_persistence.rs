@@ -406,6 +406,12 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
             captured_records_generation TEXT NOT NULL,
             FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
          );
+         CREATE TABLE IF NOT EXISTS s2_lite_migration_source_owner_v1 (
+            owner_key INTEGER PRIMARY KEY NOT NULL CHECK(owner_key = 1),
+            root_id TEXT NOT NULL UNIQUE,
+            migration_id TEXT NOT NULL,
+            FOREIGN KEY(root_id) REFERENCES s2_lite_migration_source_guard_v1(root_id) ON DELETE RESTRICT
+         );
          CREATE TABLE IF NOT EXISTS s2_lite_entity_projection_overlay_blocker_v1 (
             root_id TEXT NOT NULL,
             target_id TEXT NOT NULL,
@@ -417,6 +423,22 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
+    let guard_count = transaction.query_row(
+        "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if guard_count > 1 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if guard_count == 1 {
+        transaction.execute(
+            "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id)
+             SELECT 1, root_id, migration_id FROM s2_lite_migration_source_guard_v1 WHERE 1
+             ON CONFLICT(owner_key) DO NOTHING",
+            [],
+        )?;
+    }
     transaction.commit()?;
     install_migration_source_guard_triggers(conn)
 }
@@ -607,12 +629,44 @@ fn validate_migration_execution_target_authority(
     Ok(())
 }
 
-fn migration_source_guard_exists(conn: &Connection, root_id: &str) -> Result<bool> {
-    Ok(database(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1 WHERE root_id=?1)",
-        [root_id],
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MigrationSourceOwnerV1 {
+    root_id: String,
+    migration_id: String,
+}
+
+fn load_migration_source_owner(conn: &Connection) -> Result<Option<MigrationSourceOwnerV1>> {
+    let owner = database(
+        conn.query_row(
+            "SELECT owner.root_id, owner.migration_id
+             FROM s2_lite_migration_source_owner_v1 AS owner
+             JOIN s2_lite_migration_source_guard_v1 AS guard
+               ON guard.root_id=owner.root_id AND guard.migration_id=owner.migration_id
+             WHERE owner.owner_key=1",
+            [],
+            |row| {
+                Ok(MigrationSourceOwnerV1 {
+                    root_id: row.get(0)?,
+                    migration_id: row.get(1)?,
+                })
+            },
+        )
+        .optional(),
+    )?;
+    if owner.as_ref().is_some_and(|owner| {
+        owner.root_id.is_empty() || validate_canonical_uuid_v4(&owner.migration_id).is_err()
+    }) {
+        return Err(STORE_CORRUPTION);
+    }
+    let guards = database(conn.query_row(
+        "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1",
+        [],
         |row| row.get::<_, i64>(0),
-    ))? != 0)
+    ))?;
+    if (guards == 0) != owner.is_none() || guards > 1 {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(owner)
 }
 
 fn validate_active_migration_binding(
@@ -1461,21 +1515,13 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         }
         let mut conn = self.connection()?;
         let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
-        validate_active_migration_binding(&transaction, &input.target_binding, self.root_id)?;
         database(install_migration_source_guard_triggers(&transaction))?;
-        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(ROOT_MISMATCH)?;
-        if !safety.root_fatal_signals.is_empty()
-            || decide_legacy_put_v1(&recover_activation_cutover_v1(
-                &load_discovery_state_from(&transaction, self.root_id)?
-                    .map(|state| state.state)
-                    .unwrap_or_else(create_discovery_state_v1),
-                Some(&safety.cutover_state),
-            )) != LegacyPutDecisionV1::AllowedS2NotActivated
-        {
-            return Err(ROOT_MISMATCH);
-        }
-
-        if let Some(existing_state) = load_migration_from(&transaction, self.root_id)? {
+        if let Some(owner) = load_migration_source_owner(&transaction)? {
+            if owner.root_id != self.root_id || owner.migration_id != input.migration_id {
+                return Err(ROOT_MISMATCH);
+            }
+            let existing_state =
+                load_migration_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
             let existing_binding = transaction
                 .query_row(
                     "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
@@ -1501,7 +1547,6 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                     .as_ref()
                     .map(|snapshot| snapshot.legacy_fingerprint.as_str())
                     != execution_binding.legacy_fingerprint.as_deref()
-                || !migration_source_guard_exists(&transaction, self.root_id)?
             {
                 return Err(STORE_CORRUPTION);
             }
@@ -1513,6 +1558,19 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             });
         }
 
+        validate_active_migration_binding(&transaction, &input.target_binding, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(ROOT_MISMATCH)?;
+        if !safety.root_fatal_signals.is_empty()
+            || decide_legacy_put_v1(&recover_activation_cutover_v1(
+                &load_discovery_state_from(&transaction, self.root_id)?
+                    .map(|state| state.state)
+                    .unwrap_or_else(create_discovery_state_v1),
+                Some(&safety.cutover_state),
+            )) != LegacyPutDecisionV1::AllowedS2NotActivated
+        {
+            return Err(ROOT_MISMATCH);
+        }
+
         if transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1)",
@@ -1521,7 +1579,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             )
             .map_err(|_| STORE_FAILURE)?
             != 0
-            || migration_source_guard_exists(&transaction, self.root_id)?
+            || load_migration_source_owner(&transaction)?.is_some()
         {
             return Err(STORE_CORRUPTION);
         }
@@ -1567,6 +1625,11 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 execution_binding.captured_records_generation.to_string(),
             ],
         ))?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id)
+             VALUES(1, ?1, ?2)",
+            params![self.root_id, execution_binding.migration_id],
+        ))?;
         database(transaction.commit())?;
         Ok(MigrationAdmissionResultV1 {
             execution_binding,
@@ -1577,7 +1640,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
 
     pub fn migration_source_protected_v1(&self) -> Result<bool> {
         let conn = self.connection()?;
-        migration_source_guard_exists(&conn, self.root_id)
+        Ok(load_migration_source_owner(&conn)?.is_some())
     }
 
     /// Initializes the ordinary writer once per physical root. This establishes
@@ -2972,7 +3035,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             root_id,
             |_transaction, _safety| Ok(LegacyS1PublicationRejectionV1::RootFrozen),
             |transaction, safety| {
-                if migration_source_guard_exists(transaction, root_id)? {
+                if load_migration_source_owner(transaction)?.is_some() {
                     return Ok(Some(
                         LegacyS1PublicationRejectionV1::MigrationSourceProtected,
                     ));

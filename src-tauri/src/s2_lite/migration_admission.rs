@@ -21,7 +21,9 @@ use super::ordinary_mutation::{
     LocalRecordV1,
 };
 use super::semantic::validate_native_entity;
-use super::target_root_binding::resolve_active_target_root_binding_v1;
+use super::target_root_binding::{
+    load_historical_target_root_binding_v1, resolve_active_target_root_binding_v1,
+};
 use super::types::{BootstrapEntity, LegacySemanticAdapterV1};
 
 const ADMISSION_FAILURE: ProtocolError = ProtocolError("S2_MIGRATION_ADMISSION_FAILURE");
@@ -209,12 +211,22 @@ pub fn admit_and_capture_migration_v1(
     migration_writer_id: &str,
     created_at: &str,
 ) -> Result<MigrationAdmissionResultV1> {
-    let bound = resolve_active_target_root_binding_v1(conn, target_id, target_epoch)?;
-    let root_id = bound.binding.physical_root_id.clone();
+    // A durable historical binding is sufficient only for re-attaching to an
+    // already-owned guard; the store still requires a current active binding
+    // before it can perform a fresh capture.
+    let binding = load_historical_target_root_binding_v1(conn, target_id, target_epoch)?
+        .map_or_else(
+            || {
+                resolve_active_target_root_binding_v1(conn, target_id, target_epoch)
+                    .map(|bound| bound.binding)
+            },
+            Ok,
+        )?;
+    let root_id = binding.physical_root_id.clone();
     let mut store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
     store.admit_and_capture_migration_v1(
         &MigrationAdmissionInputV1 {
-            target_binding: bound.binding,
+            target_binding: binding,
             migration_id: migration_id.to_string(),
             migration_writer_id: migration_writer_id.to_string(),
             created_at: created_at.to_string(),
@@ -225,6 +237,8 @@ pub fn admit_and_capture_migration_v1(
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
     use super::*;
     use crate::db_atomic_helpers::set_setting_tx;
     use crate::s2_lite::durable_persistence::LegacyS1PublishAdmissionV1;
@@ -510,5 +524,116 @@ mod tests {
             reloaded.captured_records_generation,
             admitted.execution_binding.captured_records_generation
         );
+    }
+
+    #[test]
+    fn source_guard_is_database_wide_but_exact_historical_owner_can_resume() {
+        let conn = connection();
+        let target_a = activate(&conn, "https://example.test/a", "alice", 1);
+        let admitted =
+            admit_and_capture_migration_v1(&conn, &target_a, 1, MIGRATION, WRITER, CREATED)
+                .unwrap();
+        let target_b = activate(&conn, "https://example.test/b", "bob", 2);
+        let bound_b = resolve_active_target_root_binding_v1(&conn, &target_b, 2).unwrap();
+        let root_b = bound_b.binding.physical_root_id;
+        let mut store_b = SqliteS2LiteStoreV1::open(&conn, &root_b).unwrap();
+        let mut puts = 0;
+        assert_eq!(
+            store_b
+                .run_legacy_s1_publish_exclusive(&root_b, || {
+                    puts += 1;
+                    Ok(())
+                })
+                .unwrap(),
+            LegacyS1PublishAdmissionV1::RejectedMigrationSourceProtected
+        );
+        assert_eq!(puts, 0);
+        assert!(admit_and_capture_migration_v1(
+            &conn,
+            &target_b,
+            2,
+            "80000000-0000-4000-8000-000000000002",
+            WRITER,
+            CREATED,
+        )
+        .is_err());
+        assert!(store_b
+            .load_migration_execution_binding_v1()
+            .unwrap()
+            .is_none());
+        assert!(store_b.load(&root_b).unwrap().is_none());
+
+        let resumed =
+            admit_and_capture_migration_v1(&conn, &target_a, 1, MIGRATION, WRITER, CREATED)
+                .unwrap();
+        assert!(resumed.attached_existing);
+        assert_eq!(resumed.execution_binding, admitted.execution_binding);
+    }
+
+    #[test]
+    fn second_connection_cannot_bypass_database_wide_source_owner() {
+        let path = std::env::temp_dir().join(format!(
+            "watchtracker-migration-source-owner-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let connection_a = Connection::open(&path).unwrap();
+        connection_a
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        crate::db::setup_db(&connection_a).unwrap();
+        let connection_a = Mutex::new(connection_a);
+        let target_a = activate(&connection_a, "https://example.test/a", "alice", 1);
+        let admitted =
+            admit_and_capture_migration_v1(&connection_a, &target_a, 1, MIGRATION, WRITER, CREATED)
+                .unwrap();
+
+        let connection_b = Connection::open(&path).unwrap();
+        connection_b
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        let connection_b = Mutex::new(connection_b);
+        let target_b = activate(&connection_b, "https://example.test/b", "bob", 2);
+        let bound_b = resolve_active_target_root_binding_v1(&connection_b, &target_b, 2).unwrap();
+        let root_b = bound_b.binding.physical_root_id;
+        let mut store_b = SqliteS2LiteStoreV1::open(&connection_b, &root_b).unwrap();
+        let mut puts = 0;
+        assert_eq!(
+            store_b
+                .run_legacy_s1_publish_exclusive(&root_b, || {
+                    puts += 1;
+                    Ok(())
+                })
+                .unwrap(),
+            LegacyS1PublishAdmissionV1::RejectedMigrationSourceProtected
+        );
+        assert_eq!(puts, 0);
+        assert!(admit_and_capture_migration_v1(
+            &connection_b,
+            &target_b,
+            2,
+            "80000000-0000-4000-8000-000000000002",
+            WRITER,
+            CREATED,
+        )
+        .is_err());
+        assert!(store_b
+            .load_migration_execution_binding_v1()
+            .unwrap()
+            .is_none());
+        let resumed =
+            admit_and_capture_migration_v1(&connection_b, &target_a, 1, MIGRATION, WRITER, CREATED)
+                .unwrap();
+        assert!(resumed.attached_existing);
+        assert_eq!(resumed.execution_binding, admitted.execution_binding);
+
+        drop(connection_b);
+        drop(connection_a);
+        for file in [
+            path.clone(),
+            PathBuf::from(format!("{}-wal", path.display())),
+            PathBuf::from(format!("{}-shm", path.display())),
+        ] {
+            let _ = fs::remove_file(file);
+        }
     }
 }
