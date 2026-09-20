@@ -494,6 +494,58 @@ fn validate_migration_execution_binding(binding: &MigrationExecutionBindingV1) -
     Ok(())
 }
 
+fn load_target_root_binding_from(
+    conn: &Connection,
+    target_id: &str,
+    target_epoch: u64,
+) -> Result<Option<TargetRootBindingV1>> {
+    let row = database(
+        conn.query_row(
+            "SELECT binding_version, target_id, target_epoch, canonical_url,
+                    normalized_account, physical_root_id
+             FROM s2_lite_target_root_binding_v1
+             WHERE target_id=?1 AND target_epoch=?2",
+            params![target_id, target_epoch.to_string()],
+            |row| {
+                Ok(TargetRootBindingV1 {
+                    binding_version: row.get(0)?,
+                    target_id: row.get(1)?,
+                    target_epoch: canonical_generation(&row.get::<_, String>(2)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    canonical_url: row.get(3)?,
+                    normalized_account: row.get(4)?,
+                    physical_root_id: row.get(5)?,
+                })
+            },
+        )
+        .optional(),
+    )?;
+    row.map(|binding| {
+        validate_target_root_binding(&binding)?;
+        if binding.target_id != target_id || binding.target_epoch != target_epoch {
+            return Err(STORE_CORRUPTION);
+        }
+        Ok(binding)
+    })
+    .transpose()
+}
+
+fn validate_migration_execution_target_authority(
+    conn: &Connection,
+    binding: &MigrationExecutionBindingV1,
+    root_id: &str,
+) -> Result<()> {
+    let target_binding =
+        load_target_root_binding_from(conn, &binding.target_id, binding.target_epoch)?
+            .ok_or(ROOT_MISMATCH)?;
+    if target_binding.physical_root_id != binding.physical_root_id
+        || binding.physical_root_id != root_id
+    {
+        return Err(ROOT_MISMATCH);
+    }
+    Ok(())
+}
+
 pub(crate) fn completed_migration_writer_seed(
     migration: &MigrationStateV1,
     root_id: &str,
@@ -1228,6 +1280,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 if binding.physical_root_id != self.root_id {
                     return Err(STORE_CORRUPTION);
                 }
+                validate_migration_execution_target_authority(&conn, &binding, self.root_id)?;
                 Ok(binding)
             })
             .transpose()
@@ -1247,6 +1300,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         let mut conn = self.connection()?;
         let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
         ensure_root_authority(&transaction, self.root_id)?;
+        validate_migration_execution_target_authority(&transaction, candidate, self.root_id)?;
         let existing = database(
             transaction
                 .query_row(
@@ -1263,6 +1317,11 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 if binding.physical_root_id != self.root_id || binding != *candidate {
                     return Err(ROOT_MISMATCH);
                 }
+                validate_migration_execution_target_authority(
+                    &transaction,
+                    &binding,
+                    self.root_id,
+                )?;
                 binding
             }
             None => {

@@ -340,6 +340,63 @@ mod tests {
     }
 
     #[test]
+    fn migration_execution_binding_requires_historical_target_authority() {
+        let conn = connection();
+        let target_a = target("https://dav.example.test/a/", "Alice");
+        set_registry(&conn, target_a.clone(), 1);
+        let bound = resolve_active_target_root_binding_v1(&conn, &target_a.id, 1).unwrap();
+        let candidate = execution_binding(&bound);
+
+        // A valid execution payload cannot create its target/root authority.
+        let missing_root = "s2-root-v1:missing-target-binding";
+        let mut missing = SqliteS2LiteStoreV1::open(&conn, missing_root).unwrap();
+        let mut missing_candidate = candidate.clone();
+        missing_candidate.physical_root_id = missing_root.into();
+        missing_candidate.target_epoch = 9;
+        assert!(missing
+            .bind_migration_execution_v1(&missing_candidate)
+            .is_err());
+        let count: i64 = conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [missing_root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(missing.load_desktop_root_state().unwrap(), None);
+
+        // Existing A/epoch 1 authority cannot be reused for a different root
+        // or a merely similar later epoch.
+        let wrong_root = "s2-root-v1:wrong-target-root";
+        let mut wrong = SqliteS2LiteStoreV1::open(&conn, wrong_root).unwrap();
+        let mut wrong_candidate = candidate.clone();
+        wrong_candidate.physical_root_id = wrong_root.into();
+        assert!(wrong.bind_migration_execution_v1(&wrong_candidate).is_err());
+        let mut wrong_epoch = candidate.clone();
+        wrong_epoch.target_epoch = 2;
+        let mut same_root =
+            SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        assert!(same_root.bind_migration_execution_v1(&wrong_epoch).is_err());
+
+        assert_eq!(
+            same_root.bind_migration_execution_v1(&candidate).unwrap(),
+            candidate
+        );
+        // Later activation is irrelevant: durable historical A/epoch 1 is
+        // still the sole authority used to load this migration identity.
+        let target_b = target("https://dav.example.test/b/", "Bob");
+        replace_registry(&conn, target_b, 2);
+        assert_eq!(
+            same_root.load_migration_execution_binding_v1().unwrap(),
+            Some(candidate)
+        );
+        assert_eq!(same_root.load_desktop_root_state().unwrap(), None);
+    }
+
+    #[test]
     fn same_target_epoch_reuses_exact_binding_and_writer() {
         let conn = connection();
         let target = target("https://dav.example.test/root/", "Alice");
