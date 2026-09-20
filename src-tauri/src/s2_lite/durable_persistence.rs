@@ -100,6 +100,21 @@ pub struct TargetRootBindingV1 {
     pub physical_root_id: String,
 }
 
+/// Immutable local execution identity for one pending or future migration.
+/// Credentials deliberately remain in target authority and never enter this
+/// root-scoped durable row.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MigrationExecutionBindingV1 {
+    pub binding_version: u8,
+    pub physical_root_id: String,
+    pub target_id: String,
+    pub target_epoch: u64,
+    pub captured_records_generation: i64,
+    pub legacy_fingerprint: Option<String>,
+    pub migration_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutboundBatchMutationV1 {
@@ -359,6 +374,11 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
             PRIMARY KEY(target_id, target_epoch),
             FOREIGN KEY(physical_root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
          );
+         CREATE TABLE IF NOT EXISTS s2_lite_migration_execution_binding_v1 (
+            root_id TEXT PRIMARY KEY NOT NULL,
+            state_json BLOB NOT NULL CHECK(typeof(state_json) = 'blob'),
+            FOREIGN KEY(root_id) REFERENCES s2_lite_root_authority_v1(root_id) ON DELETE RESTRICT
+         );
          CREATE TABLE IF NOT EXISTS s2_lite_entity_projection_overlay_blocker_v1 (
             root_id TEXT NOT NULL,
             target_id TEXT NOT NULL,
@@ -447,6 +467,27 @@ fn validate_target_root_binding(binding: &TargetRootBindingV1) -> Result<()> {
         || binding.canonical_url.is_empty()
         || binding.normalized_account.is_empty()
         || binding.physical_root_id.is_empty()
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
+}
+
+fn validate_migration_execution_binding(binding: &MigrationExecutionBindingV1) -> Result<()> {
+    if binding.binding_version != 1
+        || binding.physical_root_id.is_empty()
+        || binding.target_id.is_empty()
+        || binding.captured_records_generation < 0
+        || validate_canonical_uuid_v4(&binding.migration_id).is_err()
+        || binding
+            .legacy_fingerprint
+            .as_ref()
+            .is_some_and(|fingerprint| {
+                fingerprint.len() != 64
+                    || !fingerprint
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            })
     {
         return Err(STORE_CORRUPTION);
     }
@@ -1162,6 +1203,77 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         if let Some(migration) = load_migration_from(&transaction, self.root_id)? {
             let _ = completed_migration_writer_seed(&migration, self.root_id)?;
         }
+        database(transaction.commit())?;
+        Ok(resolved)
+    }
+
+    /// Loads the immutable migration execution identity for this physical
+    /// root.  It has no relationship to ordinary writer allocation.
+    pub fn load_migration_execution_binding_v1(
+        &mut self,
+    ) -> Result<Option<MigrationExecutionBindingV1>> {
+        let conn = self.connection()?;
+        let bytes = database(
+            conn.query_row(
+                "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [self.root_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional(),
+        )?;
+        bytes
+            .map(|bytes| {
+                let binding: MigrationExecutionBindingV1 = decode(&bytes)?;
+                validate_migration_execution_binding(&binding)?;
+                if binding.physical_root_id != self.root_id {
+                    return Err(STORE_CORRUPTION);
+                }
+                Ok(binding)
+            })
+            .transpose()
+    }
+
+    /// Claims the one execution identity for this physical root.  A retry may
+    /// observe the exact same immutable row; every attempted retarget or
+    /// changed snapshot input fails closed.
+    pub fn bind_migration_execution_v1(
+        &mut self,
+        candidate: &MigrationExecutionBindingV1,
+    ) -> Result<MigrationExecutionBindingV1> {
+        validate_migration_execution_binding(candidate)?;
+        if candidate.physical_root_id != self.root_id {
+            return Err(ROOT_MISMATCH);
+        }
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let existing = database(
+            transaction
+                .query_row(
+                    "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                    [self.root_id],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional(),
+        )?;
+        let resolved = match existing {
+            Some(bytes) => {
+                let binding: MigrationExecutionBindingV1 = decode(&bytes)?;
+                validate_migration_execution_binding(&binding)?;
+                if binding.physical_root_id != self.root_id || binding != *candidate {
+                    return Err(ROOT_MISMATCH);
+                }
+                binding
+            }
+            None => {
+                database(transaction.execute(
+                    "INSERT INTO s2_lite_migration_execution_binding_v1(root_id, state_json)
+                     VALUES(?1, ?2)",
+                    params![self.root_id, encode(candidate)?],
+                ))?;
+                candidate.clone()
+            }
+        };
         database(transaction.commit())?;
         Ok(resolved)
     }

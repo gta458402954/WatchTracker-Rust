@@ -20,6 +20,14 @@ pub struct TargetRootAuthorityV1 {
     pub writer_state: DesktopRootStateV1,
 }
 
+/// Immutable active target/root authority without ordinary writer allocation.
+/// Migration admission uses this form so a future migration writer is not
+/// pre-empted by a random desktop writer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundTargetRootV1 {
+    pub binding: TargetRootBindingV1,
+}
+
 fn active_target_snapshot_v1(
     conn: &Mutex<Connection>,
     target_id: &str,
@@ -41,14 +49,14 @@ fn active_target_snapshot_v1(
     Ok((target.normalized_url.clone(), target.username.clone()))
 }
 
-/// Resolves the only authority accepted for new lifecycle work:
-/// registry target -> frozen WebDAV root -> immutable durable binding -> root
-/// writer state. There is intentionally no caller-supplied root identity.
-pub fn resolve_active_target_root_authority_v1(
+/// Resolves active target authority only through frozen `webdav_root_v1`, then
+/// claims or verifies its immutable durable binding.  It intentionally does
+/// not initialize desktop writer state.
+pub fn resolve_active_target_root_binding_v1(
     conn: &Mutex<Connection>,
     target_id: &str,
     target_epoch: u64,
-) -> Result<TargetRootAuthorityV1> {
+) -> Result<BoundTargetRootV1> {
     let (url, username) = active_target_snapshot_v1(conn, target_id, target_epoch)?;
     let root = webdav_root_v1(&url, &username).map_err(|_| TARGET_BINDING_FAILURE)?;
     let candidate = TargetRootBindingV1 {
@@ -61,22 +69,27 @@ pub fn resolve_active_target_root_authority_v1(
     };
     let mut store = SqliteS2LiteStoreV1::open(conn, &candidate.physical_root_id)?;
     let binding = store.bind_target_root_v1(&candidate)?;
-    let writer_state = store.initialize_desktop_writer_v1()?;
 
     // The active registry may have changed while the durable transaction was
     // running. The immutable row is still useful historical evidence, but this
     // call must not hand a stale target to a new lifecycle execution.
-    let (check_url, check_username) = active_target_snapshot_v1(conn, target_id, target_epoch)?;
-    let check_root =
-        webdav_root_v1(&check_url, &check_username).map_err(|_| TARGET_BINDING_FAILURE)?;
-    if check_root.canonical_url != binding.canonical_url
-        || check_root.normalized_account != binding.normalized_account
-        || check_root.physical_root_id != binding.physical_root_id
-    {
-        return Err(TARGET_BINDING_FAILURE);
-    }
+    let _ = active_target_snapshot_v1(conn, target_id, target_epoch)?;
+    Ok(BoundTargetRootV1 { binding })
+}
+
+/// Established normal S2 lifecycle entry point.  It preserves writer-bearing
+/// behavior by resolving the binding first and only then initializing ordinary
+/// desktop writer authority.
+pub fn resolve_active_target_root_authority_v1(
+    conn: &Mutex<Connection>,
+    target_id: &str,
+    target_epoch: u64,
+) -> Result<TargetRootAuthorityV1> {
+    let bound = resolve_active_target_root_binding_v1(conn, target_id, target_epoch)?;
+    let mut store = SqliteS2LiteStoreV1::open(conn, &bound.binding.physical_root_id)?;
+    let writer_state = store.initialize_desktop_writer_v1()?;
     Ok(TargetRootAuthorityV1 {
-        binding,
+        binding: bound.binding,
         writer_state,
     })
 }
@@ -98,7 +111,9 @@ mod tests {
 
     use rusqlite::Connection;
 
-    use super::super::durable_persistence::completed_migration_writer_seed;
+    use super::super::durable_persistence::{
+        completed_migration_writer_seed, MigrationExecutionBindingV1,
+    };
     use super::super::immutable_publish::{PreparedIntentV1, RemotePublishedReceiptV1};
     use super::super::migration_orchestration::{
         MigrationCommitTaskV1, MigrationStateV1, MigrationStatusV1,
@@ -175,6 +190,153 @@ mod tests {
         assert_eq!(authority.binding.normalized_account, "Alice");
         assert_eq!(authority.writer_state.next_writer_sequence, 1);
         assert!(authority.writer_state.writer_head.is_none());
+    }
+
+    #[test]
+    fn binding_only_uses_frozen_root_and_does_not_allocate_a_writer() {
+        let conn = connection();
+        let target = target("HTTPS://dav.example.test/root", " Alice ");
+        set_registry(&conn, target.clone(), 1);
+        let bound = resolve_active_target_root_binding_v1(&conn, &target.id, 1).unwrap();
+        assert_eq!(
+            resolve_active_target_root_binding_v1(&conn, &target.id, 1).unwrap(),
+            bound
+        );
+        let frozen = webdav_root_v1(&target.normalized_url, &target.username).unwrap();
+        assert_eq!(bound.binding.canonical_url, frozen.canonical_url);
+        assert_eq!(bound.binding.normalized_account, frozen.normalized_account);
+        assert_eq!(bound.binding.physical_root_id, frozen.physical_root_id);
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        assert_eq!(store.load_desktop_root_state().unwrap(), None);
+
+        let authority = resolve_active_target_root_authority_v1(&conn, &target.id, 1).unwrap();
+        assert_eq!(authority.binding, bound.binding);
+        assert_eq!(
+            store.load_desktop_root_state().unwrap(),
+            Some(authority.writer_state)
+        );
+    }
+
+    #[test]
+    fn binding_only_rejects_a_stale_epoch() {
+        let conn = connection();
+        let target = target("https://dav.example.test/root/", "Alice");
+        set_registry(&conn, target.clone(), 1);
+        assert!(resolve_active_target_root_binding_v1(&conn, &target.id, 2).is_err());
+    }
+
+    fn execution_binding(bound: &BoundTargetRootV1) -> MigrationExecutionBindingV1 {
+        MigrationExecutionBindingV1 {
+            binding_version: 1,
+            physical_root_id: bound.binding.physical_root_id.clone(),
+            target_id: bound.binding.target_id.clone(),
+            target_epoch: bound.binding.target_epoch,
+            captured_records_generation: 41,
+            legacy_fingerprint: Some("a".repeat(64)),
+            migration_id: "30000000-0000-4000-8000-000000000001".into(),
+        }
+    }
+
+    #[test]
+    fn migration_execution_binding_is_immutable_exact_and_credential_free() {
+        let conn = connection();
+        let target = target("https://dav.example.test/root/", "Alice");
+        set_registry(&conn, target.clone(), 1);
+        let bound = resolve_active_target_root_binding_v1(&conn, &target.id, 1).unwrap();
+        let candidate = execution_binding(&bound);
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        assert_eq!(
+            store.bind_migration_execution_v1(&candidate).unwrap(),
+            candidate
+        );
+        assert_eq!(
+            store.bind_migration_execution_v1(&candidate).unwrap(),
+            candidate
+        );
+        let mut restarted =
+            SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        assert_eq!(
+            restarted.load_migration_execution_binding_v1().unwrap(),
+            Some(candidate.clone())
+        );
+        let stored: Vec<u8> = conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [&bound.binding.physical_root_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let rendered = String::from_utf8(stored).unwrap();
+        assert!(!rendered.contains("password"));
+        assert!(!rendered.contains("secret"));
+
+        let mut changed_target = candidate.clone();
+        changed_target.target_id = "b".repeat(64);
+        assert!(restarted
+            .bind_migration_execution_v1(&changed_target)
+            .is_err());
+        let mut changed_epoch = candidate.clone();
+        changed_epoch.target_epoch += 1;
+        assert!(restarted
+            .bind_migration_execution_v1(&changed_epoch)
+            .is_err());
+        let mut changed_root = candidate.clone();
+        changed_root.physical_root_id = "s2-root-v1:other".into();
+        assert!(restarted
+            .bind_migration_execution_v1(&changed_root)
+            .is_err());
+        let mut changed_generation = candidate.clone();
+        changed_generation.captured_records_generation += 1;
+        assert!(restarted
+            .bind_migration_execution_v1(&changed_generation)
+            .is_err());
+        let mut changed_fingerprint = candidate.clone();
+        changed_fingerprint.legacy_fingerprint = Some("b".repeat(64));
+        assert!(restarted
+            .bind_migration_execution_v1(&changed_fingerprint)
+            .is_err());
+        let mut changed_migration = candidate.clone();
+        changed_migration.migration_id = "30000000-0000-4000-8000-000000000002".into();
+        assert!(restarted
+            .bind_migration_execution_v1(&changed_migration)
+            .is_err());
+        conn.lock()
+            .unwrap()
+            .execute(
+                "UPDATE s2_lite_migration_execution_binding_v1 SET state_json=?2 WHERE root_id=?1",
+                rusqlite::params![
+                    &bound.binding.physical_root_id,
+                    b"not-a-persistence-envelope".to_vec()
+                ],
+            )
+            .unwrap();
+        assert!(restarted.load_migration_execution_binding_v1().is_err());
+    }
+
+    #[test]
+    fn migration_execution_binding_preserves_a_null_fingerprint_exactly() {
+        let conn = connection();
+        let target = target("https://dav.example.test/root/", "Alice");
+        set_registry(&conn, target.clone(), 1);
+        let bound = resolve_active_target_root_binding_v1(&conn, &target.id, 1).unwrap();
+        let mut candidate = execution_binding(&bound);
+        candidate.legacy_fingerprint = None;
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        assert_eq!(
+            store.bind_migration_execution_v1(&candidate).unwrap(),
+            candidate
+        );
+        assert_eq!(
+            store
+                .load_migration_execution_binding_v1()
+                .unwrap()
+                .unwrap()
+                .legacy_fingerprint,
+            None
+        );
+        assert_eq!(store.load_desktop_root_state().unwrap(), None);
     }
 
     #[test]
