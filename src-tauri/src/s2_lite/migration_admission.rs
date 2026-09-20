@@ -636,4 +636,158 @@ mod tests {
             let _ = fs::remove_file(file);
         }
     }
+
+    fn assert_source_authority_corruption_fails_closed(statements: &[&str]) {
+        const ROOT_A: &str = "root://migration-source-corruption-a";
+        const ROOT_B: &str = "root://migration-source-corruption-b";
+        let conn = connection();
+        let store_a = SqliteS2LiteStoreV1::open(&conn, ROOT_A).unwrap();
+        // Both roots must exist so a mismatch cannot be mistaken for a missing
+        // root-authority row.
+        SqliteS2LiteStoreV1::open(&conn, ROOT_B).unwrap();
+        let guard = conn.lock().unwrap();
+        guard.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        guard
+            .pragma_update(None, "ignore_check_constraints", "ON")
+            .unwrap();
+        for statement in statements {
+            guard.execute_batch(statement).unwrap();
+        }
+        drop(guard);
+
+        assert!(store_a.migration_source_protected_v1().is_err());
+        assert!(SqliteS2LiteStoreV1::open(&conn, ROOT_A).is_err());
+    }
+
+    #[test]
+    fn malformed_source_owner_guard_pairs_fail_closed_without_repair() {
+        const ROOT_A: &str = "root://migration-source-corruption-a";
+        const ROOT_B: &str = "root://migration-source-corruption-b";
+        const MIGRATION_B: &str = "80000000-0000-4000-8000-000000000002";
+
+        for statements in [
+            vec![format!(
+                "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(1, '{ROOT_A}', '{MIGRATION}')"
+            )],
+            vec![format!(
+                "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '0')"
+            )],
+            vec![
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '0')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(1, '{ROOT_B}', '{MIGRATION}')"
+                ),
+            ],
+            vec![
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '0')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(1, '{ROOT_A}', '{MIGRATION_B}')"
+                ),
+            ],
+            vec![
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '0')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(2, '{ROOT_A}', '{MIGRATION}')"
+                ),
+            ],
+            vec![
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '0')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(1, '{ROOT_A}', '{MIGRATION}')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(2, '{ROOT_B}', '{MIGRATION_B}')"
+                ),
+            ],
+            vec![
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '0')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_B}', '{MIGRATION_B}', '0')"
+                ),
+            ],
+            vec![
+                format!(
+                    "INSERT INTO s2_lite_migration_source_guard_v1(root_id, migration_id, captured_records_generation) VALUES('{ROOT_A}', '{MIGRATION}', '01')"
+                ),
+                format!(
+                    "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id) VALUES(1, '{ROOT_A}', '{MIGRATION}')"
+                ),
+            ],
+        ] {
+            let statements = statements.iter().map(String::as_str).collect::<Vec<_>>();
+            assert_source_authority_corruption_fails_closed(&statements);
+        }
+    }
+
+    #[test]
+    fn orphan_source_authority_denies_all_production_paths_without_network() {
+        for orphan_owner in [true, false] {
+            let conn = connection();
+            let target = activate(
+                &conn,
+                "https://example.test/migration-source-corruption",
+                "alice",
+                1,
+            );
+            let bound = resolve_active_target_root_binding_v1(&conn, &target, 1).unwrap();
+            let root = bound.binding.physical_root_id;
+            let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+            {
+                let guard = conn.lock().unwrap();
+                guard.pragma_update(None, "foreign_keys", "OFF").unwrap();
+                if orphan_owner {
+                    guard.execute(
+                        "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id)
+                         VALUES(1, ?1, ?2)",
+                        [&root, MIGRATION],
+                    )
+                } else {
+                    guard.execute(
+                        "INSERT INTO s2_lite_migration_source_guard_v1(
+                             root_id, migration_id, captured_records_generation
+                         ) VALUES(?1, ?2, '0')",
+                        [&root, MIGRATION],
+                    )
+                }
+                .unwrap();
+            }
+
+            let mut puts = 0;
+            assert!(store
+                .run_legacy_s1_publish_exclusive(&root, || {
+                    puts += 1;
+                    Ok(())
+                })
+                .is_err());
+            assert_eq!(puts, 0);
+            assert!(
+                admit_and_capture_migration_v1(&conn, &target, 1, MIGRATION, WRITER, CREATED)
+                    .is_err()
+            );
+            assert!(conn
+                .lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO records(
+                    id, originalName, chineseName, progress, totalEpisodes,
+                    episodeTrackingEnabled, status, platform, createdAt, rev, revActor, mediaType
+                 ) VALUES(
+                    'blocked', 'Blocked', '', '', 1, 0, '未看', '',
+                    '2026-09-20T00:00:00.000Z', 0, '', '剧集'
+                 )",
+                    [],
+                )
+                .is_err());
+        }
+    }
 }

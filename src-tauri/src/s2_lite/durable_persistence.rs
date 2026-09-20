@@ -423,22 +423,10 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
-    let guard_count = transaction.query_row(
-        "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1",
-        [],
-        |row| row.get::<_, i64>(0),
-    )?;
-    if guard_count > 1 {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    if guard_count == 1 {
-        transaction.execute(
-            "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id)
-             SELECT 1, root_id, migration_id FROM s2_lite_migration_source_guard_v1 WHERE 1
-             ON CONFLICT(owner_key) DO NOTHING",
-            [],
-        )?;
-    }
+    // The owner and guard are one source-authority fact.  In particular, do
+    // not "repair" a partial legacy row here: that could turn corruption into
+    // an active migration or, worse, silently change the protected source.
+    load_migration_source_owner(&transaction).map_err(|_| rusqlite::Error::InvalidQuery)?;
     transaction.commit()?;
     install_migration_source_guard_triggers(conn)
 }
@@ -461,18 +449,30 @@ fn install_migration_source_guard_triggers(conn: &Connection) -> rusqlite::Resul
         return Ok(());
     }
     conn.execute_batch(
-        "CREATE TRIGGER IF NOT EXISTS s2_lite_guard_records_insert_v1 BEFORE INSERT ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_records_update_v1 BEFORE UPDATE ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_records_delete_v1 BEFORE DELETE ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_episode_insert_v1 BEFORE INSERT ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_episode_update_v1 BEFORE UPDATE ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_episode_delete_v1 BEFORE DELETE ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_collections_insert_v1 BEFORE INSERT ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_collections_update_v1 BEFORE UPDATE ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_collections_delete_v1 BEFORE DELETE ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_members_insert_v1 BEFORE INSERT ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_members_update_v1 BEFORE UPDATE ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
-         CREATE TRIGGER IF NOT EXISTS s2_lite_guard_members_delete_v1 BEFORE DELETE ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;",
+        "DROP TRIGGER IF EXISTS s2_lite_guard_records_insert_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_records_update_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_records_delete_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_episode_insert_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_episode_update_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_episode_delete_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_collections_insert_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_collections_update_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_collections_delete_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_members_insert_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_members_update_v1;
+         DROP TRIGGER IF EXISTS s2_lite_guard_members_delete_v1;
+         CREATE TRIGGER s2_lite_guard_records_insert_v1 BEFORE INSERT ON records WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_records_update_v1 BEFORE UPDATE ON records WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_records_delete_v1 BEFORE DELETE ON records WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_episode_insert_v1 BEFORE INSERT ON episode_completions WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_episode_update_v1 BEFORE UPDATE ON episode_completions WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_episode_delete_v1 BEFORE DELETE ON episode_completions WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_collections_insert_v1 BEFORE INSERT ON collections WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_collections_update_v1 BEFORE UPDATE ON collections WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_collections_delete_v1 BEFORE DELETE ON collections WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_members_insert_v1 BEFORE INSERT ON collection_members WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_members_update_v1 BEFORE UPDATE ON collection_members WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+         CREATE TRIGGER s2_lite_guard_members_delete_v1 BEFORE DELETE ON collection_members WHEN (SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1) != 0 OR (SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1) != 0 BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;",
     )
 }
 
@@ -635,38 +635,83 @@ struct MigrationSourceOwnerV1 {
     migration_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MigrationSourceGuardV1 {
+    root_id: String,
+    migration_id: String,
+    captured_records_generation: i64,
+}
+
 fn load_migration_source_owner(conn: &Connection) -> Result<Option<MigrationSourceOwnerV1>> {
-    let owner = database(
-        conn.query_row(
-            "SELECT owner.root_id, owner.migration_id
-             FROM s2_lite_migration_source_owner_v1 AS owner
-             JOIN s2_lite_migration_source_guard_v1 AS guard
-               ON guard.root_id=owner.root_id AND guard.migration_id=owner.migration_id
-             WHERE owner.owner_key=1",
-            [],
-            |row| {
-                Ok(MigrationSourceOwnerV1 {
-                    root_id: row.get(0)?,
-                    migration_id: row.get(1)?,
-                })
-            },
-        )
-        .optional(),
+    let owners = database(
+        (|| -> rusqlite::Result<Vec<(i64, MigrationSourceOwnerV1)>> {
+            let mut statement = conn.prepare(
+                "SELECT typeof(owner_key), owner_key, root_id, migration_id
+             FROM s2_lite_migration_source_owner_v1
+             ORDER BY owner_key, root_id, migration_id",
+            )?;
+            let owners = statement
+                .query_map([], |row| {
+                    let key_type: String = row.get(0)?;
+                    if key_type != "integer" {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                    Ok((
+                        row.get::<_, i64>(1)?,
+                        MigrationSourceOwnerV1 {
+                            root_id: row.get(2)?,
+                            migration_id: row.get(3)?,
+                        },
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>();
+            owners
+        })(),
     )?;
-    if owner.as_ref().is_some_and(|owner| {
-        owner.root_id.is_empty() || validate_canonical_uuid_v4(&owner.migration_id).is_err()
-    }) {
+    let guards = database((|| -> rusqlite::Result<Vec<MigrationSourceGuardV1>> {
+        let mut statement = conn.prepare(
+            "SELECT typeof(captured_records_generation), root_id, migration_id,
+                    captured_records_generation
+             FROM s2_lite_migration_source_guard_v1
+             ORDER BY root_id, migration_id",
+        )?;
+        let guards = statement
+            .query_map([], |row| {
+                let generation_type: String = row.get(0)?;
+                let raw_generation: String = row.get(3)?;
+                if generation_type != "text" {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+                let generation = canonical_generation(&raw_generation)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(MigrationSourceGuardV1 {
+                    root_id: row.get(1)?,
+                    migration_id: row.get(2)?,
+                    captured_records_generation: i64::try_from(generation)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>();
+        guards
+    })())?;
+
+    let (owner_key, owner, guard) = match (owners.as_slice(), guards.as_slice()) {
+        ([], []) => return Ok(None),
+        ([(owner_key, owner)], [guard]) => (*owner_key, owner, guard),
+        _ => return Err(STORE_CORRUPTION),
+    };
+    if owner_key != 1
+        || owner.root_id.is_empty()
+        || guard.root_id.is_empty()
+        || validate_canonical_uuid_v4(&owner.migration_id).is_err()
+        || validate_canonical_uuid_v4(&guard.migration_id).is_err()
+        || owner.root_id != guard.root_id
+        || owner.migration_id != guard.migration_id
+        || guard.captured_records_generation < 0
+    {
         return Err(STORE_CORRUPTION);
     }
-    let guards = database(conn.query_row(
-        "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1",
-        [],
-        |row| row.get::<_, i64>(0),
-    ))?;
-    if (guards == 0) != owner.is_none() || guards > 1 {
-        return Err(STORE_CORRUPTION);
-    }
-    Ok(owner)
+    Ok(Some(owner.clone()))
 }
 
 fn validate_active_migration_binding(
