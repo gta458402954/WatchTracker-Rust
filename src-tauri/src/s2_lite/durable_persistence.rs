@@ -423,12 +423,17 @@ pub(crate) fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
          INSERT INTO settings(key, value) VALUES('s2_lite_persistence_schema_version', '1')
            ON CONFLICT(key) DO NOTHING;",
     )?;
+    transaction.commit()?;
+    // Upgrade source protection in its own committed unit before inspecting
+    // authority.  A cold-start corruption error must never roll this upgrade
+    // back and reopen the legacy business source through an old guard-only
+    // trigger set.
+    install_migration_source_guard_triggers(conn)?;
     // The owner and guard are one source-authority fact.  In particular, do
     // not "repair" a partial legacy row here: that could turn corruption into
     // an active migration or, worse, silently change the protected source.
-    load_migration_source_owner(&transaction).map_err(|_| rusqlite::Error::InvalidQuery)?;
-    transaction.commit()?;
-    install_migration_source_guard_triggers(conn)
+    load_migration_source_owner(conn).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok(())
 }
 
 fn install_migration_source_guard_triggers(conn: &Connection) -> rusqlite::Result<()> {
@@ -711,6 +716,24 @@ fn load_migration_source_owner(conn: &Connection) -> Result<Option<MigrationSour
     {
         return Err(STORE_CORRUPTION);
     }
+    let bytes = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+            [&guard.root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?
+    .ok_or(STORE_CORRUPTION)?;
+    let execution_binding: MigrationExecutionBindingV1 = decode(&bytes)?;
+    validate_migration_execution_binding(&execution_binding)?;
+    if execution_binding.physical_root_id != guard.root_id
+        || execution_binding.migration_id != guard.migration_id
+        || execution_binding.captured_records_generation != guard.captured_records_generation
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    validate_migration_execution_target_authority(conn, &execution_binding, &guard.root_id)?;
     Ok(Some(owner.clone()))
 }
 

@@ -790,4 +790,259 @@ mod tests {
                 .is_err());
         }
     }
+
+    fn seed_protected_business_rows(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO records(
+                id, originalName, chineseName, progress, totalEpisodes,
+                episodeTrackingEnabled, status, platform, createdAt, rev, revActor, mediaType
+             ) VALUES(
+                'record-1', 'Record', '', '', 1, 0, '未看', '',
+                '2026-09-20T00:00:00.000Z', 0, '', '剧集'
+             );
+             INSERT INTO episode_completions(
+                id, recordId, episodeNumber, completedAt, createdAt, updatedAt, rev, revActor
+             ) VALUES(
+                'episode-1', 'record-1', 1, NULL,
+                '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z', 0, ''
+             );
+             INSERT INTO collections(
+                id, name, normalizedName, description, sourceKind, sourceKey,
+                collectionKind, orderMode, createdAt, updatedAt, rev, revActor
+             ) VALUES(
+                'collection-1', 'Collection', 'collection', NULL, 'manual', NULL,
+                'manual', 'manual', '2026-09-20T00:00:00.000Z',
+                '2026-09-20T00:00:00.000Z', 0, ''
+             );
+             INSERT INTO collection_members(
+                id, collectionId, recordId, position, sourceKind, createdAt, updatedAt, rev, revActor
+             ) VALUES(
+                'member-1', 'collection-1', 'record-1', 0, 'manual',
+                '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z', 0, ''
+             );",
+        )
+        .unwrap();
+    }
+
+    fn install_old_guard_only_update_triggers(conn: &Connection) {
+        conn.execute_batch(
+            "DROP TRIGGER s2_lite_guard_records_update_v1;
+             DROP TRIGGER s2_lite_guard_episode_update_v1;
+             DROP TRIGGER s2_lite_guard_collections_update_v1;
+             DROP TRIGGER s2_lite_guard_members_update_v1;
+             CREATE TRIGGER s2_lite_guard_records_update_v1 BEFORE UPDATE ON records WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+             CREATE TRIGGER s2_lite_guard_episode_update_v1 BEFORE UPDATE ON episode_completions WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+             CREATE TRIGGER s2_lite_guard_collections_update_v1 BEFORE UPDATE ON collections WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;
+             CREATE TRIGGER s2_lite_guard_members_update_v1 BEFORE UPDATE ON collection_members WHEN EXISTS(SELECT 1 FROM s2_lite_migration_source_guard_v1) BEGIN SELECT RAISE(ABORT, 'S2_MIGRATION_SOURCE_PROTECTED'); END;",
+        )
+        .unwrap();
+    }
+
+    fn assert_all_protected_business_updates_denied(conn: &Connection) {
+        for statement in [
+            "UPDATE records SET notes='blocked' WHERE id='record-1'",
+            "UPDATE episode_completions SET completedAt='2026-09-20T00:00:00.000Z' WHERE id='episode-1'",
+            "UPDATE collections SET description='blocked' WHERE id='collection-1'",
+            "UPDATE collection_members SET position=1 WHERE id='member-1'",
+        ] {
+            assert!(conn.execute(statement, []).is_err(), "{statement}");
+        }
+    }
+
+    fn assert_all_protected_business_inserts_denied(conn: &Connection) {
+        for statement in [
+            "INSERT INTO records(id, originalName, chineseName, progress, totalEpisodes, episodeTrackingEnabled, status, platform, createdAt, rev, revActor, mediaType) VALUES('blocked-record', 'Blocked', '', '', 1, 0, '未看', '', '2026-09-20T00:00:00.000Z', 0, '', '剧集')",
+            "INSERT INTO episode_completions(id, recordId, episodeNumber, completedAt, createdAt, updatedAt, rev, revActor) VALUES('blocked-episode', 'blocked-record', 1, NULL, '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z', 0, '')",
+            "INSERT INTO collections(id, name, normalizedName, description, sourceKind, sourceKey, collectionKind, orderMode, createdAt, updatedAt, rev, revActor) VALUES('blocked-collection', 'Blocked', 'blocked', NULL, 'manual', NULL, 'manual', 'manual', '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z', 0, '')",
+            "INSERT INTO collection_members(id, collectionId, recordId, position, sourceKind, createdAt, updatedAt, rev, revActor) VALUES('blocked-member', 'blocked-collection', 'blocked-record', 0, 'manual', '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z', 0, '')",
+        ] {
+            assert!(conn.execute(statement, []).is_err(), "{statement}");
+        }
+    }
+
+    fn assert_conservative_trigger_sql(conn: &Connection, trigger: &str) {
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1",
+                [trigger],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("s2_lite_migration_source_owner_v1"));
+        assert!(sql.contains("s2_lite_migration_source_guard_v1"));
+    }
+
+    #[test]
+    fn cold_start_corruption_commits_conservative_source_protection_before_failing() {
+        const ROOT: &str = "root://migration-source-cold-start";
+        for orphan_owner in [true, false] {
+            let path = std::env::temp_dir().join(format!(
+                "watchtracker-migration-source-cold-start-{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            {
+                let initial = Connection::open(&path).unwrap();
+                initial.pragma_update(None, "foreign_keys", "ON").unwrap();
+                crate::db::setup_db(&initial).unwrap();
+                let initial = Mutex::new(initial);
+                SqliteS2LiteStoreV1::open(&initial, ROOT).unwrap();
+                let guard = initial.lock().unwrap();
+                seed_protected_business_rows(&guard);
+                install_old_guard_only_update_triggers(&guard);
+                guard.pragma_update(None, "foreign_keys", "OFF").unwrap();
+                if orphan_owner {
+                    guard.execute(
+                        "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id)
+                         VALUES(1, ?1, ?2)",
+                        [ROOT, MIGRATION],
+                    )
+                } else {
+                    guard.execute(
+                        "INSERT INTO s2_lite_migration_source_guard_v1(
+                             root_id, migration_id, captured_records_generation
+                         ) VALUES(?1, ?2, '0')",
+                        [ROOT, MIGRATION],
+                    )
+                }
+                .unwrap();
+            }
+            let restarted = Connection::open(&path).unwrap();
+            restarted.pragma_update(None, "foreign_keys", "ON").unwrap();
+            // Application startup reaches the S2 schema path before a store
+            // is constructed; it must report corruption only after the
+            // conservative trigger upgrade has committed.
+            assert!(crate::db::setup_db(&restarted).is_err());
+            let restarted = Mutex::new(restarted);
+            assert!(SqliteS2LiteStoreV1::open(&restarted, ROOT).is_err());
+            {
+                let guard = restarted.lock().unwrap();
+                for trigger in [
+                    "s2_lite_guard_records_update_v1",
+                    "s2_lite_guard_episode_update_v1",
+                    "s2_lite_guard_collections_update_v1",
+                    "s2_lite_guard_members_update_v1",
+                ] {
+                    assert_conservative_trigger_sql(&guard, trigger);
+                }
+                assert_all_protected_business_updates_denied(&guard);
+                let owners: i64 = guard
+                    .query_row(
+                        "SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                let guards: i64 = guard
+                    .query_row(
+                        "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!((owners, guards), if orphan_owner { (1, 0) } else { (0, 1) });
+            }
+            assert!(SqliteS2LiteStoreV1::open(&restarted, ROOT).is_err());
+            drop(restarted);
+            for file in [
+                path.clone(),
+                PathBuf::from(format!("{}-wal", path.display())),
+                PathBuf::from(format!("{}-shm", path.display())),
+            ] {
+                let _ = fs::remove_file(file);
+            }
+        }
+    }
+
+    fn admitted_source_authority() -> (Mutex<Connection>, String, String) {
+        let conn = connection();
+        let target = activate(
+            &conn,
+            "https://example.test/migration-generation-authority",
+            "alice",
+            1,
+        );
+        let admitted =
+            admit_and_capture_migration_v1(&conn, &target, 1, MIGRATION, WRITER, CREATED).unwrap();
+        (conn, target, admitted.execution_binding.physical_root_id)
+    }
+
+    fn assert_tampered_active_source_authority_fails_closed(
+        mutate: impl FnOnce(&Connection, &str),
+    ) {
+        let (conn, target, root) = admitted_source_authority();
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert!(store.migration_source_protected_v1().unwrap());
+        {
+            let guard = conn.lock().unwrap();
+            guard.pragma_update(None, "foreign_keys", "OFF").unwrap();
+            mutate(&guard, &root);
+        }
+        let mut puts = 0;
+        assert!(store
+            .run_legacy_s1_publish_exclusive(&root, || {
+                puts += 1;
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(puts, 0);
+        assert!(store.migration_source_protected_v1().is_err());
+        assert!(
+            admit_and_capture_migration_v1(&conn, &target, 1, MIGRATION, WRITER, CREATED).is_err()
+        );
+        assert!(SqliteS2LiteStoreV1::open(&conn, &root).is_err());
+        assert_all_protected_business_inserts_denied(&conn.lock().unwrap());
+    }
+
+    #[test]
+    fn active_source_authority_requires_exact_execution_binding_generation() {
+        assert_tampered_active_source_authority_fails_closed(|conn, root| {
+            conn.execute(
+                "UPDATE s2_lite_migration_source_guard_v1
+                 SET captured_records_generation='1' WHERE root_id=?1",
+                [root],
+            )
+            .unwrap();
+        });
+        assert_tampered_active_source_authority_fails_closed(|conn, root| {
+            conn.execute(
+                "DELETE FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [root],
+            )
+            .unwrap();
+        });
+        assert_tampered_active_source_authority_fails_closed(|conn, root| {
+            conn.execute(
+                "UPDATE s2_lite_migration_source_guard_v1
+                 SET migration_id='80000000-0000-4000-8000-000000000002' WHERE root_id=?1",
+                [root],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE s2_lite_migration_source_owner_v1
+                 SET migration_id='80000000-0000-4000-8000-000000000002' WHERE owner_key=1",
+                [],
+            )
+            .unwrap();
+        });
+        assert_tampered_active_source_authority_fails_closed(|conn, root| {
+            let alternate_root = "root://migration-source-execution-binding-mismatch";
+            conn.execute(
+                "INSERT INTO s2_lite_migration_execution_binding_v1(root_id, state_json)
+                 SELECT ?2, state_json
+                 FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [root, alternate_root],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE s2_lite_migration_source_guard_v1 SET root_id=?2 WHERE root_id=?1",
+                [root, alternate_root],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE s2_lite_migration_source_owner_v1 SET root_id=?2 WHERE owner_key=1",
+                [root, alternate_root],
+            )
+            .unwrap();
+        });
+    }
 }
