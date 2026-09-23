@@ -12,11 +12,11 @@ use super::remote_discovery::{
     classify_candidate_path_v1, create_discovery_state_v1, observe_candidate_listing_v1,
     observe_segment_listing_v1, observe_writer_listing_v1, parse_activation_candidate_path_v1,
     parse_writer_candidate_path_v1, retained_verified_commit_bytes_v1, run_discovery_round_v1,
-    verify_activation_candidate_v1, verify_commit_candidate_v1, ActivationValidatorErrorV1,
-    ActivationVerificationV1, CandidatePathClassificationV1, DirectoryListResultV1,
-    DiscoveryBudgetsV1, DiscoveryExactGetResultV1, DiscoveryRemoteV1, DiscoveryStateV1,
-    HistoricalAuditCursorV1, ObservedCandidateV1, VerifiedFingerprintEvidenceV1,
-    VerifiedRemoteObjectV1,
+    validate_production_activation_body_v1, verify_activation_candidate_v1,
+    verify_commit_candidate_v1, ActivationValidatorErrorV1, ActivationVerificationV1,
+    CandidatePathClassificationV1, DirectoryListResultV1, DiscoveryBudgetsV1,
+    DiscoveryExactGetResultV1, DiscoveryRemoteV1, DiscoveryStateV1, HistoricalAuditCursorV1,
+    ObservedCandidateV1, VerifiedFingerprintEvidenceV1, VerifiedRemoteObjectV1,
 };
 use super::types::{CommitRef, CommitV1};
 
@@ -154,6 +154,65 @@ fn activation_validator(
             .as_bool()
             .unwrap_or(false),
     })
+}
+
+#[test]
+fn production_activation_validator_is_exact_and_preserves_nullable_fingerprint() {
+    let activation_id = "10000000-0000-4000-8000-000000000001";
+    let valid = |fingerprint: Value| {
+        serde_json::to_vec(&json!({
+            "activationId": activation_id,
+            "legacyFingerprint": fingerprint,
+            "protocol": "watchtracker-s2-lite",
+            "protocolVersion": 1,
+            "requiredFeatures": [],
+            "s2SemanticProfileVersion": 1,
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        validate_production_activation_body_v1(&valid(Value::Null)).unwrap(),
+        ActivationVerificationV1 {
+            activation_id: activation_id.to_string(),
+            legacy_fingerprint: None,
+            semantic_profile_supported: true,
+            required_features_supported: true,
+        }
+    );
+    let fingerprint = "a".repeat(64);
+    assert_eq!(
+        validate_production_activation_body_v1(&valid(json!(fingerprint)))
+            .unwrap()
+            .legacy_fingerprint,
+        Some(fingerprint)
+    );
+    for invalid in [
+        br#"{}"#.to_vec(),
+        valid(json!("")),
+        serde_json::to_vec(&json!({
+            "activationId": activation_id,
+            "legacyFingerprint": null,
+            "protocol": "watchtracker-s2-lite",
+            "protocolVersion": 2,
+            "requiredFeatures": [],
+            "s2SemanticProfileVersion": 1,
+        }))
+        .unwrap(),
+        serde_json::to_vec(&json!({
+            "activationId": activation_id,
+            "legacyFingerprint": null,
+            "protocol": "watchtracker-s2-lite",
+            "protocolVersion": 1,
+            "requiredFeatures": ["unknown"],
+            "s2SemanticProfileVersion": 1,
+        }))
+        .unwrap(),
+    ] {
+        assert_eq!(
+            validate_production_activation_body_v1(&invalid),
+            Err(ActivationValidatorErrorV1::ProtocolValidation)
+        );
+    }
 }
 
 fn ref_key_for_projection(value: &CommitRef) -> String {

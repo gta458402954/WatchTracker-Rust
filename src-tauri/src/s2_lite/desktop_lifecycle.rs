@@ -23,10 +23,14 @@ use super::materialized_projection::{
 };
 use super::migration_orchestration::MigrationStateStoreV1;
 use super::remote_discovery::{
-    create_discovery_state_v1, run_discovery_round_v1, ActivationValidatorResultV1,
+    create_discovery_state_v1, run_discovery_round_v1, validate_production_activation_body_v1,
     DiscoveryBudgetsV1, DiscoveryRemoteV1,
 };
 use super::root_coordinator::RootExecutionCoordinatorV1;
+use super::{
+    activation_cutover::{recover_activation_cutover_v1, ActivationFingerprintConsistencyV1},
+    canonical::ProtocolError,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DesktopS2RootBindingV1 {
@@ -71,12 +75,48 @@ fn map_publish_result(result: RecoverPreparedIntentResultV1) -> DesktopS2Lifecyc
     }
 }
 
+fn recover_discovered_activation_cutover_v1(
+    store: &mut SqliteS2LiteStoreV1<'_>,
+    root_id: &str,
+    discovery: &super::remote_discovery::DiscoveryStateV1,
+) -> Result<bool> {
+    let safety = MigrationStateStoreV1::load_root_safety(store, root_id)?;
+    let recovery = recover_activation_cutover_v1(discovery, Some(&safety.cutover_state));
+    let cutover = recovery
+        .diagnostic_state()
+        .ok_or(ProtocolError("activation_cutover_recovery_not_ready"))?;
+    // The historical migration binding, rather than mutable business rows or
+    // current target state, is the only local fingerprint authority.
+    if let Some(binding) = store.load_migration_execution_binding_v1()? {
+        if cutover.remote_s2_activated {
+            let compatible = matches!(
+                &cutover.fingerprint_consistency,
+                ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
+                    if *legacy_fingerprint == binding.legacy_fingerprint
+            );
+            if !compatible {
+                MigrationStateStoreV1::persist_cutover_state(store, root_id, &cutover)?;
+                let _ = MigrationStateStoreV1::persist_root_fatal(
+                    store,
+                    root_id,
+                    "SYNC_ROOT_FROZEN_LEGACY_CHANGE",
+                )?;
+                return Ok(true);
+            }
+        }
+    }
+    MigrationStateStoreV1::persist_cutover_state(store, root_id, &cutover)?;
+    Ok(!MigrationStateStoreV1::load_root_safety(store, root_id)?
+        .root_fatal_signals
+        .is_empty())
+}
+
 /// Runs one bounded execution. `new_ordinary_intent` is optional because this
 /// layer does not create protocol bytes itself; an upstream local mutation
 /// pipeline may supply one already-prepared frozen intent. Existing durable
 /// intents are always recovered before that optional successor is admitted.
 #[allow(clippy::too_many_arguments)] // Explicit collaborators make authority boundaries visible.
-pub fn run_desktop_s2_sync_execution_v1<R, V, E, C>(
+pub fn run_desktop_s2_sync_execution_v1<R, E, C>(
     conn: &Mutex<Connection>,
     coordinator: &RootExecutionCoordinatorV1,
     binding: &DesktopS2RootBindingV1,
@@ -84,13 +124,11 @@ pub fn run_desktop_s2_sync_execution_v1<R, V, E, C>(
     target_epoch_is_current: E,
     cancel_at_safe_boundary: C,
     new_ordinary_intent: Option<PreparedIntentV1>,
-    activation_validator: &mut V,
     budgets: &DiscoveryBudgetsV1,
     verified_at_diagnostic: &str,
 ) -> Result<DesktopS2LifecycleResultV1>
 where
     R: ImmutableObjectRemoteV1 + DiscoveryRemoteV1,
-    V: FnMut(&[u8]) -> ActivationValidatorResultV1,
     E: Fn() -> bool,
     C: Fn() -> bool,
 {
@@ -136,12 +174,25 @@ where
     let prior = persisted_discovery
         .map(|value| value.state)
         .unwrap_or_else(create_discovery_state_v1);
-    let next = run_discovery_round_v1(&prior, remote, activation_validator, budgets)?;
+    let next = run_discovery_round_v1(
+        &prior,
+        remote,
+        &mut validate_production_activation_body_v1,
+        budgets,
+    )?;
     if !store.compare_and_swap_discovery_state(expected_discovery_generation, &next)? {
         return Ok(DesktopS2LifecycleResultV1::PendingDiscoveryDependencies);
     }
+    let committed_discovery = store
+        .load_discovery_state()?
+        .ok_or(ProtocolError("discovery_state_missing_after_cas"))?;
+    let cutover_frozen = recover_discovered_activation_cutover_v1(
+        &mut store,
+        &binding.physical_root_id,
+        &committed_discovery.state,
+    )?;
     let safety = MigrationStateStoreV1::load_root_safety(&mut store, &binding.physical_root_id)?;
-    if root_frozen || !safety.root_fatal_signals.is_empty() {
+    if root_frozen || cutover_frozen || !safety.root_fatal_signals.is_empty() {
         return Ok(DesktopS2LifecycleResultV1::RootFrozen);
     }
     // A receipt may have survived a process crash after remote verification
@@ -154,12 +205,6 @@ where
     // Rebuild only from the just-committed exact verified facts. The cache is
     // CAS-bound to both discovery and root safety, so an older complete replay
     // cannot leak into a newer publication attempt.
-    let committed_discovery =
-        store
-            .load_discovery_state()?
-            .ok_or(super::canonical::ProtocolError(
-                "discovery_state_missing_after_cas",
-            ))?;
     let replay = rebuild_materialized_projection_v1(&committed_discovery.state)?;
     let expected_projection = store
         .load_materialized_projection()?

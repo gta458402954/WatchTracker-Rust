@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::canonical::{
     compare_commit_ref_v1, parse_writer_seq, sha256_hex, validate_canonical_uuid,
@@ -81,6 +82,62 @@ pub enum ActivationValidatorErrorV1 {
 
 pub type ActivationValidatorResultV1 =
     std::result::Result<ActivationVerificationV1, ActivationValidatorErrorV1>;
+
+/// Strict production validation for an exact activation object fetched during
+/// discovery.  This deliberately returns only the frozen semantic facts used
+/// by cutover evaluation; path/hash identity is established separately by the
+/// discovery verifier before this validator is called.
+pub fn validate_production_activation_body_v1(bytes: &[u8]) -> ActivationValidatorResultV1 {
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|_| ActivationValidatorErrorV1::ProtocolValidation)?;
+    let object = value
+        .as_object()
+        .ok_or(ActivationValidatorErrorV1::ProtocolValidation)?;
+    let expected = [
+        "activationId",
+        "legacyFingerprint",
+        "protocol",
+        "protocolVersion",
+        "requiredFeatures",
+        "s2SemanticProfileVersion",
+    ];
+    if object.len() != expected.len()
+        || expected.iter().any(|field| !object.contains_key(*field))
+        || object["protocol"] != "watchtracker-s2-lite"
+        || object["protocolVersion"] != 1
+        || object["s2SemanticProfileVersion"] != 1
+        || object["requiredFeatures"] != serde_json::json!([])
+    {
+        return Err(ActivationValidatorErrorV1::ProtocolValidation);
+    }
+    let activation_id = object["activationId"]
+        .as_str()
+        .ok_or(ActivationValidatorErrorV1::ProtocolValidation)?;
+    if validate_canonical_uuid_v4(activation_id).is_err() {
+        return Err(ActivationValidatorErrorV1::ProtocolValidation);
+    }
+    let legacy_fingerprint = if object["legacyFingerprint"].is_null() {
+        None
+    } else {
+        let fingerprint = object["legacyFingerprint"]
+            .as_str()
+            .ok_or(ActivationValidatorErrorV1::ProtocolValidation)?;
+        if fingerprint.len() != 64
+            || !fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(ActivationValidatorErrorV1::ProtocolValidation);
+        }
+        Some(fingerprint.to_string())
+    };
+    Ok(ActivationVerificationV1 {
+        activation_id: activation_id.to_string(),
+        legacy_fingerprint,
+        semantic_profile_supported: true,
+        required_features_supported: true,
+    })
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

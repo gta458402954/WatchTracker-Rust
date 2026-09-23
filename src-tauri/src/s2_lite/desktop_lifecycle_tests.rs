@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use crate::db_atomic_helpers::set_setting_tx;
 use base64::Engine;
 use rusqlite::Connection;
 
@@ -8,30 +9,46 @@ use super::desktop_lifecycle::{
     run_desktop_s2_sync_execution_v1, DesktopS2LifecycleResultV1, DesktopS2RootBindingV1,
 };
 use super::durable_persistence::{
-    DesktopRootStateV1, OutboundBatchMutationV1, OutboundBatchV1, SqliteS2LiteStoreV1,
+    DesktopRootStateV1, MigrationExecutionBindingV1, OutboundBatchMutationV1, OutboundBatchV1,
+    SqliteS2LiteStoreV1,
 };
 use super::immutable_publish::{
-    prepare_commit_intent_v1, ImmutableObjectRemoteV1, PreparedIntentStoreV1,
-    RemoteExactGetResultV1, RemotePutResultV1,
+    prepare_activation_intent_v1, prepare_commit_intent_v1, ImmutableObjectRemoteV1,
+    PreparedActivationIntentStoreV1, PreparedIntentStoreV1, RemoteExactGetResultV1,
+    RemotePutResultV1,
 };
+use super::migration_orchestration::MigrationStateStoreV1;
 use super::remote_discovery::{
-    ActivationValidatorResultV1, DirectoryListResultV1, DiscoveryBudgetsV1,
-    DiscoveryExactGetResultV1, DiscoveryRemoteV1,
+    DirectoryListResultV1, DiscoveryBudgetsV1, DiscoveryExactGetResultV1, DiscoveryRemoteV1,
 };
 use super::root_coordinator::RootExecutionCoordinatorV1;
+use super::target_root_binding::resolve_active_target_root_binding_v1;
+use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
 
 const ROOT: &str = "s2-root-v1:lifecycle-test";
 const VERIFIED_AT: &str = "2026-09-08T05:00:00.000Z";
 
-#[derive(Default)]
 struct FakeRemote {
     objects: BTreeMap<String, Vec<u8>>,
+    listings: BTreeMap<String, Vec<String>>,
     put_calls: usize,
+    root_id: String,
+}
+
+impl Default for FakeRemote {
+    fn default() -> Self {
+        Self {
+            objects: BTreeMap::new(),
+            listings: BTreeMap::new(),
+            put_calls: 0,
+            root_id: ROOT.to_string(),
+        }
+    }
 }
 
 impl ImmutableObjectRemoteV1 for FakeRemote {
     fn physical_root_id(&self) -> Option<&str> {
-        Some(ROOT)
+        Some(&self.root_id)
     }
     fn execution_context_identity(&self) -> u64 {
         7
@@ -50,8 +67,8 @@ impl ImmutableObjectRemoteV1 for FakeRemote {
 }
 
 impl DiscoveryRemoteV1 for FakeRemote {
-    fn list_directory(&mut self, _: &str) -> DirectoryListResultV1 {
-        DirectoryListResultV1::Entries(vec![])
+    fn list_directory(&mut self, path: &str) -> DirectoryListResultV1 {
+        DirectoryListResultV1::Entries(self.listings.get(path).cloned().unwrap_or_default())
     }
     fn get_exact(&mut self, path: &str) -> DiscoveryExactGetResultV1 {
         match ImmutableObjectRemoteV1::get_exact(self, path) {
@@ -83,6 +100,42 @@ fn binding() -> DesktopS2RootBindingV1 {
         account: "Alice".into(),
         remote_identity: 7,
     }
+}
+
+fn activate_target(conn: &Mutex<Connection>, url: &str, username: &str, epoch: u64) -> SyncTarget {
+    let normalized_url = sync_targets::normalize_url(url).unwrap();
+    let target = SyncTarget {
+        id: sync_targets::target_id(&normalized_url, username),
+        normalized_url,
+        username: username.to_string(),
+        created_at: VERIFIED_AT.to_string(),
+        last_activated_at: VERIFIED_AT.to_string(),
+    };
+    set_setting_tx(
+        &conn.lock().unwrap(),
+        REGISTRY_KEY,
+        &serde_json::to_string(&SyncTargetRegistry {
+            version: 1,
+            active_target_id: Some(target.id.clone()),
+            target_epoch: epoch,
+            targets: vec![target.clone()],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    target
+}
+
+fn activation_bytes(activation_id: &str, legacy_fingerprint: Option<&str>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "activationId": activation_id,
+        "legacyFingerprint": legacy_fingerprint,
+        "protocol": "watchtracker-s2-lite",
+        "protocolVersion": 1,
+        "requiredFeatures": [],
+        "s2SemanticProfileVersion": 1,
+    }))
+    .unwrap()
 }
 
 fn prepared() -> super::immutable_publish::PreparedIntentV1 {
@@ -121,7 +174,6 @@ fn restart_recovers_durable_intent_before_any_successor_publication() {
     remote
         .objects
         .insert(intent.remote_path.clone(), intent.exact_bytes.clone());
-    let mut validator = |_bytes: &[u8]| -> ActivationValidatorResultV1 { unreachable!() };
     let result = run_desktop_s2_sync_execution_v1(
         &conn,
         &coordinator,
@@ -130,7 +182,6 @@ fn restart_recovers_durable_intent_before_any_successor_publication() {
         || true,
         || false,
         None,
-        &mut validator,
         &DiscoveryBudgetsV1::default(),
         VERIFIED_AT,
     )
@@ -149,7 +200,6 @@ fn target_change_and_safe_cancellation_happen_before_network_work() {
     let conn = connection();
     let coordinator = RootExecutionCoordinatorV1::default();
     let mut remote = FakeRemote::default();
-    let mut validator = |_bytes: &[u8]| -> ActivationValidatorResultV1 { unreachable!() };
     assert_eq!(
         run_desktop_s2_sync_execution_v1(
             &conn,
@@ -159,7 +209,6 @@ fn target_change_and_safe_cancellation_happen_before_network_work() {
             || false,
             || false,
             None,
-            &mut validator,
             &DiscoveryBudgetsV1::default(),
             VERIFIED_AT
         )
@@ -175,7 +224,6 @@ fn target_change_and_safe_cancellation_happen_before_network_work() {
             || true,
             || true,
             None,
-            &mut validator,
             &DiscoveryBudgetsV1::default(),
             VERIFIED_AT
         )
@@ -191,7 +239,6 @@ fn lost_put_response_is_verified_and_receipted_before_restart_bookkeeping() {
     let coordinator = RootExecutionCoordinatorV1::default();
     let intent = prepared();
     let mut remote = FakeRemote::default();
-    let mut validator = |_bytes: &[u8]| -> ActivationValidatorResultV1 { unreachable!() };
     let result = run_desktop_s2_sync_execution_v1(
         &conn,
         &coordinator,
@@ -200,7 +247,6 @@ fn lost_put_response_is_verified_and_receipted_before_restart_bookkeeping() {
         || true,
         || false,
         Some(intent.clone()),
-        &mut validator,
         &DiscoveryBudgetsV1::default(),
         VERIFIED_AT,
     )
@@ -230,7 +276,6 @@ fn root_fatal_latch_blocks_new_publication_but_keeps_discovery_read_only() {
     )
     .unwrap();
     let mut remote = FakeRemote::default();
-    let mut validator = |_bytes: &[u8]| -> ActivationValidatorResultV1 { unreachable!() };
     let result = run_desktop_s2_sync_execution_v1(
         &conn,
         &coordinator,
@@ -239,7 +284,6 @@ fn root_fatal_latch_blocks_new_publication_but_keeps_discovery_read_only() {
         || true,
         || false,
         Some(prepared()),
-        &mut validator,
         &DiscoveryBudgetsV1::default(),
         VERIFIED_AT,
     )
@@ -262,7 +306,6 @@ fn root_fatal_latch_blocks_retry_of_an_already_prepared_intent() {
     )
     .unwrap();
     let mut remote = FakeRemote::default();
-    let mut validator = |_bytes: &[u8]| -> ActivationValidatorResultV1 { unreachable!() };
     let result = run_desktop_s2_sync_execution_v1(
         &conn,
         &coordinator,
@@ -271,7 +314,6 @@ fn root_fatal_latch_blocks_retry_of_an_already_prepared_intent() {
         || true,
         || false,
         None,
-        &mut validator,
         &DiscoveryBudgetsV1::default(),
         VERIFIED_AT,
     )
@@ -339,4 +381,168 @@ fn local_batch_and_exact_intent_are_durably_bound_before_publication() {
         .load_prepared_intent(&intent.remote_path)
         .unwrap()
         .is_some());
+}
+
+#[test]
+fn verified_third_party_activation_latches_cutover_and_blocks_s1_without_a_local_intent() {
+    let conn = connection();
+    let coordinator = RootExecutionCoordinatorV1::default();
+    let activation_id = "10000000-0000-4000-8000-000000000001";
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "activationId": activation_id,
+        "legacyFingerprint": null,
+        "protocol": "watchtracker-s2-lite",
+        "protocolVersion": 1,
+        "requiredFeatures": [],
+        "s2SemanticProfileVersion": 1,
+    }))
+    .unwrap();
+    let path = format!(
+        "activations/{activation_id}--{}.json",
+        super::canonical::sha256_hex(&bytes)
+    );
+    let mut remote = FakeRemote::default();
+    remote
+        .listings
+        .insert("activations/".to_string(), vec![path.clone()]);
+    remote.objects.insert(path, bytes);
+    let _ = run_desktop_s2_sync_execution_v1(
+        &conn,
+        &coordinator,
+        &binding(),
+        &mut remote,
+        || true,
+        || false,
+        None,
+        &DiscoveryBudgetsV1::default(),
+        VERIFIED_AT,
+    )
+    .unwrap();
+    let mut store = SqliteS2LiteStoreV1::open(&conn, ROOT).unwrap();
+    let safety = MigrationStateStoreV1::load_root_safety(&mut store, ROOT).unwrap();
+    assert!(safety.cutover_state.remote_s2_activated);
+    let mut puts = 0;
+    assert_eq!(
+        store
+            .run_legacy_s1_publish_exclusive(ROOT, || {
+                puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        super::durable_persistence::LegacyS1PublishAdmissionV1::RejectedActivation
+    );
+    assert_eq!(puts, 0);
+
+    remote.listings.clear();
+    remote.objects.clear();
+    let _ = run_desktop_s2_sync_execution_v1(
+        &conn,
+        &coordinator,
+        &binding(),
+        &mut remote,
+        || true,
+        || false,
+        None,
+        &DiscoveryBudgetsV1::default(),
+        VERIFIED_AT,
+    )
+    .unwrap();
+    let mut restarted = SqliteS2LiteStoreV1::open(&conn, ROOT).unwrap();
+    assert!(
+        MigrationStateStoreV1::load_root_safety(&mut restarted, ROOT)
+            .unwrap()
+            .cutover_state
+            .remote_s2_activated
+    );
+}
+
+#[test]
+fn local_activation_intent_alone_does_not_latch_cutover() {
+    let conn = connection();
+    let activation_id = "10000000-0000-4000-8000-000000000001";
+    let bytes = activation_bytes(activation_id, None);
+    let intent = prepare_activation_intent_v1(activation_id, &bytes, VERIFIED_AT).unwrap();
+    let mut store = SqliteS2LiteStoreV1::open(&conn, ROOT).unwrap();
+    PreparedActivationIntentStoreV1::persist(&mut store, &intent).unwrap();
+    assert!(
+        !MigrationStateStoreV1::load_root_safety(&mut store, ROOT)
+            .unwrap()
+            .cutover_state
+            .remote_s2_activated
+    );
+}
+
+#[test]
+fn historical_migration_fingerprint_controls_discovered_activation_compatibility() {
+    for (captured, discovered, compatible) in [
+        (None, None, true),
+        (Some("a".repeat(64)), Some("a".repeat(64)), true),
+        (None, Some("a".repeat(64)), false),
+        (Some("a".repeat(64)), Some("b".repeat(64)), false),
+    ] {
+        let conn = connection();
+        let target = activate_target(&conn, "https://dav.example.test/migration/", "alice", 1);
+        let bound = resolve_active_target_root_binding_v1(&conn, &target.id, 1).unwrap();
+        let root = bound.binding.physical_root_id.clone();
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        store
+            .bind_migration_execution_v1(&MigrationExecutionBindingV1 {
+                binding_version: 1,
+                physical_root_id: root.clone(),
+                target_id: target.id.clone(),
+                target_epoch: 1,
+                captured_records_generation: 0,
+                legacy_fingerprint: captured.clone(),
+                migration_id: "20000000-0000-4000-8000-000000000001".into(),
+            })
+            .unwrap();
+        // The active target may move after migration admission; cutover must
+        // continue to use the immutable A/1 binding above.
+        let _target_b = activate_target(&conn, "https://dav.example.test/other/", "bob", 2);
+        let activation_id = "10000000-0000-4000-8000-000000000001";
+        let bytes = activation_bytes(activation_id, discovered.as_deref());
+        let path = format!(
+            "activations/{activation_id}--{}.json",
+            super::canonical::sha256_hex(&bytes)
+        );
+        let mut remote = FakeRemote {
+            root_id: root.clone(),
+            ..Default::default()
+        };
+        remote
+            .listings
+            .insert("activations/".to_string(), vec![path.clone()]);
+        remote.objects.insert(path, bytes);
+        let lifecycle_binding = DesktopS2RootBindingV1 {
+            target_id: target.id.clone(),
+            target_epoch: 1,
+            physical_root_id: root.clone(),
+            canonical_url: bound.binding.canonical_url,
+            account: bound.binding.normalized_account,
+            remote_identity: 7,
+        };
+        let result = run_desktop_s2_sync_execution_v1(
+            &conn,
+            &RootExecutionCoordinatorV1::default(),
+            &lifecycle_binding,
+            &mut remote,
+            || true,
+            || false,
+            None,
+            &DiscoveryBudgetsV1::default(),
+            VERIFIED_AT,
+        )
+        .unwrap();
+        let safety = MigrationStateStoreV1::load_root_safety(&mut store, &root).unwrap();
+        assert_eq!(
+            safety.root_fatal_signals.is_empty(),
+            compatible,
+            "captured={captured:?}, discovered={discovered:?}"
+        );
+        assert!(safety.cutover_state.remote_s2_activated);
+        assert_eq!(
+            result == DesktopS2LifecycleResultV1::RootFrozen,
+            !compatible
+        );
+    }
 }
