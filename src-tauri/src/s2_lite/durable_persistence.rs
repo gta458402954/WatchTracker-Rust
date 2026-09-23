@@ -1729,6 +1729,26 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         Ok(load_migration_source_owner(&conn)?.is_some())
     }
 
+    /// Loads the database-wide migration source owner and its immutable
+    /// historical target/root execution identity.  This lookup intentionally
+    /// never consults the currently active target: an in-progress migration
+    /// remains bound to the root that admitted and captured it.
+    pub fn load_migration_source_execution_binding_v1(
+        conn: &Mutex<Connection>,
+    ) -> Result<Option<MigrationExecutionBindingV1>> {
+        let guard = conn.lock().map_err(|_| STORE_FAILURE)?;
+        database(migrate_schema(&guard))?;
+        let Some(owner) = load_migration_source_owner(&guard)? else {
+            return Ok(None);
+        };
+        let binding = load_migration_execution_binding_from(&guard, &owner.root_id)?
+            .ok_or(STORE_CORRUPTION)?;
+        if binding.migration_id != owner.migration_id {
+            return Err(STORE_CORRUPTION);
+        }
+        Ok(Some(binding))
+    }
+
     /// Initializes the ordinary writer once per physical root. This establishes
     /// authority only; it does not reserve a sequence or publish anything.
     pub fn initialize_desktop_writer_v1(&mut self) -> Result<DesktopRootStateV1> {

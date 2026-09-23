@@ -6,7 +6,8 @@ use base64::Engine;
 use rusqlite::Connection;
 
 use super::desktop_lifecycle::{
-    run_desktop_s2_sync_execution_v1, DesktopS2LifecycleResultV1, DesktopS2RootBindingV1,
+    route_desktop_sync_v1, run_desktop_s2_sync_execution_v1, DesktopS2LifecycleResultV1,
+    DesktopS2RootBindingV1, DesktopSyncRouteV1,
 };
 use super::durable_persistence::{
     DesktopRootStateV1, IncompatibleActivationFreezeFaultV1, MigrationExecutionBindingV1,
@@ -17,6 +18,7 @@ use super::immutable_publish::{
     PreparedActivationIntentStoreV1, PreparedIntentStoreV1, RemoteExactGetResultV1,
     RemotePutResultV1,
 };
+use super::migration_admission::admit_and_capture_migration_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
 use super::remote_discovery::{
     create_discovery_state_v1, DirectoryListResultV1, DiscoveryBudgetsV1,
@@ -90,6 +92,12 @@ fn connection() -> Mutex<Connection> {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .unwrap();
+    Mutex::new(conn)
+}
+
+fn router_connection() -> Mutex<Connection> {
+    let conn = Connection::open_in_memory().unwrap();
+    crate::db::setup_db(&conn).unwrap();
     Mutex::new(conn)
 }
 
@@ -225,6 +233,50 @@ fn bind_incompatible_migration_and_discovery(
         .unwrap());
     let discovery = store.load_discovery_state().unwrap().unwrap();
     (root, discovery)
+}
+
+fn admit_router_migration(conn: &Mutex<Connection>) -> (SyncTarget, String) {
+    let target = activate_target(conn, "https://dav.example.test/router-a/", "alice", 1);
+    let admitted = admit_and_capture_migration_v1(
+        conn,
+        &target.id,
+        1,
+        "40000000-0000-4000-8000-000000000001",
+        "41000000-0000-4000-8000-000000000001",
+        VERIFIED_AT,
+    )
+    .unwrap();
+    (target, admitted.execution_binding.physical_root_id)
+}
+
+fn latch_compatible_router_activation(conn: &Mutex<Connection>) -> String {
+    let target = activate_target(conn, "https://dav.example.test/router-normal/", "alice", 1);
+    let bound = resolve_active_target_root_binding_v1(conn, &target.id, 1).unwrap();
+    let activation_id = "50000000-0000-4000-8000-000000000001";
+    let bytes = activation_bytes(activation_id, None);
+    let hash = super::canonical::sha256_hex(&bytes);
+    let mut discovery = create_discovery_state_v1();
+    discovery.verified_objects.push(VerifiedRemoteObjectV1 {
+        path: format!("activations/{activation_id}--{hash}.json"),
+        kind: "activation".into(),
+        exact_bytes_hash: hash.clone(),
+        exact_bytes_hex: bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+        content_hash: hash,
+        commit_ref: None,
+        activation_id: Some(activation_id.into()),
+        fingerprint_evidence: VerifiedFingerprintEvidenceV1::Null,
+    });
+    let cutover = super::activation_cutover::recover_activation_cutover_v1(&discovery, None)
+        .diagnostic_state()
+        .unwrap();
+    let mut store = SqliteS2LiteStoreV1::open(conn, &bound.binding.physical_root_id).unwrap();
+    MigrationStateStoreV1::persist_cutover_state(
+        &mut store,
+        &bound.binding.physical_root_id,
+        &cutover,
+    )
+    .unwrap();
+    bound.binding.physical_root_id
 }
 
 fn prepared() -> super::immutable_publish::PreparedIntentV1 {
@@ -736,4 +788,223 @@ fn incompatible_activation_freeze_is_atomic_and_blocks_second_connection_ordinar
             .iter()
             .any(|fatal| fatal.code == "SYNC_ROOT_FROZEN_LEGACY_CHANGE")
     );
+}
+
+#[test]
+fn durable_router_maps_every_migration_status_without_legacy_fallback_after_cutover() {
+    use super::migration_orchestration::MigrationStatusV1;
+
+    for (status, expected) in [
+        (
+            MigrationStatusV1::NotStarted,
+            DesktopSyncRouteV1::ContinueLegacyS1,
+        ),
+        (
+            MigrationStatusV1::LegacySnapshotCaptured,
+            DesktopSyncRouteV1::ResumeBootstrap,
+        ),
+        (
+            MigrationStatusV1::BootstrapPlanned,
+            DesktopSyncRouteV1::ResumeBootstrap,
+        ),
+        (
+            MigrationStatusV1::StageAPublishing,
+            DesktopSyncRouteV1::ResumeBootstrap,
+        ),
+        (
+            MigrationStatusV1::StageAComplete,
+            DesktopSyncRouteV1::ResumeBootstrap,
+        ),
+        (
+            MigrationStatusV1::StageBPublishing,
+            DesktopSyncRouteV1::ResumeBootstrap,
+        ),
+        (
+            MigrationStatusV1::StageBComplete,
+            DesktopSyncRouteV1::ResumeActivation,
+        ),
+        (
+            MigrationStatusV1::ActivationPublishing,
+            DesktopSyncRouteV1::ResumeActivation,
+        ),
+        (
+            MigrationStatusV1::RootFrozen,
+            DesktopSyncRouteV1::ReadOnlyFrozen,
+        ),
+    ] {
+        assert_eq!(
+            super::desktop_lifecycle::route_migration_status_v1(status, false).unwrap(),
+            expected
+        );
+    }
+    for status in [
+        MigrationStatusV1::NotStarted,
+        MigrationStatusV1::LegacySnapshotCaptured,
+        MigrationStatusV1::BootstrapPlanned,
+        MigrationStatusV1::StageAPublishing,
+        MigrationStatusV1::StageAComplete,
+        MigrationStatusV1::StageBPublishing,
+        MigrationStatusV1::StageBComplete,
+        MigrationStatusV1::ActivationPublishing,
+        MigrationStatusV1::ActivationVerified,
+    ] {
+        assert_eq!(
+            super::desktop_lifecycle::route_migration_status_v1(status, true).unwrap(),
+            DesktopSyncRouteV1::ResumeActivation,
+            "verified activation must never reopen legacy S1 for {status:?}"
+        );
+    }
+    assert_eq!(
+        super::desktop_lifecycle::route_migration_status_v1(
+            MigrationStatusV1::MigrationComplete,
+            true,
+        )
+        .unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+    assert!(super::desktop_lifecycle::route_migration_status_v1(
+        MigrationStatusV1::ActivationVerified,
+        false,
+    )
+    .is_err());
+    assert!(super::desktop_lifecycle::route_migration_status_v1(
+        MigrationStatusV1::MigrationComplete,
+        false,
+    )
+    .is_err());
+}
+
+#[test]
+fn durable_router_is_restart_deterministic_and_preserves_historical_migration_target() {
+    let pristine = router_connection();
+    let target = activate_target(
+        &pristine,
+        "https://dav.example.test/router-legacy/",
+        "alice",
+        1,
+    );
+    assert_eq!(
+        route_desktop_sync_v1(&pristine).unwrap(),
+        DesktopSyncRouteV1::ContinueLegacyS1
+    );
+    let bound = resolve_active_target_root_binding_v1(&pristine, &target.id, 1).unwrap();
+    let mut pristine_store =
+        SqliteS2LiteStoreV1::open(&pristine, &bound.binding.physical_root_id).unwrap();
+    assert!(pristine_store.load_desktop_root_state().unwrap().is_none());
+    assert_eq!(
+        route_desktop_sync_v1(&pristine).unwrap(),
+        DesktopSyncRouteV1::ContinueLegacyS1
+    );
+
+    let conn = router_connection();
+    let (_target_a, historical_root) = admit_router_migration(&conn);
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::ResumeActivation
+    );
+    let mut historical = SqliteS2LiteStoreV1::open(&conn, &historical_root).unwrap();
+    assert!(historical.load_desktop_root_state().unwrap().is_none());
+
+    let target_b = activate_target(&conn, "https://dav.example.test/router-b/", "bob", 2);
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::ResumeActivation,
+        "the source owner must route historical A rather than starting B"
+    );
+    assert!(
+        SqliteS2LiteStoreV1::load_target_root_binding_v1(&conn, &target_b.id, 2)
+            .unwrap()
+            .is_none()
+    );
+    assert!(historical.load_desktop_root_state().unwrap().is_none());
+}
+
+#[test]
+fn durable_router_latched_activation_initializes_writer_only_for_normal_s2_and_fatal_wins() {
+    let conn = router_connection();
+    let root = latch_compatible_router_activation(&conn);
+    let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+    assert!(store.load_desktop_root_state().unwrap().is_none());
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+    let writer = store.load_desktop_root_state().unwrap().unwrap();
+    assert_eq!(writer.next_writer_sequence, 1);
+    // A restart and a listing omission cannot erase the durable cutover route.
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+    assert_eq!(store.load_desktop_root_state().unwrap(), Some(writer));
+    // A later active epoch for the same frozen root cannot reopen S1.
+    let _same_root_new_epoch =
+        activate_target(&conn, "https://dav.example.test/router-normal/", "alice", 2);
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+
+    MigrationStateStoreV1::persist_root_fatal(&mut store, &root, "SYNC_ROOT_FROZEN_ROUTER_TEST")
+        .unwrap();
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::ReadOnlyFrozen,
+        "root fatal must win even when activation remains latched"
+    );
+}
+
+#[test]
+fn durable_router_corrupt_owned_migration_fails_closed() {
+    let conn = router_connection();
+    let (_target, root) = admit_router_migration(&conn);
+    conn.lock()
+        .unwrap()
+        .execute(
+            "UPDATE s2_lite_migration_v1 SET state_json=?1 WHERE root_id=?2",
+            rusqlite::params![b"not-a-persistence-envelope".to_vec(), root],
+        )
+        .unwrap();
+    assert!(route_desktop_sync_v1(&conn).is_err());
+}
+
+#[test]
+fn durable_router_legacy_result_does_not_bypass_later_sqlite_s1_admission() {
+    let database = TempDatabase::new("router-legacy-s1-race");
+    let connection_a = database.connection();
+    let target = activate_target(
+        &connection_a,
+        "https://dav.example.test/router-s1-race/",
+        "alice",
+        1,
+    );
+    assert_eq!(
+        route_desktop_sync_v1(&connection_a).unwrap(),
+        DesktopSyncRouteV1::ContinueLegacyS1
+    );
+    let bound = resolve_active_target_root_binding_v1(&connection_a, &target.id, 1).unwrap();
+
+    let connection_b = database.connection();
+    let mut authority =
+        SqliteS2LiteStoreV1::open(&connection_b, &bound.binding.physical_root_id).unwrap();
+    MigrationStateStoreV1::persist_root_fatal(
+        &mut authority,
+        &bound.binding.physical_root_id,
+        "SYNC_ROOT_FROZEN_ROUTER_RACE",
+    )
+    .unwrap();
+
+    let mut stale_router =
+        SqliteS2LiteStoreV1::open(&connection_a, &bound.binding.physical_root_id).unwrap();
+    let mut put_calls = 0;
+    assert_eq!(
+        stale_router
+            .run_legacy_s1_publish_exclusive(&bound.binding.physical_root_id, || {
+                put_calls += 1;
+                Ok(())
+            })
+            .unwrap(),
+        super::durable_persistence::LegacyS1PublishAdmissionV1::RejectedRootFrozen
+    );
+    assert_eq!(put_calls, 0);
 }

@@ -27,10 +27,13 @@ use super::remote_discovery::{
     DiscoveryBudgetsV1, DiscoveryRemoteV1,
 };
 use super::root_coordinator::RootExecutionCoordinatorV1;
+use super::target_root_binding::resolve_active_target_root_binding_v1;
 use super::{
     activation_cutover::{recover_activation_cutover_v1, ActivationFingerprintConsistencyV1},
     canonical::ProtocolError,
 };
+
+const ROUTER_FAILURE: ProtocolError = ProtocolError("S2_DESKTOP_LIFECYCLE_ROUTER_FAILURE");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DesktopS2RootBindingV1 {
@@ -55,6 +58,111 @@ pub enum DesktopS2LifecycleResultV1 {
     TargetChanged,
     CancelledAtSafeBoundary,
     InternalFailure,
+}
+
+/// Durable route selected before any desktop sync service is invoked.  This
+/// deliberately carries no process-local intent, credential, or remote fact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DesktopSyncRouteV1 {
+    ContinueLegacyS1,
+    ResumeBootstrap,
+    ResumeActivation,
+    EnterNormalS2,
+    ReadOnlyFrozen,
+}
+
+pub(crate) fn route_migration_status_v1(
+    status: super::migration_orchestration::MigrationStatusV1,
+    remote_s2_activated: bool,
+) -> Result<DesktopSyncRouteV1> {
+    use super::migration_orchestration::MigrationStatusV1;
+
+    if remote_s2_activated {
+        return Ok(match status {
+            MigrationStatusV1::RootFrozen => DesktopSyncRouteV1::ReadOnlyFrozen,
+            MigrationStatusV1::MigrationComplete => DesktopSyncRouteV1::EnterNormalS2,
+            // Remote activation is a terminal S1 cutoff.  Any incomplete
+            // local migration may only resume the existing post-cutover path.
+            MigrationStatusV1::NotStarted
+            | MigrationStatusV1::LegacySnapshotCaptured
+            | MigrationStatusV1::BootstrapPlanned
+            | MigrationStatusV1::StageAPublishing
+            | MigrationStatusV1::StageAComplete
+            | MigrationStatusV1::StageBPublishing
+            | MigrationStatusV1::StageBComplete
+            | MigrationStatusV1::ActivationPublishing
+            | MigrationStatusV1::ActivationVerified => DesktopSyncRouteV1::ResumeActivation,
+        });
+    }
+    match status {
+        MigrationStatusV1::NotStarted => Ok(DesktopSyncRouteV1::ContinueLegacyS1),
+        MigrationStatusV1::LegacySnapshotCaptured
+        | MigrationStatusV1::BootstrapPlanned
+        | MigrationStatusV1::StageAPublishing
+        | MigrationStatusV1::StageAComplete
+        | MigrationStatusV1::StageBPublishing => Ok(DesktopSyncRouteV1::ResumeBootstrap),
+        MigrationStatusV1::StageBComplete | MigrationStatusV1::ActivationPublishing => {
+            Ok(DesktopSyncRouteV1::ResumeActivation)
+        }
+        // These states require a durable activation latch.  Treat a missing
+        // latch as corruption rather than reopening legacy S1.
+        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete => {
+            Err(ROUTER_FAILURE)
+        }
+        MigrationStatusV1::RootFrozen => Ok(DesktopSyncRouteV1::ReadOnlyFrozen),
+    }
+}
+
+fn route_bound_root_v1(
+    conn: &Mutex<Connection>,
+    root_id: &str,
+    migration_required: bool,
+) -> Result<DesktopSyncRouteV1> {
+    let mut store = SqliteS2LiteStoreV1::open(conn, root_id)?;
+    let safety = MigrationStateStoreV1::load_root_safety(&mut store, root_id)?;
+    if !safety.root_fatal_signals.is_empty() || !safety.cutover_state.root_fatal_signals.is_empty()
+    {
+        return Ok(DesktopSyncRouteV1::ReadOnlyFrozen);
+    }
+    let migration = MigrationStateStoreV1::load(&mut store, root_id)?;
+    let route = match migration {
+        Some(state) => {
+            route_migration_status_v1(state.status, safety.cutover_state.remote_s2_activated)?
+        }
+        None if migration_required => return Err(ROUTER_FAILURE),
+        None if safety.cutover_state.remote_s2_activated => DesktopSyncRouteV1::EnterNormalS2,
+        None => DesktopSyncRouteV1::ContinueLegacyS1,
+    };
+    // Writer authority is intentionally allocated only after every durable
+    // route decision has ruled out legacy, migration, and frozen work.
+    if route == DesktopSyncRouteV1::EnterNormalS2 {
+        let _ = store.initialize_desktop_writer_v1()?;
+    }
+    Ok(route)
+}
+
+/// Routes the desktop sync lifecycle exclusively from durable authority.
+///
+/// A database-wide admitted migration always wins over a newer active target:
+/// its immutable historical target/root binding is reloaded and never derived
+/// from the active registry.  Without such a migration, the current active
+/// target is resolved through the approved binding-only resolver.
+pub fn route_desktop_sync_v1(conn: &Mutex<Connection>) -> Result<DesktopSyncRouteV1> {
+    if let Some(binding) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)? {
+        let route = route_bound_root_v1(conn, &binding.physical_root_id, true)?;
+        // A source owner with no corresponding migration state is rejected by
+        // the durable lookup path above or the root load; it can never cause a
+        // fallback to the currently active target's legacy route.
+        return Ok(route);
+    }
+    let (target_id, target_epoch) = {
+        let guard = conn.lock().map_err(|_| ROUTER_FAILURE)?;
+        crate::sync_targets::active_target(&guard)
+            .map_err(|_| ROUTER_FAILURE)?
+            .ok_or(ROUTER_FAILURE)?
+    };
+    let bound = resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?;
+    route_bound_root_v1(conn, &bound.binding.physical_root_id, false)
 }
 
 fn map_publish_result(result: RecoverPreparedIntentResultV1) -> DesktopS2LifecycleResultV1 {
