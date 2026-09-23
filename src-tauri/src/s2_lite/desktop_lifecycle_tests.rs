@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use crate::db_atomic_helpers::set_setting_tx;
 use base64::Engine;
@@ -9,8 +9,8 @@ use super::desktop_lifecycle::{
     run_desktop_s2_sync_execution_v1, DesktopS2LifecycleResultV1, DesktopS2RootBindingV1,
 };
 use super::durable_persistence::{
-    DesktopRootStateV1, MigrationExecutionBindingV1, OutboundBatchMutationV1, OutboundBatchV1,
-    SqliteS2LiteStoreV1,
+    DesktopRootStateV1, IncompatibleActivationFreezeFaultV1, MigrationExecutionBindingV1,
+    OutboundBatchMutationV1, OutboundBatchV1, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     prepare_activation_intent_v1, prepare_commit_intent_v1, ImmutableObjectRemoteV1,
@@ -19,7 +19,9 @@ use super::immutable_publish::{
 };
 use super::migration_orchestration::MigrationStateStoreV1;
 use super::remote_discovery::{
-    DirectoryListResultV1, DiscoveryBudgetsV1, DiscoveryExactGetResultV1, DiscoveryRemoteV1,
+    create_discovery_state_v1, DirectoryListResultV1, DiscoveryBudgetsV1,
+    DiscoveryExactGetResultV1, DiscoveryRemoteV1, VerifiedFingerprintEvidenceV1,
+    VerifiedRemoteObjectV1,
 };
 use super::root_coordinator::RootExecutionCoordinatorV1;
 use super::target_root_binding::resolve_active_target_root_binding_v1;
@@ -91,6 +93,40 @@ fn connection() -> Mutex<Connection> {
     Mutex::new(conn)
 }
 
+struct TempDatabase {
+    path: PathBuf,
+}
+
+impl TempDatabase {
+    fn new(name: &str) -> Self {
+        Self {
+            path: std::env::temp_dir().join(format!(
+                "watchtracker-desktop-lifecycle-{name}-{}.db",
+                uuid::Uuid::new_v4()
+            )),
+        }
+    }
+
+    fn connection(&self) -> Mutex<Connection> {
+        let conn = Connection::open(&self.path).unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        crate::db::setup_db(&conn).unwrap();
+        Mutex::new(conn)
+    }
+}
+
+impl Drop for TempDatabase {
+    fn drop(&mut self) {
+        for path in [
+            self.path.clone(),
+            PathBuf::from(format!("{}-wal", self.path.display())),
+            PathBuf::from(format!("{}-shm", self.path.display())),
+        ] {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 fn binding() -> DesktopS2RootBindingV1 {
     DesktopS2RootBindingV1 {
         target_id: "target".into(),
@@ -136,6 +172,59 @@ fn activation_bytes(activation_id: &str, legacy_fingerprint: Option<&str>) -> Ve
         "s2SemanticProfileVersion": 1,
     }))
     .unwrap()
+}
+
+fn bind_incompatible_migration_and_discovery(
+    conn: &Mutex<Connection>,
+) -> (String, VersionedDiscoveryStateV1) {
+    let target = activate_target(conn, "https://dav.example.test/migration/", "alice", 1);
+    let bound = resolve_active_target_root_binding_v1(conn, &target.id, 1).unwrap();
+    let root = bound.binding.physical_root_id;
+    let migration_id = "20000000-0000-4000-8000-000000000001";
+    let writer_id = "30000000-0000-4000-8000-000000000001";
+    let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+    store
+        .bind_migration_execution_v1(&MigrationExecutionBindingV1 {
+            binding_version: 1,
+            physical_root_id: root.clone(),
+            target_id: target.id,
+            target_epoch: 1,
+            captured_records_generation: 0,
+            legacy_fingerprint: Some("a".repeat(64)),
+            migration_id: migration_id.into(),
+        })
+        .unwrap();
+    let migration = super::migration_orchestration::create_migration_state_v1(
+        migration_id,
+        &root,
+        writer_id,
+        VERIFIED_AT,
+        "legacy-bootstrap",
+    )
+    .unwrap();
+    MigrationStateStoreV1::claim_or_load(&mut store, &migration).unwrap();
+
+    let activation_id = "10000000-0000-4000-8000-000000000001";
+    let bytes = activation_bytes(activation_id, Some(&"b".repeat(64)));
+    let hash = super::canonical::sha256_hex(&bytes);
+    let mut discovery = create_discovery_state_v1();
+    discovery.verified_objects.push(VerifiedRemoteObjectV1 {
+        path: format!("activations/{activation_id}--{hash}.json"),
+        kind: "activation".into(),
+        exact_bytes_hash: hash.clone(),
+        exact_bytes_hex: bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+        content_hash: hash,
+        commit_ref: None,
+        activation_id: Some(activation_id.into()),
+        fingerprint_evidence: VerifiedFingerprintEvidenceV1::Value {
+            value: "b".repeat(64),
+        },
+    });
+    assert!(store
+        .compare_and_swap_discovery_state(None, &discovery)
+        .unwrap());
+    let discovery = store.load_discovery_state().unwrap().unwrap();
+    (root, discovery)
 }
 
 fn prepared() -> super::immutable_publish::PreparedIntentV1 {
@@ -545,4 +634,106 @@ fn historical_migration_fingerprint_controls_discovered_activation_compatibility
             !compatible
         );
     }
+}
+
+#[test]
+fn incompatible_activation_freeze_rolls_back_at_every_internal_boundary() {
+    for fault in [
+        IncompatibleActivationFreezeFaultV1::AfterCutoverMerge,
+        IncompatibleActivationFreezeFaultV1::AfterRootFatalWrite,
+        IncompatibleActivationFreezeFaultV1::BeforeCommit,
+    ] {
+        let conn = connection();
+        let (root, discovery) = bind_incompatible_migration_and_discovery(&conn);
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        let safety_before = MigrationStateStoreV1::load_root_safety(&mut store, &root).unwrap();
+        let migration_before = MigrationStateStoreV1::load(&mut store, &root).unwrap();
+
+        assert!(store
+            .persist_incompatible_activation_freeze_with_fault_v1(&root, &discovery, fault)
+            .is_err());
+
+        assert_eq!(
+            MigrationStateStoreV1::load_root_safety(&mut store, &root).unwrap(),
+            safety_before,
+            "fault={fault:?} must not commit cutover or root fatal"
+        );
+        assert_eq!(
+            MigrationStateStoreV1::load(&mut store, &root).unwrap(),
+            migration_before,
+            "fault={fault:?} must not commit a migration fatal mirror"
+        );
+    }
+}
+
+#[test]
+fn incompatible_activation_freeze_is_atomic_and_blocks_second_connection_ordinary_publish() {
+    let database = TempDatabase::new("atomic-incompatible-activation");
+    let connection_a = database.connection();
+    let (root, discovery) = bind_incompatible_migration_and_discovery(&connection_a);
+    let connection_b = database.connection();
+    let intent = prepared();
+    let mut publisher = SqliteS2LiteStoreV1::open(&connection_b, &root).unwrap();
+    PreparedIntentStoreV1::persist(&mut publisher, &intent).unwrap();
+
+    let mut authority = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    authority
+        .persist_incompatible_activation_freeze_v1(&root, &discovery)
+        .unwrap();
+    let safety = MigrationStateStoreV1::load_root_safety(&mut authority, &root).unwrap();
+    assert!(safety.cutover_state.remote_s2_activated);
+    assert!(safety
+        .root_fatal_signals
+        .iter()
+        .any(|fatal| fatal.code == "SYNC_ROOT_FROZEN_LEGACY_CHANGE"));
+    let migration = MigrationStateStoreV1::load(&mut authority, &root)
+        .unwrap()
+        .unwrap();
+    assert!(migration
+        .root_fatal_signals
+        .iter()
+        .any(|fatal| fatal.code == "SYNC_ROOT_FROZEN_LEGACY_CHANGE"));
+    let safety_after_first = safety.clone();
+    authority
+        .persist_incompatible_activation_freeze_v1(&root, &discovery)
+        .unwrap();
+    assert_eq!(
+        MigrationStateStoreV1::load_root_safety(&mut authority, &root).unwrap(),
+        safety_after_first,
+        "the same incompatible observation is monotonic and idempotent"
+    );
+
+    let mut put_calls = 0;
+    assert_eq!(
+        publisher
+            .run_ordinary_publish_exclusive(&root, &intent, || {
+                put_calls += 1;
+                Ok(())
+            })
+            .unwrap(),
+        super::durable_persistence::OrdinaryPublishExclusiveResultV1::RejectedRootFrozen
+    );
+    assert_eq!(put_calls, 0);
+    assert!(publisher.load_desktop_root_state().unwrap().is_none());
+
+    let restarted_connection = database.connection();
+    let mut restarted = SqliteS2LiteStoreV1::open(&restarted_connection, &root).unwrap();
+    let mut restart_put_calls = 0;
+    assert_eq!(
+        restarted
+            .run_ordinary_publish_exclusive(&root, &intent, || {
+                restart_put_calls += 1;
+                Ok(())
+            })
+            .unwrap(),
+        super::durable_persistence::OrdinaryPublishExclusiveResultV1::RejectedRootFrozen
+    );
+    assert_eq!(restart_put_calls, 0);
+    assert!(
+        MigrationStateStoreV1::load_root_safety(&mut restarted, &root)
+            .unwrap()
+            .root_fatal_signals
+            .iter()
+            .any(|fatal| fatal.code == "SYNC_ROOT_FROZEN_LEGACY_CHANGE")
+    );
 }

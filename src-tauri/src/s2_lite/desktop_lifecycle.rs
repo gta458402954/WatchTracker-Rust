@@ -12,7 +12,7 @@ use super::business_projection::apply_complete_projection_v1;
 use super::canonical::Result;
 use super::durable_persistence::{
     DesktopRootStateV1, DurableMaterializedProjectionV1, OrdinaryPublishExclusiveResultV1,
-    SqliteS2LiteStoreV1,
+    SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     persist_prepared_intent_before_publish_v1, publish_persisted_intent_v1,
@@ -78,10 +78,10 @@ fn map_publish_result(result: RecoverPreparedIntentResultV1) -> DesktopS2Lifecyc
 fn recover_discovered_activation_cutover_v1(
     store: &mut SqliteS2LiteStoreV1<'_>,
     root_id: &str,
-    discovery: &super::remote_discovery::DiscoveryStateV1,
+    discovery: &VersionedDiscoveryStateV1,
 ) -> Result<bool> {
     let safety = MigrationStateStoreV1::load_root_safety(store, root_id)?;
-    let recovery = recover_activation_cutover_v1(discovery, Some(&safety.cutover_state));
+    let recovery = recover_activation_cutover_v1(&discovery.state, Some(&safety.cutover_state));
     let cutover = recovery
         .diagnostic_state()
         .ok_or(ProtocolError("activation_cutover_recovery_not_ready"))?;
@@ -95,12 +95,7 @@ fn recover_discovered_activation_cutover_v1(
                     if *legacy_fingerprint == binding.legacy_fingerprint
             );
             if !compatible {
-                MigrationStateStoreV1::persist_cutover_state(store, root_id, &cutover)?;
-                let _ = MigrationStateStoreV1::persist_root_fatal(
-                    store,
-                    root_id,
-                    "SYNC_ROOT_FROZEN_LEGACY_CHANGE",
-                )?;
+                store.persist_incompatible_activation_freeze_v1(root_id, discovery)?;
                 return Ok(true);
             }
         }
@@ -189,7 +184,7 @@ where
     let cutover_frozen = recover_discovered_activation_cutover_v1(
         &mut store,
         &binding.physical_root_id,
-        &committed_discovery.state,
+        &committed_discovery,
     )?;
     let safety = MigrationStateStoreV1::load_root_safety(&mut store, &binding.physical_root_id)?;
     if root_frozen || cutover_frozen || !safety.root_fatal_signals.is_empty() {

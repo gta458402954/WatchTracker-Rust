@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use super::activation_cutover::{
     decide_legacy_put_v1, recover_activation_cutover_v1, ActivationCutoverStateV1,
-    LegacyPutDecisionV1,
+    ActivationFingerprintConsistencyV1, LegacyPutDecisionV1,
 };
 use super::canonical::{
     jcs_bytes, sha256_hex, validate_canonical_uuid_v4, validate_commit_ref, ProtocolError, Result,
@@ -273,6 +273,17 @@ pub(crate) enum OutboundFreezeFaultV1 {
 pub(crate) enum OutboundCompletionFaultV1 {
     AfterStagingAcknowledgement,
     AfterWriterHeadAdvance,
+}
+
+/// Test-only failure points for the one durable incompatible-activation
+/// authority transition.  Keeping the failure points inside the transaction
+/// makes the old two-commit crash window directly regression-testable.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IncompatibleActivationFreezeFaultV1 {
+    AfterCutoverMerge,
+    AfterRootFatalWrite,
+    BeforeCommit,
 }
 
 #[derive(Serialize)]
@@ -632,6 +643,31 @@ fn validate_migration_execution_target_authority(
         return Err(ROOT_MISMATCH);
     }
     Ok(())
+}
+
+fn load_migration_execution_binding_from(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Option<MigrationExecutionBindingV1>> {
+    let bytes = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?;
+    bytes
+        .map(|bytes| {
+            let binding: MigrationExecutionBindingV1 = decode(&bytes)?;
+            validate_migration_execution_binding(&binding)?;
+            if binding.physical_root_id != root_id {
+                return Err(STORE_CORRUPTION);
+            }
+            validate_migration_execution_target_authority(conn, &binding, root_id)?;
+            Ok(binding)
+        })
+        .transpose()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1494,25 +1530,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         &mut self,
     ) -> Result<Option<MigrationExecutionBindingV1>> {
         let conn = self.connection()?;
-        let bytes = database(
-            conn.query_row(
-                "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
-                [self.root_id],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
-            .optional(),
-        )?;
-        bytes
-            .map(|bytes| {
-                let binding: MigrationExecutionBindingV1 = decode(&bytes)?;
-                validate_migration_execution_binding(&binding)?;
-                if binding.physical_root_id != self.root_id {
-                    return Err(STORE_CORRUPTION);
-                }
-                validate_migration_execution_target_authority(&conn, &binding, self.root_id)?;
-                Ok(binding)
-            })
-            .transpose()
+        load_migration_execution_binding_from(&conn, self.root_id)
     }
 
     /// Claims the one execution identity for this physical root.  A retry may
@@ -2768,6 +2786,131 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         merge_discovery_fatals_into_root_authority(&transaction, self.root_id, state)?;
         database(transaction.commit())?;
         Ok(true)
+    }
+
+    /// Atomically records a verified remote activation that is incompatible
+    /// with this root's immutable migration fingerprint.  The discovery row,
+    /// target/root-bound migration identity, cutover evidence, root fatal, and
+    /// any diagnostic migration fatal mirror are all checked or updated while
+    /// one `BEGIN IMMEDIATE` transaction is held.
+    ///
+    /// This is intentionally separate from the compatible cutover merge: an
+    /// incompatible activation must never leave a committed observation that
+    /// admits ordinary publication before its fatal barrier is visible.
+    pub fn persist_incompatible_activation_freeze_v1(
+        &mut self,
+        root_id: &str,
+        discovery: &VersionedDiscoveryStateV1,
+    ) -> Result<()> {
+        self.persist_incompatible_activation_freeze_inner_v1(
+            root_id,
+            discovery,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn persist_incompatible_activation_freeze_with_fault_v1(
+        &mut self,
+        root_id: &str,
+        discovery: &VersionedDiscoveryStateV1,
+        fault: IncompatibleActivationFreezeFaultV1,
+    ) -> Result<()> {
+        self.persist_incompatible_activation_freeze_inner_v1(root_id, discovery, Some(fault))
+    }
+
+    fn persist_incompatible_activation_freeze_inner_v1(
+        &mut self,
+        root_id: &str,
+        discovery: &VersionedDiscoveryStateV1,
+        #[cfg(test)] fault: Option<IncompatibleActivationFreezeFaultV1>,
+    ) -> Result<()> {
+        self.require_root(root_id)?;
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, root_id)?;
+
+        // The caller may have observed an obsolete discovery generation before
+        // waiting for this writer lock.  Requiring byte-for-byte state equality
+        // with the persisted generation makes the exact verified evidence an
+        // authority input rather than a stale diagnostic snapshot.
+        let current_discovery =
+            load_discovery_state_from(&transaction, root_id)?.ok_or(STORE_CORRUPTION)?;
+        if current_discovery != *discovery {
+            return Err(STORE_CORRUPTION);
+        }
+        let binding =
+            load_migration_execution_binding_from(&transaction, root_id)?.ok_or(ROOT_MISMATCH)?;
+        let mut safety = load_root_safety_from(&transaction, root_id)?.ok_or(STORE_CORRUPTION)?;
+        let cutover =
+            recover_activation_cutover_v1(&current_discovery.state, Some(&safety.cutover_state))
+                .diagnostic_state()
+                .ok_or(ProtocolError("activation_cutover_recovery_not_ready"))?;
+        let compatible = matches!(
+            &cutover.fingerprint_consistency,
+            ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
+                if *legacy_fingerprint == binding.legacy_fingerprint
+        );
+        if !cutover.remote_s2_activated || compatible {
+            return Err(STORE_CORRUPTION);
+        }
+        let merged = merge_migration_root_cutover_state_v1(&safety.cutover_state, &cutover)?;
+        #[cfg(test)]
+        if fault == Some(IncompatibleActivationFreezeFaultV1::AfterCutoverMerge) {
+            return Err(ProtocolError(
+                "INJECTED_INCOMPATIBLE_ACTIVATION_FREEZE_FAILURE",
+            ));
+        }
+
+        let mut fatal_codes = safety
+            .root_fatal_signals
+            .iter()
+            .map(|fatal| fatal.code.clone())
+            .chain(
+                merged
+                    .root_fatal_signals
+                    .iter()
+                    .map(|fatal| fatal.code.clone()),
+            )
+            .collect::<Vec<_>>();
+        fatal_codes.push("SYNC_ROOT_FROZEN_LEGACY_CHANGE".to_string());
+        fatal_codes.sort();
+        fatal_codes.dedup();
+        let next_fatals = fatal_codes
+            .into_iter()
+            .map(|code| MigrationRootFatalV1 { code })
+            .collect::<Vec<_>>();
+        if safety.cutover_state != merged || safety.root_fatal_signals != next_fatals {
+            safety.generation = safety.generation.checked_add(1).ok_or(STORE_CORRUPTION)?;
+            safety.cutover_state = merged;
+            safety.root_fatal_signals = next_fatals;
+            save_root_safety(&transaction, &safety)?;
+        }
+        #[cfg(test)]
+        if fault == Some(IncompatibleActivationFreezeFaultV1::AfterRootFatalWrite) {
+            return Err(ProtocolError(
+                "INJECTED_INCOMPATIBLE_ACTIVATION_FREEZE_FAILURE",
+            ));
+        }
+
+        if let Some(mut migration) = load_migration_from(&transaction, root_id)? {
+            let mut changed = false;
+            for fatal in &safety.root_fatal_signals {
+                changed |= add_fatal(&mut migration, &fatal.code)?;
+            }
+            if changed {
+                save_migration(&transaction, &migration)?;
+            }
+        }
+        #[cfg(test)]
+        if fault == Some(IncompatibleActivationFreezeFaultV1::BeforeCommit) {
+            return Err(ProtocolError(
+                "INJECTED_INCOMPATIBLE_ACTIVATION_FREEZE_FAILURE",
+            ));
+        }
+        database(transaction.commit())?;
+        Ok(())
     }
 
     pub fn compare_and_swap_root_safety(
