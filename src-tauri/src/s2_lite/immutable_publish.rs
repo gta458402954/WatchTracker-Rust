@@ -108,6 +108,18 @@ pub trait PreparedIntentStoreV1 {
 
 pub trait PublishedReceiptStoreV1 {
     fn persist(&mut self, receipt: &RemotePublishedReceiptV1) -> Result<()>;
+
+    /// Returns the durable, root-bound receipt for an already prepared exact
+    /// object. Implementations that do not own durable receipt storage retain
+    /// the historical recovery behavior; the production SQLite store must
+    /// override this so a receipt committed before a later state CAS remains
+    /// publication authority after restart.
+    fn load_verified_receipt(
+        &mut self,
+        _remote_path: &str,
+    ) -> Result<Option<RemotePublishedReceiptV1>> {
+        Ok(None)
+    }
 }
 
 pub trait PreparedActivationIntentStoreV1 {

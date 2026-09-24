@@ -66,6 +66,18 @@ fn no_network_result(status: MigrationStatusV1) -> Option<BootstrapExecutionResu
     }
 }
 
+/// A migration-state generation is a CAS/versioning detail, not publication
+/// progress. The production wrapper exposes progress only when a bootstrap
+/// stage or one of its task receipts changed durably.
+fn bootstrap_semantics_advanced(
+    before: &super::migration_orchestration::MigrationStateV1,
+    after: &super::migration_orchestration::MigrationStateV1,
+) -> bool {
+    before.status != after.status
+        || before.stage_a != after.stage_a
+        || before.stage_b != after.stage_b
+}
+
 /// Executes at most one frozen bootstrap orchestration step using the exact
 /// historical target/root binding. The production factory is intentionally
 /// injected so deterministic tests can use a local fake remote without
@@ -178,7 +190,14 @@ where
         &mut activation_receipt_store,
         verified_at_diagnostic,
     )?;
-    Ok(no_network_result(next.status).unwrap_or(BootstrapExecutionResultV1::Progressed))
+    if let Some(result) = no_network_result(next.status) {
+        return Ok(result);
+    }
+    Ok(if bootstrap_semantics_advanced(&durable, &next) {
+        BootstrapExecutionResultV1::Progressed
+    } else {
+        BootstrapExecutionResultV1::Pending
+    })
 }
 
 /// Production WebDAV entry point. Historical credentials are resolved only
@@ -247,6 +266,7 @@ mod tests {
     struct FakeState {
         objects: BTreeMap<String, Vec<u8>>,
         scripted_gets: VecDeque<RemoteExactGetResultV1>,
+        get_calls: usize,
         put_calls: usize,
     }
 
@@ -267,6 +287,7 @@ mod tests {
 
         fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
             let mut state = self.state.lock().unwrap();
+            state.get_calls += 1;
             state.scripted_gets.pop_front().unwrap_or_else(|| {
                 state.objects.get(path).cloned().map_or(
                     RemoteExactGetResultV1::DefinitelyAbsent,
@@ -407,6 +428,10 @@ mod tests {
     }
 
     fn run(fixture: &Fixture) -> BootstrapExecutionResultV1 {
+        run_result(fixture).unwrap()
+    }
+
+    fn run_result(fixture: &Fixture) -> Result<BootstrapExecutionResultV1> {
         let fake = FakeRemote {
             root_id: fixture.root_id.clone(),
             state: fixture.remote_state.clone(),
@@ -425,7 +450,51 @@ mod tests {
             |_, _| Ok(fake),
             CREATED,
         )
-        .unwrap()
+    }
+
+    /// Reproduces the precise crash boundary after the exact prepared intent
+    /// and its verified receipt have committed, but before migration-state CAS
+    /// attaches that receipt to the Stage A task.
+    fn persist_receipt_before_task_state_cas(
+        fixture: &Fixture,
+    ) -> super::super::migration_orchestration::MigrationCommitTaskV1 {
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        assert_eq!(run(fixture), BootstrapExecutionResultV1::Progressed);
+        let task = task(fixture);
+        assert!(task.receipt.is_none());
+        let mut remote = FakeRemote {
+            root_id: fixture.root_id.clone(),
+            state: fixture.remote_state.clone(),
+        };
+        remote.state.lock().unwrap().objects.insert(
+            task.intent.remote_path.clone(),
+            task.intent.exact_bytes.clone(),
+        );
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        assert!(matches!(
+            store
+                .verify_and_persist_commit_receipt(&task.intent, &mut remote, CREATED)
+                .unwrap(),
+            super::super::immutable_publish::RecoverPreparedIntentResultV1::AlreadyPublishedExact(
+                _
+            )
+        ));
+        assert!(store
+            .load_published_receipt(&task.intent.remote_path)
+            .unwrap()
+            .is_some());
+        let mut migration_store =
+            SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        let state = MigrationStateStoreV1::load(&mut migration_store, &fixture.root_id)
+            .unwrap()
+            .unwrap();
+        assert!(state.stage_a[0].receipt.is_none());
+        task
     }
 
     #[test]
@@ -523,7 +592,7 @@ mod tests {
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
         drop(state);
-        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
+        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Pending);
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 1);
         assert!(SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id)
             .unwrap()
@@ -532,6 +601,131 @@ mod tests {
             .is_none());
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 1);
+    }
+
+    #[test]
+    fn durable_receipt_before_state_cas_survives_absent_restart_without_network() {
+        let fixture = fixture();
+        let task = persist_receipt_before_task_state_cas(&fixture);
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote.objects.clear();
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
+        remote.get_calls = 0;
+        remote.put_calls = 0;
+        drop(remote);
+
+        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
+        let remote = fixture.remote_state.lock().unwrap();
+        assert_eq!(remote.get_calls, 0);
+        assert_eq!(remote.put_calls, 0);
+        drop(remote);
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        let state = MigrationStateStoreV1::load(&mut store, &fixture.root_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.status, MigrationStatusV1::StageAComplete);
+        assert_eq!(
+            state.stage_a[0].receipt.as_ref(),
+            store
+                .load_published_receipt(&task.intent.remote_path)
+                .unwrap()
+                .as_ref()
+        );
+    }
+
+    #[test]
+    fn durable_receipt_before_state_cas_survives_indeterminate_restart_without_network() {
+        let fixture = fixture();
+        let task = persist_receipt_before_task_state_cas(&fixture);
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        remote.get_calls = 0;
+        remote.put_calls = 0;
+        drop(remote);
+
+        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
+        let remote = fixture.remote_state.lock().unwrap();
+        assert_eq!(remote.get_calls, 0);
+        assert_eq!(remote.put_calls, 0);
+        drop(remote);
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        let state = MigrationStateStoreV1::load(&mut store, &fixture.root_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.status, MigrationStatusV1::StageAComplete);
+        assert_eq!(
+            state.stage_a[0].receipt.as_ref(),
+            store
+                .load_published_receipt(&task.intent.remote_path)
+                .unwrap()
+                .as_ref()
+        );
+    }
+
+    #[test]
+    fn corrupted_durable_receipt_fails_closed_before_network_recovery() {
+        let fixture = fixture();
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
+        let task = task(&fixture);
+        fixture
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO s2_lite_published_receipt_v1(
+                     root_id, receipt_kind, remote_path, receipt_json
+                 ) VALUES(?1, 'commit', ?2, ?3)",
+                rusqlite::params![
+                    fixture.root_id,
+                    task.intent.remote_path,
+                    b"corrupt".to_vec()
+                ],
+            )
+            .unwrap();
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote.get_calls = 0;
+        remote.put_calls = 0;
+        drop(remote);
+
+        assert!(run_result(&fixture).is_err());
+        let remote = fixture.remote_state.lock().unwrap();
+        assert_eq!(remote.get_calls, 0);
+        assert_eq!(remote.put_calls, 0);
+    }
+
+    #[test]
+    fn indeterminate_without_receipt_or_semantic_advance_is_pending() {
+        let fixture = fixture();
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
+        let before = task(&fixture);
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        remote.put_calls = 0;
+        drop(remote);
+
+        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Pending);
+        let after = task(&fixture);
+        assert_eq!(after.receipt, None);
+        assert_eq!(after, before);
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 0);
     }
 
     #[test]

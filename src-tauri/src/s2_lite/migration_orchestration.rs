@@ -974,9 +974,21 @@ pub fn execute_migration_step_v1<
         // intentionally bound to that durable object; never let an exact GET
         // bypass the local prepared-intent boundary.
         let persisted = persist_prepared_intent_before_publish_v1(&task.intent, intent_store)?;
+        // A verified durable receipt survives a crash between receipt
+        // persistence and the migration-state CAS. It is stronger authority
+        // than another remote observation, so validate and reuse it before
+        // restart recovery can issue any GET or PUT.
+        let durable_receipt = receipt_store.load_verified_receipt(&task.intent.remote_path)?;
+        if let (Some(task_receipt), Some(durable_receipt)) =
+            (task.receipt.as_ref(), durable_receipt.as_ref())
+        {
+            if task_receipt != durable_receipt {
+                return Err(ProtocolError("LOCAL_PUBLISHED_RECEIPT_CORRUPTION"));
+            }
+        }
         let mut result = restart_durable_publish_v1(
             &task.intent,
-            task.receipt.as_ref(),
+            task.receipt.as_ref().or(durable_receipt.as_ref()),
             remote,
             verified_at_diagnostic,
         )?;

@@ -3878,6 +3878,13 @@ impl PublishedReceiptStoreV1 for SqliteS2LiteStoreV1<'_> {
             receipt: receipt.clone(),
         })
     }
+
+    fn load_verified_receipt(
+        &mut self,
+        remote_path: &str,
+    ) -> Result<Option<RemotePublishedReceiptV1>> {
+        self.load_published_receipt(remote_path)
+    }
 }
 
 impl PublishedActivationReceiptStoreV1 for SqliteS2LiteStoreV1<'_> {
