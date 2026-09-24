@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
+use super::activation_cutover::ActivationFingerprintConsistencyV1;
 use super::canonical::{ProtocolError, Result};
 use super::durable_persistence::{
     MigrationExecutionBindingV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
@@ -30,6 +31,18 @@ pub enum BootstrapExecutionResultV1 {
     Progressed,
     BootstrapComplete,
     ActivationDeferred,
+    Pending,
+    RootFrozen,
+}
+
+/// Production result for the activation-publication checkpoint. This endpoint
+/// deliberately stops at an attached, verified activation receipt; migration
+/// completion and the normal-writer handoff belong to 4B2.2.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActivationExecutionResultV1 {
+    Progressed,
+    ActivationVerified,
+    AlreadyVerifiedRemotely,
     Pending,
     RootFrozen,
 }
@@ -76,6 +89,15 @@ fn bootstrap_semantics_advanced(
     before.status != after.status
         || before.stage_a != after.stage_a
         || before.stage_b != after.stage_b
+}
+
+fn activation_semantics_advanced(
+    before: &super::migration_orchestration::MigrationStateV1,
+    after: &super::migration_orchestration::MigrationStateV1,
+) -> bool {
+    before.status != after.status
+        || before.activation_receipt != after.activation_receipt
+        || before.activation_receipt_root_id != after.activation_receipt_root_id
 }
 
 /// Executes at most one frozen bootstrap orchestration step using the exact
@@ -200,6 +222,185 @@ where
     })
 }
 
+/// Executes at most one production activation recovery step for the migration
+/// bound to the database-wide historical source owner. It never performs the
+/// later local completion/cutover bookkeeping.
+pub fn execute_production_activation_with_factory_v1<R, L, F>(
+    conn: &Mutex<Connection>,
+    coordinator: &RootExecutionCoordinatorV1,
+    mut load_historical_credentials: L,
+    build_remote: F,
+    verified_at_diagnostic: &str,
+) -> Result<ActivationExecutionResultV1>
+where
+    R: ImmutableObjectRemoteV1,
+    L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
+    F: FnOnce(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
+{
+    let Some(execution) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
+    else {
+        return Err(BOOTSTRAP_EXECUTION_FAILURE);
+    };
+    let root_id = execution.physical_root_id.clone();
+    let target =
+        load_historical_target_root_binding_v1(conn, &execution.target_id, execution.target_epoch)?;
+    let Some(target) = target else {
+        let mut store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+        freeze_root(
+            &mut store,
+            &root_id,
+            "S2_ACTIVATION_HISTORICAL_BINDING_MISSING",
+        )?;
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    };
+    if !binding_matches_execution(&execution, &target) {
+        let mut store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+        freeze_root(
+            &mut store,
+            &root_id,
+            "S2_ACTIVATION_HISTORICAL_BINDING_MISMATCH",
+        )?;
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+
+    let mut preflight = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+    let migration = MigrationStateStoreV1::load(&mut preflight, &root_id)?
+        .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+    if migration.migration_id != execution.migration_id {
+        freeze_root(
+            &mut preflight,
+            &root_id,
+            "S2_ACTIVATION_MIGRATION_BINDING_MISMATCH",
+        )?;
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    if migration.status == MigrationStatusV1::RootFrozen {
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    if matches!(
+        migration.status,
+        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
+    ) {
+        return Ok(ActivationExecutionResultV1::ActivationVerified);
+    }
+    if !matches!(
+        migration.status,
+        MigrationStatusV1::StageBComplete | MigrationStatusV1::ActivationPublishing
+    ) {
+        return Ok(ActivationExecutionResultV1::Pending);
+    }
+    let safety = MigrationStateStoreV1::load_root_safety(&mut preflight, &root_id)?;
+    if !safety.root_fatal_signals.is_empty() {
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    let expected_fingerprint = migration
+        .snapshot
+        .as_ref()
+        .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?
+        .legacy_fingerprint
+        .clone();
+    match &safety.cutover_state.fingerprint_consistency {
+        ActivationFingerprintConsistencyV1::NoEvidence => {}
+        ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
+            if legacy_fingerprint.as_ref() == Some(&expected_fingerprint) =>
+        {
+            return Ok(ActivationExecutionResultV1::AlreadyVerifiedRemotely);
+        }
+        ActivationFingerprintConsistencyV1::Consistent { .. }
+        | ActivationFingerprintConsistencyV1::Conflict => {
+            freeze_root(
+                &mut preflight,
+                &root_id,
+                "S2_ACTIVATION_VERIFIED_FINGERPRINT_MISMATCH",
+            )?;
+            return Ok(ActivationExecutionResultV1::RootFrozen);
+        }
+    }
+
+    let Some(credentials) = load_historical_credentials(&target)? else {
+        return Ok(ActivationExecutionResultV1::Pending);
+    };
+    let root = webdav_root_v1(&credentials.canonical_url, &credentials.username)
+        .map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)?;
+    if root.canonical_url != target.canonical_url
+        || root.normalized_account != target.normalized_account
+        || root.physical_root_id != root_id
+    {
+        freeze_root(
+            &mut preflight,
+            &root_id,
+            "S2_ACTIVATION_HISTORICAL_CREDENTIAL_BINDING_MISMATCH",
+        )?;
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    let mut remote = build_remote(&target, credentials)?;
+    if remote.physical_root_id() != Some(root_id.as_str()) {
+        freeze_root(
+            &mut preflight,
+            &root_id,
+            "S2_ACTIVATION_REMOTE_ROOT_MISMATCH",
+        )?;
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+
+    let _guard = coordinator.acquire_blocking(&root_id)?;
+    let mut migration_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+    let durable = MigrationStateStoreV1::load(&mut migration_store, &root_id)?
+        .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+    if durable.migration_id != execution.migration_id {
+        freeze_root(
+            &mut migration_store,
+            &root_id,
+            "S2_ACTIVATION_DURABLE_MIGRATION_MISMATCH",
+        )?;
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    if durable.status == MigrationStatusV1::RootFrozen {
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    if matches!(
+        durable.status,
+        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
+    ) {
+        return Ok(ActivationExecutionResultV1::ActivationVerified);
+    }
+    if !matches!(
+        durable.status,
+        MigrationStatusV1::StageBComplete | MigrationStatusV1::ActivationPublishing
+    ) {
+        return Ok(ActivationExecutionResultV1::Pending);
+    }
+    let attachment = start_or_attach_migration_v1(&durable, &mut migration_store)?;
+    let capability =
+        create_migration_root_execution_capability_v1(&attachment, &remote, &migration_store)?;
+    let mut intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+    let mut receipt_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+    let mut activation_intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+    let mut activation_receipt_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
+    let next = execute_migration_step_v1(
+        &durable,
+        &capability,
+        &mut remote,
+        &mut migration_store,
+        &mut intent_store,
+        &mut receipt_store,
+        &mut activation_intent_store,
+        &mut activation_receipt_store,
+        verified_at_diagnostic,
+    )?;
+    if next.status == MigrationStatusV1::RootFrozen {
+        return Ok(ActivationExecutionResultV1::RootFrozen);
+    }
+    if next.status == MigrationStatusV1::ActivationVerified {
+        return Ok(ActivationExecutionResultV1::ActivationVerified);
+    }
+    Ok(if activation_semantics_advanced(&durable, &next) {
+        ActivationExecutionResultV1::Progressed
+    } else {
+        ActivationExecutionResultV1::Pending
+    })
+}
+
 /// Production WebDAV entry point. Historical credentials are resolved only
 /// from the migration binding's target; the active target is never consulted.
 pub fn execute_production_bootstrap_with_webdav_v1(
@@ -209,6 +410,52 @@ pub fn execute_production_bootstrap_with_webdav_v1(
     verified_at_diagnostic: &str,
 ) -> Result<BootstrapExecutionResultV1> {
     execute_production_bootstrap_with_factory_v1(
+        conn,
+        coordinator,
+        |target| {
+            let mut guard = conn.lock().map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)?;
+            let credentials = crate::sync_targets::historical_request_credentials(
+                &mut guard,
+                paths,
+                &target.target_id,
+            )
+            .map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)?;
+            Ok(credentials.map(|(canonical_url, username, password)| {
+                HistoricalWebDavCredentialsV1 {
+                    canonical_url,
+                    username,
+                    password: password.to_string(),
+                }
+            }))
+        },
+        |target, credentials| {
+            WebDavS2RemoteV1::new(WebDavS2ConfigV1 {
+                root: WebDavRootV1 {
+                    canonical_url: target.canonical_url.clone(),
+                    normalized_account: target.normalized_account.clone(),
+                    physical_root_id: target.physical_root_id.clone(),
+                },
+                username: credentials.username,
+                password: credentials.password,
+                proxy: None,
+                timeout: Duration::from_secs(30),
+            })
+            .map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)
+        },
+        verified_at_diagnostic,
+    )
+}
+
+/// Production WebDAV activation entry point. Credentials are resolved from
+/// the migration's historical target only; a later active-target switch is
+/// never authority to retarget the frozen activation.
+pub fn execute_production_activation_with_webdav_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    verified_at_diagnostic: &str,
+) -> Result<ActivationExecutionResultV1> {
+    execute_production_activation_with_factory_v1(
         conn,
         coordinator,
         |target| {
@@ -437,6 +684,57 @@ mod tests {
             state: fixture.remote_state.clone(),
         };
         execute_production_bootstrap_with_factory_v1(
+            &fixture.conn,
+            &RootExecutionCoordinatorV1::default(),
+            |binding| {
+                assert_eq!(binding.target_id, fixture.target_a);
+                Ok(Some(HistoricalWebDavCredentialsV1 {
+                    canonical_url: binding.canonical_url.clone(),
+                    username: binding.normalized_account.clone(),
+                    password: "historical-a".into(),
+                }))
+            },
+            |_, _| Ok(fake),
+            CREATED,
+        )
+    }
+
+    fn activation_state(
+        fixture: &Fixture,
+    ) -> super::super::migration_orchestration::MigrationStateV1 {
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        MigrationStateStoreV1::load(&mut store, &fixture.root_id)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn migration_fingerprint(fixture: &Fixture) -> String {
+        activation_state(fixture)
+            .snapshot
+            .unwrap()
+            .legacy_fingerprint
+    }
+
+    fn complete_stage_b(fixture: &Fixture) {
+        assert_eq!(run(fixture), BootstrapExecutionResultV1::Progressed);
+        assert_eq!(run(fixture), BootstrapExecutionResultV1::Progressed);
+        assert_eq!(run(fixture), BootstrapExecutionResultV1::BootstrapComplete);
+        assert_eq!(
+            activation_state(fixture).status,
+            MigrationStatusV1::StageBComplete
+        );
+    }
+
+    fn run_activation(fixture: &Fixture) -> ActivationExecutionResultV1 {
+        run_activation_result(fixture).unwrap()
+    }
+
+    fn run_activation_result(fixture: &Fixture) -> Result<ActivationExecutionResultV1> {
+        let fake = FakeRemote {
+            root_id: fixture.root_id.clone(),
+            state: fixture.remote_state.clone(),
+        };
+        execute_production_activation_with_factory_v1(
             &fixture.conn,
             &RootExecutionCoordinatorV1::default(),
             |binding| {
@@ -780,5 +1078,331 @@ mod tests {
             BootstrapExecutionResultV1::Pending
         );
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 0);
+    }
+
+    #[test]
+    fn activation_freezes_before_network_and_response_loss_recovers_exactly() {
+        let fixture = fixture();
+        complete_stage_b(&fixture);
+        let puts_before = fixture.remote_state.lock().unwrap().put_calls;
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        let state = activation_state(&fixture);
+        assert_eq!(state.status, MigrationStatusV1::ActivationPublishing);
+        let intent = state.activation_intent.unwrap();
+        assert!(SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id)
+            .unwrap()
+            .load_prepared_activation_intent(&intent.remote_path)
+            .unwrap()
+            .is_none());
+
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        drop(remote);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Pending
+        );
+        let store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        let frozen = store
+            .load_prepared_activation_intent(&intent.remote_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(frozen, intent);
+        assert_eq!(
+            fixture.remote_state.lock().unwrap().put_calls,
+            puts_before + 1
+        );
+
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(
+            fixture.remote_state.lock().unwrap().put_calls,
+            puts_before + 1
+        );
+        let state = activation_state(&fixture);
+        assert_eq!(state.status, MigrationStatusV1::ActivationVerified);
+        assert_eq!(state.activation_intent.unwrap(), frozen);
+        assert!(state.activation_receipt.is_some());
+    }
+
+    #[test]
+    fn activation_incomplete_or_indeterminate_is_pending_without_put() {
+        let fixture = fixture();
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Pending
+        );
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 0);
+        complete_stage_b(&fixture);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        let puts_before = fixture.remote_state.lock().unwrap().put_calls;
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Pending
+        );
+        let state = activation_state(&fixture);
+        assert_eq!(state.status, MigrationStatusV1::ActivationPublishing);
+        assert!(state.activation_receipt.is_none());
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, puts_before);
+    }
+
+    #[test]
+    fn activation_exact_existing_and_mismatch_have_no_replacement_put() {
+        let exact = fixture();
+        complete_stage_b(&exact);
+        assert_eq!(
+            run_activation(&exact),
+            ActivationExecutionResultV1::Progressed
+        );
+        let intent = activation_state(&exact).activation_intent.unwrap();
+        exact
+            .remote_state
+            .lock()
+            .unwrap()
+            .objects
+            .insert(intent.remote_path.clone(), intent.exact_bytes.clone());
+        let puts_before = exact.remote_state.lock().unwrap().put_calls;
+        assert_eq!(
+            run_activation(&exact),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(exact.remote_state.lock().unwrap().put_calls, puts_before);
+
+        let mismatch = fixture();
+        complete_stage_b(&mismatch);
+        assert_eq!(
+            run_activation(&mismatch),
+            ActivationExecutionResultV1::Progressed
+        );
+        let intent = activation_state(&mismatch).activation_intent.unwrap();
+        mismatch
+            .remote_state
+            .lock()
+            .unwrap()
+            .objects
+            .insert(intent.remote_path, b"wrong activation".to_vec());
+        let puts_before = mismatch.remote_state.lock().unwrap().put_calls;
+        assert_eq!(
+            run_activation(&mismatch),
+            ActivationExecutionResultV1::RootFrozen
+        );
+        assert_eq!(mismatch.remote_state.lock().unwrap().put_calls, puts_before);
+    }
+
+    #[test]
+    fn activation_durable_receipt_crash_reuses_receipt_before_any_network() {
+        let fixture = fixture();
+        complete_stage_b(&fixture);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        let intent = activation_state(&fixture).activation_intent.unwrap();
+        let mut store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        super::super::immutable_publish::PreparedActivationIntentStoreV1::persist(
+            &mut store, &intent,
+        )
+        .unwrap();
+        let mut remote = FakeRemote {
+            root_id: fixture.root_id.clone(),
+            state: fixture.remote_state.clone(),
+        };
+        remote
+            .state
+            .lock()
+            .unwrap()
+            .objects
+            .insert(intent.remote_path.clone(), intent.exact_bytes.clone());
+        assert!(matches!(
+            store
+                .verify_and_persist_activation_receipt(&intent, &mut remote, CREATED)
+                .unwrap(),
+            super::super::immutable_publish::RecoverActivationIntentResultV1::AlreadyPublishedExact(
+                _
+            )
+        ));
+        assert!(activation_state(&fixture).activation_receipt.is_none());
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote.objects.clear();
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
+        remote.get_calls = 0;
+        remote.put_calls = 0;
+        drop(remote);
+
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        let remote = fixture.remote_state.lock().unwrap();
+        assert_eq!(remote.get_calls, 0);
+        assert_eq!(remote.put_calls, 0);
+        assert!(activation_state(&fixture).activation_receipt.is_some());
+    }
+
+    #[test]
+    fn verified_third_party_activation_skips_local_put_but_incompatible_evidence_freezes() {
+        let compatible = fixture();
+        complete_stage_b(&compatible);
+        let fingerprint = migration_fingerprint(&compatible);
+        let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
+        cutover.remote_s2_activated = true;
+        cutover.verified_activation_evidence.push(
+            super::super::activation_cutover::VerifiedActivationEvidenceV1 {
+                path: "activations/third-party.json".into(),
+                activation_id: "92000000-0000-4000-8000-000000000001".into(),
+                content_hash: "a".repeat(64),
+                exact_bytes_hash: "a".repeat(64),
+                legacy_fingerprint: Some(fingerprint.clone()),
+            },
+        );
+        cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+            legacy_fingerprint: Some(fingerprint),
+        };
+        let mut store = SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        MigrationStateStoreV1::persist_cutover_state(&mut store, &compatible.root_id, &cutover)
+            .unwrap();
+        assert_eq!(
+            run_activation(&compatible),
+            ActivationExecutionResultV1::AlreadyVerifiedRemotely
+        );
+        assert_eq!(compatible.remote_state.lock().unwrap().put_calls, 2);
+
+        let incompatible = fixture();
+        complete_stage_b(&incompatible);
+        let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
+        cutover.remote_s2_activated = true;
+        cutover.verified_activation_evidence.push(
+            super::super::activation_cutover::VerifiedActivationEvidenceV1 {
+                path: "activations/incompatible.json".into(),
+                activation_id: "93000000-0000-4000-8000-000000000001".into(),
+                content_hash: "b".repeat(64),
+                exact_bytes_hash: "b".repeat(64),
+                legacy_fingerprint: Some("f".repeat(64)),
+            },
+        );
+        cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+            legacy_fingerprint: Some("f".repeat(64)),
+        };
+        let mut store =
+            SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
+        MigrationStateStoreV1::persist_cutover_state(&mut store, &incompatible.root_id, &cutover)
+            .unwrap();
+        assert_eq!(
+            run_activation(&incompatible),
+            ActivationExecutionResultV1::RootFrozen
+        );
+        assert_eq!(incompatible.remote_state.lock().unwrap().put_calls, 2);
+    }
+
+    #[test]
+    fn activation_historical_target_and_fatal_first_never_put() {
+        let fixture = fixture();
+        complete_stage_b(&fixture);
+        let target_b = activate(&fixture.conn, "https://dav.example.test/b/", "bob", 2);
+        let fake = FakeRemote {
+            root_id: fixture.root_id.clone(),
+            state: fixture.remote_state.clone(),
+        };
+        assert_eq!(
+            execute_production_activation_with_factory_v1(
+                &fixture.conn,
+                &RootExecutionCoordinatorV1::default(),
+                |binding| {
+                    assert_eq!(binding.target_id, fixture.target_a);
+                    assert_ne!(binding.target_id, target_b);
+                    Ok(None)
+                },
+                |_, _| Ok(fake),
+                CREATED,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::Pending
+        );
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 2);
+
+        let (fatal, second) = fixture_with_second_connection();
+        complete_stage_b(&fatal);
+        assert_eq!(
+            run_activation(&fatal),
+            ActivationExecutionResultV1::Progressed
+        );
+        let mut store = SqliteS2LiteStoreV1::open(&second, &fatal.root_id).unwrap();
+        MigrationStateStoreV1::persist_root_fatal(
+            &mut store,
+            &fatal.root_id,
+            "SYNC_ROOT_FROZEN_SECOND_CONNECTION",
+        )
+        .unwrap();
+        assert_eq!(
+            run_activation(&fatal),
+            ActivationExecutionResultV1::RootFrozen
+        );
+        assert_eq!(fatal.remote_state.lock().unwrap().put_calls, 2);
+    }
+
+    #[test]
+    fn corrupted_durable_activation_receipt_fails_before_network_recovery() {
+        let fixture = fixture();
+        complete_stage_b(&fixture);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Pending
+        );
+        let intent = activation_state(&fixture).activation_intent.unwrap();
+        fixture
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO s2_lite_published_receipt_v1(
+                     root_id, receipt_kind, remote_path, receipt_json
+                 ) VALUES(?1, 'activation', ?2, ?3)",
+                rusqlite::params![
+                    fixture.root_id,
+                    intent.remote_path,
+                    b"corrupt activation receipt".to_vec()
+                ],
+            )
+            .unwrap();
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote.get_calls = 0;
+        remote.put_calls = 0;
+        drop(remote);
+
+        assert!(run_activation_result(&fixture).is_err());
+        let remote = fixture.remote_state.lock().unwrap();
+        assert_eq!(remote.get_calls, 0);
+        assert_eq!(remote.put_calls, 0);
     }
 }

@@ -3789,6 +3789,22 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
             {
                 return Ok(Some(migration));
             }
+            // Activation publication is admitted only from its durable
+            // activation state, with the exact frozen object reloaded inside
+            // this same root-authoritative transaction. Bootstrap commit
+            // admission intentionally has no corresponding requirement.
+            if migration.status == MigrationStatusV1::ActivationPublishing {
+                let intent = migration
+                    .activation_intent
+                    .as_ref()
+                    .ok_or(STORE_CORRUPTION)?;
+                let durable =
+                    load_activation_intent_from(transaction, root_id, &intent.remote_path)?
+                        .ok_or(STORE_CORRUPTION)?;
+                if durable != *intent {
+                    return Err(STORE_CORRUPTION);
+                }
+            }
             Ok(None)
         };
         match self.run_root_publication_admission(
@@ -3893,6 +3909,13 @@ impl PublishedActivationReceiptStoreV1 for SqliteS2LiteStoreV1<'_> {
             physical_root_id: self.root_id.to_string(),
             receipt: receipt.clone(),
         })
+    }
+
+    fn load_verified_activation_receipt(
+        &mut self,
+        remote_path: &str,
+    ) -> Result<Option<PublishedActivationReceiptV1>> {
+        self.load_published_activation_receipt(remote_path)
     }
 }
 

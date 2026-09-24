@@ -1044,17 +1044,34 @@ pub fn execute_migration_step_v1<
     }
     if state.status == MigrationStatusV1::ActivationPublishing {
         let intent = state.activation_intent.as_ref().unwrap().clone();
+        // The frozen activation object is durable authority before any remote
+        // observation. This also makes a crash before its first GET restart
+        // with precisely the same activation id, path, bytes, and hash.
+        let persisted =
+            persist_prepared_activation_intent_before_publish_v1(&intent, activation_intent_store)?;
+        // Receipt persistence precedes migration-state CAS. Reuse the
+        // root-bound durable receipt before recovery can make a GET or PUT.
+        let durable_receipt =
+            activation_receipt_store.load_verified_activation_receipt(&intent.remote_path)?;
+        if let (Some(state_receipt), Some(durable_receipt)) =
+            (state.activation_receipt.as_ref(), durable_receipt.as_ref())
+        {
+            if state_receipt != durable_receipt {
+                return Err(ProtocolError(
+                    "LOCAL_PUBLISHED_ACTIVATION_RECEIPT_CORRUPTION",
+                ));
+            }
+        }
         let mut result = restart_durable_activation_publish_v1(
             &intent,
-            state.activation_receipt.as_ref(),
+            state
+                .activation_receipt
+                .as_ref()
+                .or(durable_receipt.as_ref()),
             remote,
             verified_at_diagnostic,
         )?;
         if result == RecoverActivationIntentResultV1::RetryPublishExact {
-            let persisted = persist_prepared_activation_intent_before_publish_v1(
-                &intent,
-                activation_intent_store,
-            )?;
             result = match migration_store.run_publish_exclusive(
                 &state.root_id,
                 &state.migration_id,

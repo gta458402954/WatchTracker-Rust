@@ -128,6 +128,16 @@ pub trait PreparedActivationIntentStoreV1 {
 
 pub trait PublishedActivationReceiptStoreV1 {
     fn persist(&mut self, receipt: &PublishedActivationReceiptV1) -> Result<()>;
+
+    /// See `PublishedReceiptStoreV1::load_verified_receipt`. A durable
+    /// activation receipt is authoritative after a crash before the
+    /// migration-state compare-and-swap attaches it.
+    fn load_verified_activation_receipt(
+        &mut self,
+        _remote_path: &str,
+    ) -> Result<Option<PublishedActivationReceiptV1>> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
