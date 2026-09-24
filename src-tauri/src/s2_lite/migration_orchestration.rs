@@ -624,10 +624,16 @@ pub fn reconcile_migration_state_v1(input: &MigrationStateV1) -> Result<Migratio
             MigrationStatusV1::StageBPublishing
         };
     } else if state.activation_receipt.is_none() {
-        state.status = if state.status == MigrationStatusV1::StageBComplete {
-            MigrationStatusV1::StageBComplete
-        } else {
-            MigrationStatusV1::ActivationPublishing
+        // Stage boundaries are durable crash-recovery points. In particular,
+        // a completed Stage B task must not enter activation before the
+        // executor explicitly advances it. Stage A is retained only while
+        // there is actual Stage B work left to admit.
+        state.status = match state.status {
+            MigrationStatusV1::StageAComplete if !state.stage_b.is_empty() => {
+                MigrationStatusV1::StageAComplete
+            }
+            MigrationStatusV1::StageBComplete => MigrationStatusV1::StageBComplete,
+            _ => MigrationStatusV1::ActivationPublishing,
         };
     } else {
         // Completion is a durable terminal lifecycle fact.  Reconciliation
@@ -963,6 +969,11 @@ pub fn execute_migration_step_v1<
         } else {
             &state.stage_b[index]
         };
+        // The exact bootstrap intent is durable authority even when recovery
+        // finds the immutable object already present.  Receipt persistence is
+        // intentionally bound to that durable object; never let an exact GET
+        // bypass the local prepared-intent boundary.
+        let persisted = persist_prepared_intent_before_publish_v1(&task.intent, intent_store)?;
         let mut result = restart_durable_publish_v1(
             &task.intent,
             task.receipt.as_ref(),
@@ -970,7 +981,6 @@ pub fn execute_migration_step_v1<
             verified_at_diagnostic,
         )?;
         if result == RecoverPreparedIntentResultV1::RetryPublishExact {
-            let persisted = persist_prepared_intent_before_publish_v1(&task.intent, intent_store)?;
             result = match migration_store.run_publish_exclusive(
                 &state.root_id,
                 &state.migration_id,

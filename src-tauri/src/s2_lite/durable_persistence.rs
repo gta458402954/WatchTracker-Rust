@@ -27,8 +27,9 @@ use super::immutable_publish::{
     validate_prepared_activation_intent_v1, validate_prepared_intent_v1,
     validate_published_activation_receipt_v1, validate_published_receipt_v1,
     ImmutableObjectRemoteV1, PreparedActivationIntentStoreV1, PreparedActivationIntentV1,
-    PreparedIntentStoreV1, PreparedIntentV1, PublishedActivationReceiptV1,
-    RecoverActivationIntentResultV1, RecoverPreparedIntentResultV1, RemotePublishedReceiptV1,
+    PreparedIntentStoreV1, PreparedIntentV1, PublishedActivationReceiptStoreV1,
+    PublishedActivationReceiptV1, PublishedReceiptStoreV1, RecoverActivationIntentResultV1,
+    RecoverPreparedIntentResultV1, RemotePublishedReceiptV1,
 };
 use super::materialized_projection::{
     MaterializedProjectionEntityV1, MaterializedProjectionStateV1,
@@ -3867,6 +3868,24 @@ impl PreparedActivationIntentStoreV1 for SqliteS2LiteStoreV1<'_> {
         }
         database(transaction.commit())?;
         Ok(())
+    }
+}
+
+impl PublishedReceiptStoreV1 for SqliteS2LiteStoreV1<'_> {
+    fn persist(&mut self, receipt: &RemotePublishedReceiptV1) -> Result<()> {
+        self.persist_root_bound_receipt(&RootBoundPublishedReceiptV1 {
+            physical_root_id: self.root_id.to_string(),
+            receipt: receipt.clone(),
+        })
+    }
+}
+
+impl PublishedActivationReceiptStoreV1 for SqliteS2LiteStoreV1<'_> {
+    fn persist(&mut self, receipt: &PublishedActivationReceiptV1) -> Result<()> {
+        self.persist_root_bound_activation_receipt(&RootBoundPublishedActivationReceiptV1 {
+            physical_root_id: self.root_id.to_string(),
+            receipt: receipt.clone(),
+        })
     }
 }
 
