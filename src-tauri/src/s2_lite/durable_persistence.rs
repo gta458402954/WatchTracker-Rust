@@ -58,6 +58,15 @@ pub enum OrdinaryPublishExclusiveResultV1<T> {
     RejectedRootFrozen,
 }
 
+/// The final transaction-local result of admitting a normal S2 lifecycle
+/// route.  A preliminary router result is deliberately not authority to
+/// create a writer until this admission has re-read root state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NormalS2RouteAdmissionV1 {
+    EnterNormalS2(DesktopRootStateV1),
+    ReadOnlyFrozen,
+}
+
 /// Admission outcome for the legacy S1 writer. A process lock can supplement
 /// this path, but only this SQLite transaction decides whether its one PUT is
 /// admitted across independent desktop processes.
@@ -1357,6 +1366,59 @@ pub struct VersionedDiscoveryStateV1 {
     pub state: DiscoveryStateV1,
 }
 
+fn initialize_desktop_writer_from(conn: &Connection, root_id: &str) -> Result<DesktopRootStateV1> {
+    ensure_root_authority(conn, root_id)?;
+    let migration = load_migration_from(conn, root_id)?;
+    let migration_seed = migration
+        .as_ref()
+        .map(|state| completed_migration_writer_seed(state, root_id))
+        .transpose()?
+        .flatten();
+    let existing = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?;
+    match existing {
+        Some(bytes) => {
+            let state: DesktopRootStateV1 = decode(&bytes)?;
+            validate_desktop_root_state(&state, root_id)?;
+            if let Some((writer_id, writer_head, minimum_next_sequence)) = migration_seed {
+                if state.local_writer_id != writer_id
+                    || state.writer_head != writer_head
+                    || state.next_writer_sequence < minimum_next_sequence
+                {
+                    return Err(STORE_CORRUPTION);
+                }
+            }
+            Ok(state)
+        }
+        None => {
+            let (local_writer_id, writer_head, next_writer_sequence) =
+                migration_seed.unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), None, 1));
+            let state = DesktopRootStateV1 {
+                state_version: 1,
+                physical_root_id: root_id.to_string(),
+                local_writer_id,
+                next_writer_sequence,
+                writer_head,
+                lifecycle_generation: 0,
+                materialized_projection_generation: None,
+                business_applied_projection_generation: None,
+            };
+            validate_desktop_root_state(&state, root_id)?;
+            database(conn.execute(
+                "INSERT INTO s2_lite_desktop_root_state_v1(root_id, state_json) VALUES(?1, ?2)",
+                params![root_id, encode(&state)?],
+            ))?;
+            Ok(state)
+        }
+    }
+}
+
 /// SQLite-backed S2 Lite state bound to one physical remote root.
 ///
 /// Every clone shares the application's existing connection mutex. This lets the
@@ -1749,62 +1811,72 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         Ok(Some(binding))
     }
 
+    /// Revalidates the final normal-S2 route and initializes its ordinary
+    /// writer in one root-authoritative SQLite transaction.  Callers may use a
+    /// preliminary route for scheduling only; it is never authority to create
+    /// writer state after a later fatal or migration change.
+    pub fn admit_normal_s2_route_v1(
+        &mut self,
+        root_id: &str,
+        expected_migration_binding: Option<&MigrationExecutionBindingV1>,
+    ) -> Result<NormalS2RouteAdmissionV1> {
+        self.require_root(root_id)?;
+        if expected_migration_binding.is_some_and(|binding| binding.physical_root_id != root_id) {
+            return Err(ROOT_MISMATCH);
+        }
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, root_id)?;
+        let safety = load_root_safety_from(&transaction, root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty()
+            || !safety.cutover_state.root_fatal_signals.is_empty()
+        {
+            database(transaction.commit())?;
+            return Ok(NormalS2RouteAdmissionV1::ReadOnlyFrozen);
+        }
+        if !safety.cutover_state.remote_s2_activated {
+            return Err(STORE_CORRUPTION);
+        }
+
+        let migration = load_migration_from(&transaction, root_id)?;
+        let owner = load_migration_source_owner(&transaction)?;
+        match expected_migration_binding {
+            Some(expected) => {
+                let owner = owner.ok_or(STORE_CORRUPTION)?;
+                if owner.root_id != root_id || owner.migration_id != expected.migration_id {
+                    return Err(STORE_CORRUPTION);
+                }
+                let current = load_migration_execution_binding_from(&transaction, root_id)?
+                    .ok_or(STORE_CORRUPTION)?;
+                if current != *expected {
+                    return Err(STORE_CORRUPTION);
+                }
+                let migration = migration.ok_or(STORE_CORRUPTION)?;
+                if migration.migration_id != expected.migration_id
+                    || migration.status != MigrationStatusV1::MigrationComplete
+                {
+                    return Err(STORE_CORRUPTION);
+                }
+            }
+            None => {
+                // A global migration owner is durable evidence that this was
+                // not a fresh non-migration normal-root route.
+                if owner.is_some() || migration.is_some() {
+                    return Err(STORE_CORRUPTION);
+                }
+            }
+        }
+        let state = initialize_desktop_writer_from(&transaction, root_id)?;
+        database(transaction.commit())?;
+        Ok(NormalS2RouteAdmissionV1::EnterNormalS2(state))
+    }
+
     /// Initializes the ordinary writer once per physical root. This establishes
     /// authority only; it does not reserve a sequence or publish anything.
     pub fn initialize_desktop_writer_v1(&mut self) -> Result<DesktopRootStateV1> {
         let mut conn = self.connection()?;
         let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
-        ensure_root_authority(&transaction, self.root_id)?;
-        let migration = load_migration_from(&transaction, self.root_id)?;
-        let migration_seed = migration
-            .as_ref()
-            .map(|state| completed_migration_writer_seed(state, self.root_id))
-            .transpose()?
-            .flatten();
-        let existing = database(
-            transaction
-                .query_row(
-                    "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
-                    [self.root_id],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional(),
-        )?;
-        let state = match existing {
-            Some(bytes) => {
-                let state: DesktopRootStateV1 = decode(&bytes)?;
-                validate_desktop_root_state(&state, self.root_id)?;
-                if let Some((writer_id, writer_head, minimum_next_sequence)) = migration_seed {
-                    if state.local_writer_id != writer_id
-                        || state.writer_head != writer_head
-                        || state.next_writer_sequence < minimum_next_sequence
-                    {
-                        return Err(STORE_CORRUPTION);
-                    }
-                }
-                state
-            }
-            None => {
-                let (local_writer_id, writer_head, next_writer_sequence) =
-                    migration_seed.unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), None, 1));
-                let state = DesktopRootStateV1 {
-                    state_version: 1,
-                    physical_root_id: self.root_id.to_string(),
-                    local_writer_id,
-                    next_writer_sequence,
-                    writer_head,
-                    lifecycle_generation: 0,
-                    materialized_projection_generation: None,
-                    business_applied_projection_generation: None,
-                };
-                validate_desktop_root_state(&state, self.root_id)?;
-                database(transaction.execute(
-                    "INSERT INTO s2_lite_desktop_root_state_v1(root_id, state_json) VALUES(?1, ?2)",
-                    params![self.root_id, encode(&state)?],
-                ))?;
-                state
-            }
-        };
+        let state = initialize_desktop_writer_from(&transaction, self.root_id)?;
         database(transaction.commit())?;
         Ok(state)
     }

@@ -11,8 +11,8 @@ use rusqlite::Connection;
 use super::business_projection::apply_complete_projection_v1;
 use super::canonical::Result;
 use super::durable_persistence::{
-    DesktopRootStateV1, DurableMaterializedProjectionV1, OrdinaryPublishExclusiveResultV1,
-    SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
+    DesktopRootStateV1, DurableMaterializedProjectionV1, NormalS2RouteAdmissionV1,
+    OrdinaryPublishExclusiveResultV1, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     persist_prepared_intent_before_publish_v1, publish_persisted_intent_v1,
@@ -133,12 +133,56 @@ fn route_bound_root_v1(
         None if safety.cutover_state.remote_s2_activated => DesktopSyncRouteV1::EnterNormalS2,
         None => DesktopSyncRouteV1::ContinueLegacyS1,
     };
-    // Writer authority is intentionally allocated only after every durable
-    // route decision has ruled out legacy, migration, and frozen work.
-    if route == DesktopSyncRouteV1::EnterNormalS2 {
-        let _ = store.initialize_desktop_writer_v1()?;
-    }
     Ok(route)
+}
+
+fn finalize_normal_s2_route_v1(
+    conn: &Mutex<Connection>,
+    root_id: &str,
+    expected_migration_binding: Option<&super::durable_persistence::MigrationExecutionBindingV1>,
+    preliminary: DesktopSyncRouteV1,
+    before_normal_admission: impl FnOnce() -> Result<()>,
+) -> Result<DesktopSyncRouteV1> {
+    if preliminary != DesktopSyncRouteV1::EnterNormalS2 {
+        return Ok(preliminary);
+    }
+    before_normal_admission()?;
+    let mut store = SqliteS2LiteStoreV1::open(conn, root_id)?;
+    match store.admit_normal_s2_route_v1(root_id, expected_migration_binding)? {
+        NormalS2RouteAdmissionV1::EnterNormalS2(_) => Ok(DesktopSyncRouteV1::EnterNormalS2),
+        NormalS2RouteAdmissionV1::ReadOnlyFrozen => Ok(DesktopSyncRouteV1::ReadOnlyFrozen),
+    }
+}
+
+fn route_desktop_sync_inner_v1(
+    conn: &Mutex<Connection>,
+    before_normal_admission: impl FnOnce() -> Result<()>,
+) -> Result<DesktopSyncRouteV1> {
+    if let Some(binding) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)? {
+        let preliminary = route_bound_root_v1(conn, &binding.physical_root_id, true)?;
+        return finalize_normal_s2_route_v1(
+            conn,
+            &binding.physical_root_id,
+            Some(&binding),
+            preliminary,
+            before_normal_admission,
+        );
+    }
+    let (target_id, target_epoch) = {
+        let guard = conn.lock().map_err(|_| ROUTER_FAILURE)?;
+        crate::sync_targets::active_target(&guard)
+            .map_err(|_| ROUTER_FAILURE)?
+            .ok_or(ROUTER_FAILURE)?
+    };
+    let bound = resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?;
+    let preliminary = route_bound_root_v1(conn, &bound.binding.physical_root_id, false)?;
+    finalize_normal_s2_route_v1(
+        conn,
+        &bound.binding.physical_root_id,
+        None,
+        preliminary,
+        before_normal_admission,
+    )
 }
 
 /// Routes the desktop sync lifecycle exclusively from durable authority.
@@ -148,21 +192,15 @@ fn route_bound_root_v1(
 /// from the active registry.  Without such a migration, the current active
 /// target is resolved through the approved binding-only resolver.
 pub fn route_desktop_sync_v1(conn: &Mutex<Connection>) -> Result<DesktopSyncRouteV1> {
-    if let Some(binding) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)? {
-        let route = route_bound_root_v1(conn, &binding.physical_root_id, true)?;
-        // A source owner with no corresponding migration state is rejected by
-        // the durable lookup path above or the root load; it can never cause a
-        // fallback to the currently active target's legacy route.
-        return Ok(route);
-    }
-    let (target_id, target_epoch) = {
-        let guard = conn.lock().map_err(|_| ROUTER_FAILURE)?;
-        crate::sync_targets::active_target(&guard)
-            .map_err(|_| ROUTER_FAILURE)?
-            .ok_or(ROUTER_FAILURE)?
-    };
-    let bound = resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?;
-    route_bound_root_v1(conn, &bound.binding.physical_root_id, false)
+    route_desktop_sync_inner_v1(conn, || Ok(()))
+}
+
+#[cfg(test)]
+pub(crate) fn route_desktop_sync_with_before_normal_admission_v1(
+    conn: &Mutex<Connection>,
+    before_normal_admission: impl FnOnce() -> Result<()>,
+) -> Result<DesktopSyncRouteV1> {
+    route_desktop_sync_inner_v1(conn, before_normal_admission)
 }
 
 fn map_publish_result(result: RecoverPreparedIntentResultV1) -> DesktopS2LifecycleResultV1 {

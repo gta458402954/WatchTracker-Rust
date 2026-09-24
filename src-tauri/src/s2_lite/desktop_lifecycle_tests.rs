@@ -6,20 +6,26 @@ use base64::Engine;
 use rusqlite::Connection;
 
 use super::desktop_lifecycle::{
-    route_desktop_sync_v1, run_desktop_s2_sync_execution_v1, DesktopS2LifecycleResultV1,
-    DesktopS2RootBindingV1, DesktopSyncRouteV1,
+    route_desktop_sync_v1, route_desktop_sync_with_before_normal_admission_v1,
+    run_desktop_s2_sync_execution_v1, DesktopS2LifecycleResultV1, DesktopS2RootBindingV1,
+    DesktopSyncRouteV1,
 };
 use super::durable_persistence::{
     DesktopRootStateV1, IncompatibleActivationFreezeFaultV1, MigrationExecutionBindingV1,
-    OutboundBatchMutationV1, OutboundBatchV1, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
+    OrdinaryPublishExclusiveResultV1, OutboundBatchMutationV1, OutboundBatchV1,
+    SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     prepare_activation_intent_v1, prepare_commit_intent_v1, ImmutableObjectRemoteV1,
-    PreparedActivationIntentStoreV1, PreparedIntentStoreV1, RemoteExactGetResultV1,
-    RemotePutResultV1,
+    PreparedActivationIntentStoreV1, PreparedIntentStoreV1, PublishedActivationReceiptStoreV1,
+    PublishedActivationReceiptV1, PublishedReceiptStoreV1, RemoteExactGetResultV1,
+    RemotePublishedReceiptV1, RemotePutResultV1,
 };
 use super::migration_admission::admit_and_capture_migration_v1;
-use super::migration_orchestration::MigrationStateStoreV1;
+use super::migration_orchestration::{
+    create_migration_root_execution_capability_v1, execute_migration_step_v1,
+    start_or_attach_migration_v1, MigrationStateStoreV1, MigrationStatusV1,
+};
 use super::remote_discovery::{
     create_discovery_state_v1, DirectoryListResultV1, DiscoveryBudgetsV1,
     DiscoveryExactGetResultV1, DiscoveryRemoteV1, VerifiedFingerprintEvidenceV1,
@@ -37,6 +43,21 @@ struct FakeRemote {
     listings: BTreeMap<String, Vec<String>>,
     put_calls: usize,
     root_id: String,
+}
+
+#[derive(Default)]
+struct ReceiptSinkV1;
+
+impl PublishedReceiptStoreV1 for ReceiptSinkV1 {
+    fn persist(&mut self, _: &RemotePublishedReceiptV1) -> super::canonical::Result<()> {
+        Ok(())
+    }
+}
+
+impl PublishedActivationReceiptStoreV1 for ReceiptSinkV1 {
+    fn persist(&mut self, _: &PublishedActivationReceiptV1) -> super::canonical::Result<()> {
+        Ok(())
+    }
 }
 
 impl Default for FakeRemote {
@@ -277,6 +298,47 @@ fn latch_compatible_router_activation(conn: &Mutex<Connection>) -> String {
     )
     .unwrap();
     bound.binding.physical_root_id
+}
+
+/// Drives an empty, durably admitted bootstrap through activation.  Empty is
+/// still a valid migration: the frozen handoff must seed the migration writer
+/// with a null head and sequence one rather than allocate a random writer.
+fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
+    let (_target, root) = admit_router_migration(conn);
+    let mut remote = FakeRemote {
+        root_id: root.clone(),
+        ..Default::default()
+    };
+    let mut state = {
+        let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+        MigrationStateStoreV1::load(&mut store, &root)
+            .unwrap()
+            .unwrap()
+    };
+    while state.status != MigrationStatusV1::MigrationComplete {
+        let mut migration_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+        let attachment = start_or_attach_migration_v1(&state, &mut migration_store).unwrap();
+        let capability =
+            create_migration_root_execution_capability_v1(&attachment, &remote, &migration_store)
+                .unwrap();
+        let mut intent_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+        let mut activation_intent_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+        let mut commit_receipts = ReceiptSinkV1;
+        let mut activation_receipts = ReceiptSinkV1;
+        state = execute_migration_step_v1(
+            &state,
+            &capability,
+            &mut remote,
+            &mut migration_store,
+            &mut intent_store,
+            &mut commit_receipts,
+            &mut activation_intent_store,
+            &mut activation_receipts,
+            VERIFIED_AT,
+        )
+        .unwrap_or_else(|error| panic!("migration state {:?}: {error:?}", state.status));
+    }
+    (root, state.writer_id)
 }
 
 fn prepared() -> super::immutable_publish::PreparedIntentV1 {
@@ -952,6 +1014,143 @@ fn durable_router_latched_activation_initializes_writer_only_for_normal_s2_and_f
         DesktopSyncRouteV1::ReadOnlyFrozen,
         "root fatal must win even when activation remains latched"
     );
+}
+
+#[test]
+fn atomic_normal_route_fatal_first_creates_no_writer() {
+    let database = TempDatabase::new("normal-route-fatal-first");
+    let connection_a = database.connection();
+    let root = latch_compatible_router_activation(&connection_a);
+    let connection_b = database.connection();
+
+    assert_eq!(
+        route_desktop_sync_with_before_normal_admission_v1(&connection_a, || {
+            let mut authority = SqliteS2LiteStoreV1::open(&connection_b, &root)?;
+            MigrationStateStoreV1::persist_root_fatal(
+                &mut authority,
+                &root,
+                "SYNC_ROOT_FROZEN_NORMAL_ROUTE_RACE",
+            )?;
+            Ok(())
+        })
+        .unwrap(),
+        DesktopSyncRouteV1::ReadOnlyFrozen
+    );
+    let mut store = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    assert!(store.load_desktop_root_state().unwrap().is_none());
+    assert!(MigrationStateStoreV1::load_root_safety(&mut store, &root)
+        .unwrap()
+        .root_fatal_signals
+        .iter()
+        .any(|fatal| fatal.code == "SYNC_ROOT_FROZEN_NORMAL_ROUTE_RACE"));
+}
+
+#[test]
+fn normal_route_admission_then_fatal_keeps_writer_but_blocks_publication() {
+    let database = TempDatabase::new("normal-route-admission-first");
+    let connection_a = database.connection();
+    let root = latch_compatible_router_activation(&connection_a);
+    assert_eq!(
+        route_desktop_sync_v1(&connection_a).unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+    let writer = SqliteS2LiteStoreV1::open(&connection_a, &root)
+        .unwrap()
+        .load_desktop_root_state()
+        .unwrap()
+        .unwrap();
+
+    let connection_b = database.connection();
+    let mut authority = SqliteS2LiteStoreV1::open(&connection_b, &root).unwrap();
+    MigrationStateStoreV1::persist_root_fatal(
+        &mut authority,
+        &root,
+        "SYNC_ROOT_FROZEN_AFTER_NORMAL_ADMISSION",
+    )
+    .unwrap();
+
+    let intent = prepared();
+    let mut publisher = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    PreparedIntentStoreV1::persist(&mut publisher, &intent).unwrap();
+    let mut puts = 0;
+    assert_eq!(
+        publisher
+            .run_ordinary_publish_exclusive(&root, &intent, || {
+                puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        OrdinaryPublishExclusiveResultV1::RejectedRootFrozen
+    );
+    assert_eq!(puts, 0);
+    assert_eq!(publisher.load_desktop_root_state().unwrap(), Some(writer));
+}
+
+#[test]
+fn completed_migration_normal_admission_installs_its_writer_seed_exactly() {
+    let conn = router_connection();
+    let (root, migration_writer_id) = complete_router_migration(&conn);
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+    let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+    let writer = store.load_desktop_root_state().unwrap().unwrap();
+    assert_eq!(writer.local_writer_id, migration_writer_id);
+    assert_eq!(writer.writer_head, None);
+    assert_eq!(writer.next_writer_sequence, 1);
+}
+
+#[test]
+fn completed_migration_fatal_before_normal_admission_installs_no_writer() {
+    let database = TempDatabase::new("completed-migration-fatal-first");
+    let connection_a = database.connection();
+    let (root, _) = complete_router_migration(&connection_a);
+    let connection_b = database.connection();
+    assert_eq!(
+        route_desktop_sync_with_before_normal_admission_v1(&connection_a, || {
+            let mut authority = SqliteS2LiteStoreV1::open(&connection_b, &root)?;
+            MigrationStateStoreV1::persist_root_fatal(
+                &mut authority,
+                &root,
+                "SYNC_ROOT_FROZEN_MIGRATION_NORMAL_ROUTE_RACE",
+            )?;
+            Ok(())
+        })
+        .unwrap(),
+        DesktopSyncRouteV1::ReadOnlyFrozen
+    );
+    assert!(SqliteS2LiteStoreV1::open(&connection_a, &root)
+        .unwrap()
+        .load_desktop_root_state()
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn restart_with_a_fatal_normal_root_never_initializes_a_writer() {
+    let database = TempDatabase::new("normal-route-fatal-restart");
+    let connection_a = database.connection();
+    let root = latch_compatible_router_activation(&connection_a);
+    let connection_b = database.connection();
+    let mut authority = SqliteS2LiteStoreV1::open(&connection_b, &root).unwrap();
+    MigrationStateStoreV1::persist_root_fatal(
+        &mut authority,
+        &root,
+        "SYNC_ROOT_FROZEN_NORMAL_ROUTE_RESTART",
+    )
+    .unwrap();
+
+    let restarted = database.connection();
+    assert_eq!(
+        route_desktop_sync_v1(&restarted).unwrap(),
+        DesktopSyncRouteV1::ReadOnlyFrozen
+    );
+    assert!(SqliteS2LiteStoreV1::open(&restarted, &root)
+        .unwrap()
+        .load_desktop_root_state()
+        .unwrap()
+        .is_none());
 }
 
 #[test]

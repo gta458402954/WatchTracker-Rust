@@ -630,7 +630,14 @@ pub fn reconcile_migration_state_v1(input: &MigrationStateV1) -> Result<Migratio
             MigrationStatusV1::ActivationPublishing
         };
     } else {
-        state.status = MigrationStatusV1::ActivationVerified;
+        // Completion is a durable terminal lifecycle fact.  Reconciliation
+        // may derive activation verification from the receipts, but it must
+        // not erase a previously committed completion on restart.
+        state.status = if state.status == MigrationStatusV1::MigrationComplete {
+            MigrationStatusV1::MigrationComplete
+        } else {
+            MigrationStatusV1::ActivationVerified
+        };
     }
     Ok(state)
 }
