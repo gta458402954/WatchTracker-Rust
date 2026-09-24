@@ -3804,6 +3804,53 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
                 if durable != *intent {
                     return Err(STORE_CORRUPTION);
                 }
+                let expected_fingerprint = migration
+                    .snapshot
+                    .as_ref()
+                    .ok_or(STORE_CORRUPTION)?
+                    .legacy_fingerprint
+                    .clone();
+                match &safety.cutover_state.fingerprint_consistency {
+                    super::activation_cutover::ActivationFingerprintConsistencyV1::NoEvidence => {}
+                    super::activation_cutover::ActivationFingerprintConsistencyV1::Consistent {
+                        legacy_fingerprint,
+                    } if legacy_fingerprint.as_ref() == Some(&expected_fingerprint) => {
+                        // A verified compatible third-party activation already
+                        // satisfies publication necessity. Retain the frozen
+                        // local intent, but suppress this PUT.
+                        return Ok(Some(migration));
+                    }
+                    super::activation_cutover::ActivationFingerprintConsistencyV1::Consistent {
+                        ..
+                    }
+                    | super::activation_cutover::ActivationFingerprintConsistencyV1::Conflict => {
+                        // The exact same authority transaction that would
+                        // otherwise admit the PUT latches the root fatal.
+                        let code = "S2_ACTIVATION_VERIFIED_FINGERPRINT_MISMATCH";
+                        let mut next_safety = safety.clone();
+                        if !next_safety
+                            .root_fatal_signals
+                            .iter()
+                            .any(|fatal| fatal.code == code)
+                        {
+                            next_safety.generation = next_safety
+                                .generation
+                                .checked_add(1)
+                                .ok_or(STORE_CORRUPTION)?;
+                            next_safety.root_fatal_signals.push(MigrationRootFatalV1 {
+                                code: code.to_string(),
+                            });
+                            next_safety
+                                .root_fatal_signals
+                                .sort_by(|left, right| left.code.cmp(&right.code));
+                            save_root_safety(transaction, &next_safety)?;
+                        }
+                        if add_fatal(&mut migration, code)? {
+                            save_migration(transaction, &migration)?;
+                        }
+                        return Ok(Some(migration));
+                    }
+                }
             }
             Ok(None)
         };

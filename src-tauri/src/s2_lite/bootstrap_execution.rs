@@ -16,6 +16,7 @@ use super::durable_persistence::{
 };
 use super::immutable_publish::ImmutableObjectRemoteV1;
 use super::migration_orchestration::{
+    create_activation_publication_execution_capability_v1,
     create_migration_root_execution_capability_v1, execute_migration_step_v1,
     start_or_attach_migration_v1, MigrationStateStoreV1, MigrationStatusV1,
 };
@@ -371,8 +372,11 @@ where
         return Ok(ActivationExecutionResultV1::Pending);
     }
     let attachment = start_or_attach_migration_v1(&durable, &mut migration_store)?;
-    let capability =
-        create_migration_root_execution_capability_v1(&attachment, &remote, &migration_store)?;
+    let capability = create_activation_publication_execution_capability_v1(
+        &attachment,
+        &remote,
+        &migration_store,
+    )?;
     let mut intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
     let mut receipt_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
     let mut activation_intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
@@ -393,6 +397,20 @@ where
     }
     if next.status == MigrationStatusV1::ActivationVerified {
         return Ok(ActivationExecutionResultV1::ActivationVerified);
+    }
+    // A compatible verified activation can arrive after the wrapper's
+    // preflight but before SQLite publication admission. The transaction
+    // suppresses the PUT; classify that authoritative outcome here rather
+    // than calling the bookkeeping-only state change progress.
+    let safety = MigrationStateStoreV1::load_root_safety(&mut migration_store, &root_id)?;
+    if safety.root_fatal_signals.is_empty()
+        && matches!(
+            safety.cutover_state.fingerprint_consistency,
+            ActivationFingerprintConsistencyV1::Consistent { ref legacy_fingerprint }
+                if legacy_fingerprint.as_ref() == Some(&expected_fingerprint)
+        )
+    {
+        return Ok(ActivationExecutionResultV1::AlreadyVerifiedRemotely);
     }
     Ok(if activation_semantics_advanced(&durable, &next) {
         ActivationExecutionResultV1::Progressed
@@ -1404,5 +1422,221 @@ mod tests {
         let remote = fixture.remote_state.lock().unwrap();
         assert_eq!(remote.get_calls, 0);
         assert_eq!(remote.put_calls, 0);
+    }
+
+    #[test]
+    fn activation_put_admission_rechecks_third_party_evidence_transactionally() {
+        let (compatible, second) = fixture_with_second_connection();
+        complete_stage_b(&compatible);
+        assert_eq!(
+            run_activation(&compatible),
+            ActivationExecutionResultV1::Progressed
+        );
+        let stale = activation_state(&compatible);
+        let fingerprint = migration_fingerprint(&compatible);
+        let remote = FakeRemote {
+            root_id: compatible.root_id.clone(),
+            state: compatible.remote_state.clone(),
+        };
+        let mut primary = SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
+        let capability =
+            create_activation_publication_execution_capability_v1(&attachment, &remote, &primary)
+                .unwrap();
+        let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
+        cutover.remote_s2_activated = true;
+        cutover.verified_activation_evidence.push(
+            super::super::activation_cutover::VerifiedActivationEvidenceV1 {
+                path: "activations/third-party-race.json".into(),
+                activation_id: "94000000-0000-4000-8000-000000000001".into(),
+                content_hash: "c".repeat(64),
+                exact_bytes_hash: "c".repeat(64),
+                legacy_fingerprint: Some(fingerprint.clone()),
+            },
+        );
+        cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+            legacy_fingerprint: Some(fingerprint),
+        };
+        let mut concurrent = SqliteS2LiteStoreV1::open(&second, &compatible.root_id).unwrap();
+        MigrationStateStoreV1::persist_cutover_state(
+            &mut concurrent,
+            &compatible.root_id,
+            &cutover,
+        )
+        .unwrap();
+        let mut intent_store =
+            SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        let mut receipt_store =
+            SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        let mut activation_intent_store =
+            SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        let mut activation_receipt_store =
+            SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        let mut remote = remote;
+        let next = execute_migration_step_v1(
+            &stale,
+            &capability,
+            &mut remote,
+            &mut primary,
+            &mut intent_store,
+            &mut receipt_store,
+            &mut activation_intent_store,
+            &mut activation_receipt_store,
+            CREATED,
+        )
+        .unwrap();
+        assert_eq!(next.status, MigrationStatusV1::ActivationPublishing);
+        assert_eq!(compatible.remote_state.lock().unwrap().put_calls, 2);
+        let intent = stale.activation_intent.unwrap();
+        assert_eq!(
+            SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id)
+                .unwrap()
+                .load_prepared_activation_intent(&intent.remote_path)
+                .unwrap()
+                .as_ref(),
+            Some(&intent)
+        );
+
+        let (incompatible, second) = fixture_with_second_connection();
+        complete_stage_b(&incompatible);
+        assert_eq!(
+            run_activation(&incompatible),
+            ActivationExecutionResultV1::Progressed
+        );
+        let stale = activation_state(&incompatible);
+        let remote = FakeRemote {
+            root_id: incompatible.root_id.clone(),
+            state: incompatible.remote_state.clone(),
+        };
+        let mut primary =
+            SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
+        let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
+        let capability =
+            create_activation_publication_execution_capability_v1(&attachment, &remote, &primary)
+                .unwrap();
+        let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
+        cutover.remote_s2_activated = true;
+        cutover.verified_activation_evidence.push(
+            super::super::activation_cutover::VerifiedActivationEvidenceV1 {
+                path: "activations/incompatible-race.json".into(),
+                activation_id: "95000000-0000-4000-8000-000000000001".into(),
+                content_hash: "d".repeat(64),
+                exact_bytes_hash: "d".repeat(64),
+                legacy_fingerprint: Some("e".repeat(64)),
+            },
+        );
+        cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+            legacy_fingerprint: Some("e".repeat(64)),
+        };
+        let mut concurrent = SqliteS2LiteStoreV1::open(&second, &incompatible.root_id).unwrap();
+        MigrationStateStoreV1::persist_cutover_state(
+            &mut concurrent,
+            &incompatible.root_id,
+            &cutover,
+        )
+        .unwrap();
+        let mut intent_store =
+            SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
+        let mut receipt_store =
+            SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
+        let mut activation_intent_store =
+            SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
+        let mut activation_receipt_store =
+            SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
+        let mut remote = remote;
+        let next = execute_migration_step_v1(
+            &stale,
+            &capability,
+            &mut remote,
+            &mut primary,
+            &mut intent_store,
+            &mut receipt_store,
+            &mut activation_intent_store,
+            &mut activation_receipt_store,
+            CREATED,
+        )
+        .unwrap();
+        assert_eq!(next.status, MigrationStatusV1::RootFrozen);
+        assert_eq!(incompatible.remote_state.lock().unwrap().put_calls, 2);
+    }
+
+    #[test]
+    fn activation_phase_fence_stops_stale_execution_at_verified_or_complete() {
+        for terminal in [
+            MigrationStatusV1::ActivationVerified,
+            MigrationStatusV1::MigrationComplete,
+        ] {
+            let (fixture, second) = fixture_with_second_connection();
+            complete_stage_b(&fixture);
+            assert_eq!(
+                run_activation(&fixture),
+                ActivationExecutionResultV1::Progressed
+            );
+            let stale = activation_state(&fixture);
+            let intent = stale.activation_intent.clone().unwrap();
+            let remote = FakeRemote {
+                root_id: fixture.root_id.clone(),
+                state: fixture.remote_state.clone(),
+            };
+            let mut primary = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+            let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
+            let capability = create_activation_publication_execution_capability_v1(
+                &attachment,
+                &remote,
+                &primary,
+            )
+            .unwrap();
+            let mut advanced = stale.clone();
+            advanced.activation_receipt = Some(
+                super::super::immutable_publish::PublishedActivationReceiptV1 {
+                    receipt_version: 1,
+                    remote_path: intent.remote_path.clone(),
+                    content_hash: intent.content_hash.clone(),
+                    activation_id: intent.activation_id.clone(),
+                    prepared_intent_fingerprint: intent.intent_fingerprint.clone(),
+                    verified_exact_bytes_hash: intent.content_hash.clone(),
+                    verified_at_diagnostic: CREATED.into(),
+                },
+            );
+            advanced.activation_receipt_root_id = Some(fixture.root_id.clone());
+            advanced.status = terminal;
+            advanced.generation += 1;
+            let mut concurrent = SqliteS2LiteStoreV1::open(&second, &fixture.root_id).unwrap();
+            assert!(MigrationStateStoreV1::compare_and_swap(
+                &mut concurrent,
+                &fixture.root_id,
+                &stale.migration_id,
+                stale.generation,
+                &advanced,
+            )
+            .unwrap());
+            let mut intent_store =
+                SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+            let mut receipt_store =
+                SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+            let mut activation_intent_store =
+                SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+            let mut activation_receipt_store =
+                SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+            let mut remote = remote;
+            let next = execute_migration_step_v1(
+                &stale,
+                &capability,
+                &mut remote,
+                &mut primary,
+                &mut intent_store,
+                &mut receipt_store,
+                &mut activation_intent_store,
+                &mut activation_receipt_store,
+                CREATED,
+            )
+            .unwrap();
+            assert_eq!(next.status, terminal);
+            assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 2);
+            assert!(SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id)
+                .unwrap()
+                .migration_source_protected_v1()
+                .unwrap());
+        }
     }
 }

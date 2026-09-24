@@ -155,6 +155,7 @@ pub struct MigrationRootExecutionCapabilityV1 {
     migration_id: String,
     remote_identity: u64,
     migration_authority_identity: u64,
+    activation_publication_only: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -183,7 +184,25 @@ pub fn create_migration_root_execution_capability_v1<
         migration_id: attachment.migration_id.clone(),
         remote_identity: remote.execution_context_identity(),
         migration_authority_identity: migration_store.authority_identity(),
+        activation_publication_only: false,
     })
+}
+
+/// Opaque capability for the 4B2.1 activation-publication phase. It shares
+/// all root and remote identity validation with normal migration execution,
+/// but never permits the executor to enter the later cutover/completion phase.
+pub fn create_activation_publication_execution_capability_v1<
+    R: ImmutableObjectRemoteV1,
+    M: MigrationStateStoreV1,
+>(
+    attachment: &MigrationAttemptAttachmentV1,
+    remote: &R,
+    migration_store: &M,
+) -> Result<MigrationRootExecutionCapabilityV1> {
+    let mut capability =
+        create_migration_root_execution_capability_v1(attachment, remote, migration_store)?;
+    capability.activation_publication_only = true;
+    Ok(capability)
 }
 
 pub trait ActivationCutoverStateStoreV1 {
@@ -905,6 +924,17 @@ pub fn execute_migration_step_v1<
     }
     durable = reconcile_migration_state_v1(&durable)?;
     if durable.status == MigrationStatusV1::RootFrozen {
+        return Ok(durable);
+    }
+    // This fence is deliberately after the authoritative durable reload. A
+    // stale caller that began at ActivationPublishing must not turn a later
+    // ActivationVerified state into MigrationComplete.
+    if capability.activation_publication_only
+        && matches!(
+            durable.status,
+            MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
+        )
+    {
         return Ok(durable);
     }
     let proposed = reconcile_migration_state_v1(input)?;
