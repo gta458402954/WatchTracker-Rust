@@ -139,6 +139,7 @@ pub trait MigrationStateStoreV1 {
         root_id: &str,
         migration_id: &str,
         expected_generation: u64,
+        expected_execution_identity: Option<&MigrationExecutionIdentityV1>,
         operation: F,
     ) -> Result<PublishExclusiveResultV1<T>>;
 }
@@ -149,6 +150,19 @@ pub enum PublishExclusiveResultV1<T> {
     Rejected(Box<MigrationStateV1>),
 }
 
+/// Immutable historical execution identity captured before an activation
+/// attempt. It deliberately contains every durable execution-binding field
+/// that can select a target/root or change the frozen migration source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationExecutionIdentityV1 {
+    pub physical_root_id: String,
+    pub target_id: String,
+    pub target_epoch: u64,
+    pub captured_records_generation: i64,
+    pub legacy_fingerprint: Option<String>,
+    pub migration_id: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct MigrationRootExecutionCapabilityV1 {
     root_id: String,
@@ -156,6 +170,7 @@ pub struct MigrationRootExecutionCapabilityV1 {
     remote_identity: u64,
     migration_authority_identity: u64,
     activation_publication_only: bool,
+    expected_execution_identity: Option<MigrationExecutionIdentityV1>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +200,7 @@ pub fn create_migration_root_execution_capability_v1<
         remote_identity: remote.execution_context_identity(),
         migration_authority_identity: migration_store.authority_identity(),
         activation_publication_only: false,
+        expected_execution_identity: None,
     })
 }
 
@@ -198,10 +214,17 @@ pub fn create_activation_publication_execution_capability_v1<
     attachment: &MigrationAttemptAttachmentV1,
     remote: &R,
     migration_store: &M,
+    expected_execution_identity: MigrationExecutionIdentityV1,
 ) -> Result<MigrationRootExecutionCapabilityV1> {
     let mut capability =
         create_migration_root_execution_capability_v1(attachment, remote, migration_store)?;
     capability.activation_publication_only = true;
+    if expected_execution_identity.physical_root_id != capability.root_id
+        || expected_execution_identity.migration_id != capability.migration_id
+    {
+        return Err(ProtocolError("MIGRATION_ROOT_BINDING_MISMATCH"));
+    }
+    capability.expected_execution_identity = Some(expected_execution_identity);
     Ok(capability)
 }
 
@@ -1027,6 +1050,7 @@ pub fn execute_migration_step_v1<
                 &state.root_id,
                 &state.migration_id,
                 state.generation,
+                None,
                 || publish_admitted_persisted_intent_v1(&persisted, remote, verified_at_diagnostic),
             )? {
                 PublishExclusiveResultV1::Executed(value) => value,
@@ -1106,6 +1130,7 @@ pub fn execute_migration_step_v1<
                 &state.root_id,
                 &state.migration_id,
                 state.generation,
+                capability.expected_execution_identity.as_ref(),
                 || {
                     publish_admitted_persisted_activation_intent_v1(
                         &persisted,

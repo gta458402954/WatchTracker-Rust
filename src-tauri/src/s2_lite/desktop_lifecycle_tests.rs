@@ -11,9 +11,9 @@ use super::desktop_lifecycle::{
     DesktopSyncRouteV1,
 };
 use super::durable_persistence::{
-    DesktopRootStateV1, IncompatibleActivationFreezeFaultV1, MigrationExecutionBindingV1,
-    OrdinaryPublishExclusiveResultV1, OutboundBatchMutationV1, OutboundBatchV1,
-    SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
+    migration_execution_identity_v1, DesktopRootStateV1, IncompatibleActivationFreezeFaultV1,
+    MigrationExecutionBindingV1, OrdinaryPublishExclusiveResultV1, OutboundBatchMutationV1,
+    OutboundBatchV1, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     prepare_activation_intent_v1, prepare_commit_intent_v1, ImmutableObjectRemoteV1,
@@ -23,6 +23,7 @@ use super::immutable_publish::{
 };
 use super::migration_admission::admit_and_capture_migration_v1;
 use super::migration_orchestration::{
+    create_activation_publication_execution_capability_v1,
     create_migration_root_execution_capability_v1, execute_migration_step_v1,
     start_or_attach_migration_v1, MigrationStateStoreV1, MigrationStatusV1,
 };
@@ -318,9 +319,24 @@ fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
     while state.status != MigrationStatusV1::MigrationComplete {
         let mut migration_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
         let attachment = start_or_attach_migration_v1(&state, &mut migration_store).unwrap();
-        let capability =
+        let capability = if state.status == MigrationStatusV1::ActivationPublishing {
+            let expected_execution_identity = migration_execution_identity_v1(
+                &migration_store
+                    .load_migration_execution_binding_v1()
+                    .unwrap()
+                    .unwrap(),
+            );
+            create_activation_publication_execution_capability_v1(
+                &attachment,
+                &remote,
+                &migration_store,
+                expected_execution_identity,
+            )
+            .unwrap()
+        } else {
             create_migration_root_execution_capability_v1(&attachment, &remote, &migration_store)
-                .unwrap();
+                .unwrap()
+        };
         let mut intent_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
         let mut activation_intent_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
         let mut commit_receipts = ReceiptSinkV1;

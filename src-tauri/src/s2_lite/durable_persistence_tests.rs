@@ -1211,7 +1211,7 @@ fn migration_cas_propagates_freeze_to_root_authority_and_cannot_reopen_publish()
 
         let mut executed = false;
         let admission = store
-            .run_publish_exclusive(ROOT_A, MIGRATION_A, 1, || {
+            .run_publish_exclusive(ROOT_A, MIGRATION_A, 1, None, || {
                 executed = true;
                 Ok(())
             })

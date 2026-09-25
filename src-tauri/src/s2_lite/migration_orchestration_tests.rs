@@ -30,8 +30,9 @@ use super::migration_orchestration::{
     freeze_old_root_for_new_root_handoff_v1, merge_migration_root_cutover_state_v1,
     migration_projection_v1, plan_captured_migration_v1, recover_migration_activation_cutover_v1,
     retain_captured_snapshot_v1, start_or_attach_migration_v1, ActivationCutoverStateStoreV1,
-    LegacySnapshotEntryV1, MigrationRootFatalV1, MigrationRootSafetyStateV1, MigrationStateStoreV1,
-    MigrationStateV1, MigrationStatusV1, PublishExclusiveResultV1,
+    LegacySnapshotEntryV1, MigrationExecutionIdentityV1, MigrationRootFatalV1,
+    MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1, MigrationStatusV1,
+    PublishExclusiveResultV1,
 };
 use super::remote_discovery::create_discovery_state_v1;
 use super::types::{BootstrapEntity, LegacySemanticAdapterV1};
@@ -512,6 +513,7 @@ impl MigrationStateStoreV1 for MigrationStore {
         root_id: &str,
         migration_id: &str,
         expected_generation: u64,
+        _expected_execution_identity: Option<&MigrationExecutionIdentityV1>,
         operation: F,
     ) -> Result<PublishExclusiveResultV1<T>> {
         if self

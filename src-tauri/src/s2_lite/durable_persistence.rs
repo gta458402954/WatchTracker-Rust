@@ -38,9 +38,9 @@ use super::migration_orchestration::{
     create_migration_root_safety_state_v1, create_migration_state_v1,
     merge_migration_root_cutover_state_v1, plan_captured_migration_v1,
     reconcile_migration_state_v1, retain_captured_snapshot_v1, validate_attempt_transition,
-    ActivationCutoverStateStoreV1, CapturedLegacySnapshotV1, MigrationRootFatalV1,
-    MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1, MigrationStatusV1,
-    PublishExclusiveResultV1,
+    ActivationCutoverStateStoreV1, CapturedLegacySnapshotV1, MigrationExecutionIdentityV1,
+    MigrationRootFatalV1, MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1,
+    MigrationStatusV1, PublishExclusiveResultV1,
 };
 use super::remote_discovery::{create_discovery_state_v1, DiscoveryStateV1};
 use super::types::CommitRef;
@@ -601,6 +601,19 @@ fn validate_migration_execution_binding(binding: &MigrationExecutionBindingV1) -
         return Err(STORE_CORRUPTION);
     }
     Ok(())
+}
+
+pub fn migration_execution_identity_v1(
+    binding: &MigrationExecutionBindingV1,
+) -> MigrationExecutionIdentityV1 {
+    MigrationExecutionIdentityV1 {
+        physical_root_id: binding.physical_root_id.clone(),
+        target_id: binding.target_id.clone(),
+        target_epoch: binding.target_epoch,
+        captured_records_generation: binding.captured_records_generation,
+        legacy_fingerprint: binding.legacy_fingerprint.clone(),
+        migration_id: binding.migration_id.clone(),
+    }
 }
 
 fn load_target_root_binding_from(
@@ -3756,6 +3769,7 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
         root_id: &str,
         migration_id: &str,
         expected_generation: u64,
+        expected_execution_identity: Option<&MigrationExecutionIdentityV1>,
         operation: F,
     ) -> Result<PublishExclusiveResultV1<T>> {
         let frozen_rejection = |transaction: &Connection,
@@ -3805,6 +3819,11 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
                 }
                 let execution = load_migration_execution_binding_from(transaction, root_id)?
                     .ok_or(STORE_CORRUPTION)?;
+                let expected_execution_identity =
+                    expected_execution_identity.ok_or(STORE_CORRUPTION)?;
+                if migration_execution_identity_v1(&execution) != *expected_execution_identity {
+                    return Err(STORE_CORRUPTION);
+                }
                 let expected_fingerprint = migration
                     .snapshot
                     .as_ref()

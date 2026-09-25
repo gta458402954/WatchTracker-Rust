@@ -12,7 +12,8 @@ use rusqlite::Connection;
 use super::activation_cutover::ActivationFingerprintConsistencyV1;
 use super::canonical::{ProtocolError, Result};
 use super::durable_persistence::{
-    MigrationExecutionBindingV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
+    migration_execution_identity_v1, MigrationExecutionBindingV1, SqliteS2LiteStoreV1,
+    TargetRootBindingV1,
 };
 use super::immutable_publish::ImmutableObjectRemoteV1;
 use super::migration_orchestration::{
@@ -242,6 +243,7 @@ where
     else {
         return Err(BOOTSTRAP_EXECUTION_FAILURE);
     };
+    let expected_execution_identity = migration_execution_identity_v1(&execution);
     let root_id = execution.physical_root_id.clone();
     let target =
         load_historical_target_root_binding_v1(conn, &execution.target_id, execution.target_epoch)?;
@@ -376,6 +378,7 @@ where
         &attachment,
         &remote,
         &migration_store,
+        expected_execution_identity,
     )?;
     let mut intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
     let mut receipt_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
@@ -786,9 +789,19 @@ mod tests {
         };
         let mut primary = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
         let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
-        let _capability =
-            create_activation_publication_execution_capability_v1(&attachment, &remote, &primary)
-                .unwrap();
+        let expected_execution_identity = migration_execution_identity_v1(
+            &primary
+                .load_migration_execution_binding_v1()
+                .unwrap()
+                .unwrap(),
+        );
+        let _capability = create_activation_publication_execution_capability_v1(
+            &attachment,
+            &remote,
+            &primary,
+            expected_execution_identity.clone(),
+        )
+        .unwrap();
 
         mutate(&second.lock().unwrap(), &fixture);
 
@@ -798,6 +811,7 @@ mod tests {
             &fixture.root_id,
             &stale.migration_id,
             stale.generation,
+            Some(&expected_execution_identity),
             || {
                 put_callback_called.set(true);
                 Ok(())
@@ -828,6 +842,144 @@ mod tests {
                 rusqlite::params![serde_json::to_vec(&envelope).unwrap(), root_id],
             )
             .unwrap();
+    }
+
+    fn insert_historical_target_epoch_binding(
+        connection: &Connection,
+        source_target_id: &str,
+        target_id: &str,
+        target_epoch: u64,
+    ) {
+        let (canonical_url, normalized_account, physical_root_id): (String, String, String) =
+            connection
+                .query_row(
+                    "SELECT canonical_url, normalized_account, physical_root_id
+                     FROM s2_lite_target_root_binding_v1
+                     WHERE target_id=?1 AND target_epoch='1'",
+                    [source_target_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+        connection
+            .execute(
+                "INSERT INTO s2_lite_target_root_binding_v1(
+                     binding_version, target_id, target_epoch, canonical_url,
+                     normalized_account, physical_root_id
+                 ) VALUES(1, ?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    target_id,
+                    target_epoch.to_string(),
+                    canonical_url,
+                    normalized_account,
+                    physical_root_id,
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn activation_admission_rejects_coherent_execution_epoch_replacement() {
+        assert_activation_admission_rejects_authority_change(|connection, fixture| {
+            // This is not malformed: it creates a valid historical A/2/R
+            // binding and rewrites a valid persistence envelope for E2.
+            insert_historical_target_epoch_binding(
+                connection,
+                &fixture.target_a,
+                &fixture.target_a,
+                2,
+            );
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["targetEpoch"] = serde_json::Value::from(2);
+            });
+        });
+    }
+
+    #[test]
+    fn activation_admission_rejects_coherent_execution_target_replacement() {
+        assert_activation_admission_rejects_authority_change(|connection, fixture| {
+            let replacement_target = "historical-target-b";
+            insert_historical_target_epoch_binding(
+                connection,
+                &fixture.target_a,
+                replacement_target,
+                1,
+            );
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["targetId"] = serde_json::Value::String(replacement_target.into());
+            });
+        });
+    }
+
+    #[test]
+    fn activation_admission_rejects_coherent_execution_generation_replacement() {
+        assert_activation_admission_rejects_authority_change(|connection, fixture| {
+            connection
+                .execute(
+                    "UPDATE s2_lite_migration_source_guard_v1
+                     SET captured_records_generation='999'",
+                    [],
+                )
+                .unwrap();
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["capturedRecordsGeneration"] = serde_json::Value::from(999);
+            });
+        });
+    }
+
+    #[test]
+    fn activation_admission_accepts_exact_execution_identity_rewrite() {
+        let (fixture, second) = fixture_with_second_connection();
+        complete_stage_b(&fixture);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        let stale = activation_state(&fixture);
+        let intent = stale.activation_intent.clone().unwrap();
+        super::super::immutable_publish::PreparedActivationIntentStoreV1::persist(
+            &mut SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap(),
+            &intent,
+        )
+        .unwrap();
+        let remote = FakeRemote {
+            root_id: fixture.root_id.clone(),
+            state: fixture.remote_state.clone(),
+        };
+        let mut primary = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
+        let expected_execution_identity = migration_execution_identity_v1(
+            &primary
+                .load_migration_execution_binding_v1()
+                .unwrap()
+                .unwrap(),
+        );
+        let _capability = create_activation_publication_execution_capability_v1(
+            &attachment,
+            &remote,
+            &primary,
+            expected_execution_identity.clone(),
+        )
+        .unwrap();
+        mutate_execution_binding(&second.lock().unwrap(), &fixture.root_id, |_| {});
+
+        let put_callback_called = Cell::new(false);
+        assert!(matches!(
+            MigrationStateStoreV1::run_publish_exclusive(
+                &mut primary,
+                &fixture.root_id,
+                &stale.migration_id,
+                stale.generation,
+                Some(&expected_execution_identity),
+                || {
+                    put_callback_called.set(true);
+                    Ok(())
+                },
+            )
+            .unwrap(),
+            super::super::migration_orchestration::PublishExclusiveResultV1::Executed(())
+        ));
+        assert!(put_callback_called.get());
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 2);
     }
 
     /// Reproduces the precise crash boundary after the exact prepared intent
@@ -1502,9 +1654,19 @@ mod tests {
         };
         let mut primary = SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
         let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
-        let capability =
-            create_activation_publication_execution_capability_v1(&attachment, &remote, &primary)
-                .unwrap();
+        let expected_execution_identity = migration_execution_identity_v1(
+            &primary
+                .load_migration_execution_binding_v1()
+                .unwrap()
+                .unwrap(),
+        );
+        let capability = create_activation_publication_execution_capability_v1(
+            &attachment,
+            &remote,
+            &primary,
+            expected_execution_identity,
+        )
+        .unwrap();
         let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
         cutover.remote_s2_activated = true;
         cutover.verified_activation_evidence.push(
@@ -1573,9 +1735,19 @@ mod tests {
         let mut primary =
             SqliteS2LiteStoreV1::open(&incompatible.conn, &incompatible.root_id).unwrap();
         let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
-        let capability =
-            create_activation_publication_execution_capability_v1(&attachment, &remote, &primary)
-                .unwrap();
+        let expected_execution_identity = migration_execution_identity_v1(
+            &primary
+                .load_migration_execution_binding_v1()
+                .unwrap()
+                .unwrap(),
+        );
+        let capability = create_activation_publication_execution_capability_v1(
+            &attachment,
+            &remote,
+            &primary,
+            expected_execution_identity,
+        )
+        .unwrap();
         let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
         cutover.remote_s2_activated = true;
         cutover.verified_activation_evidence.push(
@@ -1771,10 +1943,17 @@ mod tests {
             };
             let mut primary = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
             let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
+            let expected_execution_identity = migration_execution_identity_v1(
+                &primary
+                    .load_migration_execution_binding_v1()
+                    .unwrap()
+                    .unwrap(),
+            );
             let capability = create_activation_publication_execution_capability_v1(
                 &attachment,
                 &remote,
                 &primary,
+                expected_execution_identity,
             )
             .unwrap();
             let mut advanced = stale.clone();
