@@ -772,7 +772,7 @@ mod tests {
         )
     }
 
-    fn assert_activation_admission_rejects_authority_change<F>(mutate: F)
+    fn assert_activation_admission_rejects_authority_change<F>(mutate: F) -> ProtocolError
     where
         F: FnOnce(&Connection, &Fixture),
     {
@@ -806,7 +806,7 @@ mod tests {
         mutate(&second.lock().unwrap(), &fixture);
 
         let put_callback_called = Cell::new(false);
-        assert!(MigrationStateStoreV1::run_publish_exclusive(
+        let error = MigrationStateStoreV1::run_publish_exclusive(
             &mut primary,
             &fixture.root_id,
             &stale.migration_id,
@@ -817,9 +817,10 @@ mod tests {
                 Ok(())
             },
         )
-        .is_err());
+        .unwrap_err();
         assert!(!put_callback_called.get());
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 2);
+        error
     }
 
     fn mutate_execution_binding<F>(connection: &Connection, root_id: &str, mutate: F)
@@ -892,6 +893,34 @@ mod tests {
                 binding["targetEpoch"] = serde_json::Value::from(2);
             });
         });
+    }
+
+    #[test]
+    fn activation_admission_compares_identity_before_replaced_target_resolution() {
+        let error = assert_activation_admission_rejects_authority_change(|connection, fixture| {
+            insert_historical_target_epoch_binding(
+                connection,
+                &fixture.target_a,
+                &fixture.target_a,
+                2,
+            );
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["targetEpoch"] = serde_json::Value::from(2);
+            });
+            // If admission dereferences E2's target before comparing the
+            // pinned E1 identity, this missing A/2 row would win instead.
+            connection
+                .execute(
+                    "DELETE FROM s2_lite_target_root_binding_v1
+                     WHERE target_id=?1 AND target_epoch='2'",
+                    [&fixture.target_a],
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            error,
+            ProtocolError("S2_ACTIVATION_EXECUTION_IDENTITY_MISMATCH")
+        );
     }
 
     #[test]

@@ -47,6 +47,8 @@ use super::types::CommitRef;
 
 const STORE_FAILURE: ProtocolError = ProtocolError("S2_DURABLE_PERSISTENCE_FAILURE");
 const STORE_CORRUPTION: ProtocolError = ProtocolError("S2_DURABLE_STATE_CORRUPTION");
+const ACTIVATION_EXECUTION_IDENTITY_MISMATCH: ProtocolError =
+    ProtocolError("S2_ACTIVATION_EXECUTION_IDENTITY_MISMATCH");
 const ROOT_MISMATCH: ProtocolError = ProtocolError("MIGRATION_ROOT_BINDING_MISMATCH");
 const SCHEMA_VERSION: &str = "1";
 const PERSISTENCE_FORMAT_VERSION: u8 = 1;
@@ -668,7 +670,10 @@ fn validate_migration_execution_target_authority(
     Ok(())
 }
 
-fn load_migration_execution_binding_from(
+/// Strictly decodes the root-scoped persistence value without yet treating the
+/// binding's target/epoch as authority. Activation admission uses this narrow
+/// boundary to compare its pinned identity before any target dereference.
+fn load_migration_execution_binding_structural_from(
     conn: &Connection,
     root_id: &str,
 ) -> Result<Option<MigrationExecutionBindingV1>> {
@@ -687,6 +692,18 @@ fn load_migration_execution_binding_from(
             if binding.physical_root_id != root_id {
                 return Err(STORE_CORRUPTION);
             }
+            Ok(binding)
+        })
+        .transpose()
+}
+
+fn load_migration_execution_binding_from(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Option<MigrationExecutionBindingV1>> {
+    let binding = load_migration_execution_binding_structural_from(conn, root_id)?;
+    binding
+        .map(|binding| {
             validate_migration_execution_target_authority(conn, &binding, root_id)?;
             Ok(binding)
         })
@@ -3813,15 +3830,16 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
                 // earlier production preflight is sufficient to authorize an
                 // activation PUT after another connection changed the source
                 // owner, guard, execution identity, or target/root binding.
-                let owner = load_migration_source_owner(transaction)?.ok_or(STORE_CORRUPTION)?;
-                if owner.root_id != root_id || owner.migration_id != migration.migration_id {
-                    return Err(STORE_CORRUPTION);
-                }
-                let execution = load_migration_execution_binding_from(transaction, root_id)?
-                    .ok_or(STORE_CORRUPTION)?;
+                let execution =
+                    load_migration_execution_binding_structural_from(transaction, root_id)?
+                        .ok_or(STORE_CORRUPTION)?;
                 let expected_execution_identity =
                     expected_execution_identity.ok_or(STORE_CORRUPTION)?;
                 if migration_execution_identity_v1(&execution) != *expected_execution_identity {
+                    return Err(ACTIVATION_EXECUTION_IDENTITY_MISMATCH);
+                }
+                let owner = load_migration_source_owner(transaction)?.ok_or(STORE_CORRUPTION)?;
+                if owner.root_id != root_id || owner.migration_id != migration.migration_id {
                     return Err(STORE_CORRUPTION);
                 }
                 let expected_fingerprint = migration
