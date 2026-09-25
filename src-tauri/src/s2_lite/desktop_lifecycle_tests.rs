@@ -760,6 +760,114 @@ fn completed_state_writer_corruption_fails_closed_without_replacement() {
     assert_eq!(store.load_desktop_root_state().unwrap(), Some(corrupted));
 }
 
+#[test]
+fn completed_route_validates_writer_handoff_without_repairing_corruption() {
+    #[derive(Clone, Copy)]
+    enum Corruption {
+        Missing,
+        HigherSequence,
+        LowerSequence,
+        WrongWriter,
+        WrongHead,
+    }
+
+    for (name, corruption) in [
+        ("missing", Corruption::Missing),
+        ("higher-sequence", Corruption::HigherSequence),
+        ("lower-sequence", Corruption::LowerSequence),
+        ("wrong-writer", Corruption::WrongWriter),
+        ("wrong-head", Corruption::WrongHead),
+    ] {
+        let database = TempDatabase::new(&format!("completed-route-{name}"));
+        let connection = database.connection();
+        let (root, _) = complete_router_migration(&connection);
+        let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+        let mut corrupted = store.load_desktop_root_state().unwrap().unwrap();
+        let mut raw_corruption = None;
+        match corruption {
+            Corruption::Missing => {
+                connection
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "DELETE FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                        [&root],
+                    )
+                    .unwrap();
+            }
+            Corruption::HigherSequence => {
+                corrupted.next_writer_sequence += 1;
+                store.persist_desktop_root_state(&corrupted).unwrap();
+            }
+            Corruption::LowerSequence => {
+                let bytes: Vec<u8> = connection
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                        [&root],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                envelope["payload"]["nextWriterSequence"] = serde_json::json!(0);
+                let bytes = serde_json::to_vec(&envelope).unwrap();
+                connection
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "UPDATE s2_lite_desktop_root_state_v1 SET state_json=?1 WHERE root_id=?2",
+                        rusqlite::params![bytes, root],
+                    )
+                    .unwrap();
+                raw_corruption = Some(
+                    connection
+                        .lock()
+                        .unwrap()
+                        .query_row(
+                            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                            [&root],
+                            |row| row.get::<_, Vec<u8>>(0),
+                        )
+                        .unwrap(),
+                );
+            }
+            Corruption::WrongWriter => {
+                corrupted.local_writer_id = "42000000-0000-4000-8000-000000000001".into();
+                store.persist_desktop_root_state(&corrupted).unwrap();
+            }
+            Corruption::WrongHead => {
+                corrupted.writer_head = Some(super::types::CommitRef {
+                    writer_id: corrupted.local_writer_id.clone(),
+                    writer_seq: "1".into(),
+                    commit_id: "43000000-0000-4000-8000-000000000001".into(),
+                    content_hash: "a".repeat(64),
+                });
+                store.persist_desktop_root_state(&corrupted).unwrap();
+            }
+        }
+        assert!(route_desktop_sync_v1(&connection).is_err());
+        if matches!(corruption, Corruption::Missing) {
+            assert!(store.load_desktop_root_state().unwrap().is_none());
+        } else if let Some(raw_corruption) = raw_corruption {
+            assert_eq!(
+                connection
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                        [&root],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .unwrap(),
+                raw_corruption
+            );
+        } else {
+            assert_eq!(store.load_desktop_root_state().unwrap(), Some(corrupted));
+        }
+    }
+}
+
 fn prepared() -> super::immutable_publish::PreparedIntentV1 {
     let fixture: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(
@@ -1526,6 +1634,33 @@ fn completed_migration_normal_admission_installs_its_writer_seed_exactly() {
     assert_eq!(writer.local_writer_id, migration_writer_id);
     assert_eq!(writer.writer_head, None);
     assert_eq!(writer.next_writer_sequence, 1);
+}
+
+#[test]
+fn router_finalization_reloads_completed_no_owner_authority_before_normal_admission() {
+    let conn = router_connection();
+    let (root, migration_writer_id) = verified_router_migration(&conn);
+    assert_eq!(
+        route_desktop_sync_v1(&conn).unwrap(),
+        DesktopSyncRouteV1::EnterNormalS2
+    );
+    let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+    assert!(!store.migration_source_protected_v1().unwrap());
+    assert_eq!(
+        MigrationStateStoreV1::load(&mut store, &root)
+            .unwrap()
+            .unwrap()
+            .status,
+        MigrationStatusV1::MigrationComplete
+    );
+    assert_eq!(
+        store
+            .load_desktop_root_state()
+            .unwrap()
+            .unwrap()
+            .local_writer_id,
+        migration_writer_id
+    );
 }
 
 #[test]

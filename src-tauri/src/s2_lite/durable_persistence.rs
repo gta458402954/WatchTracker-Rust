@@ -1504,6 +1504,38 @@ fn validate_verified_migration_writer_handoff_from(
     Ok(())
 }
 
+/// Completed migration state is validation-only: the finalization transaction
+/// was solely responsible for installing this exact frozen writer seed.
+fn load_exact_completed_migration_writer_from(
+    conn: &Connection,
+    migration: &MigrationStateV1,
+    root_id: &str,
+) -> Result<DesktopRootStateV1> {
+    let Some((writer_id, writer_head, next_writer_sequence)) =
+        completed_migration_writer_seed(migration, root_id)?
+    else {
+        return Err(STORE_CORRUPTION);
+    };
+    let bytes = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?
+    .ok_or(STORE_CORRUPTION)?;
+    let state: DesktopRootStateV1 = decode(&bytes)?;
+    validate_desktop_root_state(&state, root_id)?;
+    if state.local_writer_id != writer_id
+        || state.writer_head != writer_head
+        || state.next_writer_sequence != next_writer_sequence
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(state)
+}
+
 /// SQLite-backed S2 Lite state bound to one physical remote root.
 ///
 /// Every clone shares the application's existing connection mutex. This lets the
@@ -1932,9 +1964,8 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             if load_migration_source_owner(&transaction)?.is_some() {
                 return Err(STORE_CORRUPTION);
             }
-            let _ = completed_migration_writer_seed(&migration, self.root_id)?
-                .ok_or(STORE_CORRUPTION)?;
-            initialize_desktop_writer_from(&transaction, self.root_id)?;
+            let _ =
+                load_exact_completed_migration_writer_from(&transaction, &migration, self.root_id)?;
             database(transaction.commit())?;
             return Ok(MigrationFinalizationResultV1::AlreadyFinalized);
         }
@@ -2026,41 +2057,32 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
 
         let migration = load_migration_from(&transaction, root_id)?;
         let owner = load_migration_source_owner(&transaction)?;
-        match expected_migration_binding {
-            Some(expected) => {
-                let owner = owner.ok_or(STORE_CORRUPTION)?;
-                if owner.root_id != root_id || owner.migration_id != expected.migration_id {
+        if let Some(expected) = expected_migration_binding {
+            let current = load_migration_execution_binding_from(&transaction, root_id)?
+                .ok_or(STORE_CORRUPTION)?;
+            if current != *expected {
+                return Err(STORE_CORRUPTION);
+            }
+        }
+        let state = match migration {
+            Some(migration) => {
+                if owner.is_some() || migration.status != MigrationStatusV1::MigrationComplete {
                     return Err(STORE_CORRUPTION);
                 }
-                let current = load_migration_execution_binding_from(&transaction, root_id)?
+                let execution = load_migration_execution_binding_from(&transaction, root_id)?
                     .ok_or(STORE_CORRUPTION)?;
-                if current != *expected {
+                if execution.migration_id != migration.migration_id {
                     return Err(STORE_CORRUPTION);
                 }
-                let migration = migration.ok_or(STORE_CORRUPTION)?;
-                if migration.migration_id != expected.migration_id
-                    || migration.status != MigrationStatusV1::MigrationComplete
-                {
-                    return Err(STORE_CORRUPTION);
-                }
+                load_exact_completed_migration_writer_from(&transaction, &migration, root_id)?
             }
             None => {
                 if owner.is_some() {
                     return Err(STORE_CORRUPTION);
                 }
-                if let Some(migration) = migration {
-                    if migration.status != MigrationStatusV1::MigrationComplete {
-                        return Err(STORE_CORRUPTION);
-                    }
-                    let execution = load_migration_execution_binding_from(&transaction, root_id)?
-                        .ok_or(STORE_CORRUPTION)?;
-                    if execution.migration_id != migration.migration_id {
-                        return Err(STORE_CORRUPTION);
-                    }
-                }
+                initialize_desktop_writer_from(&transaction, root_id)?
             }
-        }
-        let state = initialize_desktop_writer_from(&transaction, root_id)?;
+        };
         database(transaction.commit())?;
         Ok(NormalS2RouteAdmissionV1::EnterNormalS2(state))
     }

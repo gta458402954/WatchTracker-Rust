@@ -176,10 +176,15 @@ fn route_desktop_sync_inner_v1(
 ) -> Result<DesktopSyncRouteV1> {
     if let Some(binding) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)? {
         let preliminary = route_bound_root_v1(conn, &binding.physical_root_id, true)?;
+        // Finalization retires the database-wide source owner/guard in the
+        // same transaction that installs the completed writer. Never carry
+        // the pre-finalization owner authority into normal-route admission.
+        let current_source_binding =
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?;
         return finalize_normal_s2_route_v1(
             conn,
             &binding.physical_root_id,
-            Some(&binding),
+            current_source_binding.as_ref(),
             preliminary,
             before_normal_admission,
         );
