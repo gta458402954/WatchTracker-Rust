@@ -665,7 +665,12 @@ pub fn reconcile_migration_state_v1(input: &MigrationStateV1) -> Result<Migratio
         } else {
             MigrationStatusV1::StageBPublishing
         };
-    } else if state.activation_receipt.is_none() {
+    } else if state.activation_receipt.is_none()
+        && !matches!(
+            state.status,
+            MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
+        )
+    {
         // Stage boundaries are durable crash-recovery points. In particular,
         // a completed Stage B task must not enter activation before the
         // executor explicitly advances it. Stage A is retained only while
@@ -679,8 +684,9 @@ pub fn reconcile_migration_state_v1(input: &MigrationStateV1) -> Result<Migratio
         };
     } else {
         // Completion is a durable terminal lifecycle fact.  Reconciliation
-        // may derive activation verification from the receipts, but it must
-        // not erase a previously committed completion on restart.
+        // may derive activation verification from local receipts or preserve
+        // compatible remote-activation adoption, but it must not erase a
+        // previously committed verification/completion on restart.
         state.status = if state.status == MigrationStatusV1::MigrationComplete {
             MigrationStatusV1::MigrationComplete
         } else {

@@ -522,6 +522,38 @@ fn finalization_rejects_canonical_but_different_source_generation() {
 }
 
 #[test]
+fn finalization_rejects_valid_execution_bindings_with_changed_or_null_fingerprint() {
+    for (name, replacement) in [("different", Some("f".repeat(64))), ("null", None)] {
+        let database = TempDatabase::new(&format!("finalization-fingerprint-{name}"));
+        let connection = database.connection();
+        let (root, _) = verified_router_migration(&connection);
+        let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+        let bytes: Vec<u8> = connection
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [&root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        envelope["payload"]["legacyFingerprint"] = serde_json::json!(replacement);
+        connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE s2_lite_migration_execution_binding_v1
+                 SET state_json=?1 WHERE root_id=?2",
+                rusqlite::params![serde_json::to_vec(&envelope).unwrap(), root],
+            )
+            .unwrap();
+        assert!(store.finalize_verified_migration_v1().is_err());
+        assert_verified_finalization_is_unchanged(&connection, &root);
+    }
+}
+
+#[test]
 fn finalization_retires_source_protection_but_s2_cutover_still_blocks_s1_after_restart() {
     let database = TempDatabase::new("finalization-post-retirement-s1");
     let connection_a = database.connection();

@@ -13,7 +13,7 @@ use super::activation_cutover::ActivationFingerprintConsistencyV1;
 use super::canonical::{ProtocolError, Result};
 use super::durable_persistence::{
     migration_execution_identity_v1, MigrationExecutionBindingV1, SqliteS2LiteStoreV1,
-    TargetRootBindingV1,
+    TargetRootBindingV1, VerifiedActivationAdoptionResultV1,
 };
 use super::immutable_publish::ImmutableObjectRemoteV1;
 use super::migration_orchestration::{
@@ -307,7 +307,16 @@ where
         ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
             if legacy_fingerprint.as_ref() == Some(&expected_fingerprint) =>
         {
-            return Ok(ActivationExecutionResultV1::AlreadyVerifiedRemotely);
+            return Ok(match preflight.adopt_verified_activation_v1()? {
+                VerifiedActivationAdoptionResultV1::ReadOnlyFrozen => {
+                    ActivationExecutionResultV1::RootFrozen
+                }
+                VerifiedActivationAdoptionResultV1::Adopted
+                | VerifiedActivationAdoptionResultV1::AlreadyVerified
+                | VerifiedActivationAdoptionResultV1::AlreadyComplete => {
+                    ActivationExecutionResultV1::ActivationVerified
+                }
+            });
         }
         ActivationFingerprintConsistencyV1::Consistent { .. }
         | ActivationFingerprintConsistencyV1::Conflict => {
@@ -413,7 +422,16 @@ where
                 if legacy_fingerprint.as_ref() == Some(&expected_fingerprint)
         )
     {
-        return Ok(ActivationExecutionResultV1::AlreadyVerifiedRemotely);
+        return Ok(match migration_store.adopt_verified_activation_v1()? {
+            VerifiedActivationAdoptionResultV1::ReadOnlyFrozen => {
+                ActivationExecutionResultV1::RootFrozen
+            }
+            VerifiedActivationAdoptionResultV1::Adopted
+            | VerifiedActivationAdoptionResultV1::AlreadyVerified
+            | VerifiedActivationAdoptionResultV1::AlreadyComplete => {
+                ActivationExecutionResultV1::ActivationVerified
+            }
+        });
     }
     Ok(if activation_semantics_advanced(&durable, &next) {
         ActivationExecutionResultV1::Progressed
@@ -523,6 +541,7 @@ mod tests {
 
     use super::*;
     use crate::db_atomic_helpers::set_setting_tx;
+    use crate::s2_lite::desktop_lifecycle::{route_desktop_sync_v1, DesktopSyncRouteV1};
     use crate::s2_lite::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
     use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
@@ -1545,9 +1564,33 @@ mod tests {
             .unwrap();
         assert_eq!(
             run_activation(&compatible),
-            ActivationExecutionResultV1::AlreadyVerifiedRemotely
+            ActivationExecutionResultV1::ActivationVerified
         );
         assert_eq!(compatible.remote_state.lock().unwrap().put_calls, 2);
+        let state = activation_state(&compatible);
+        assert_eq!(state.status, MigrationStatusV1::ActivationVerified);
+        assert!(state.activation_receipt.is_none());
+        let store = SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        assert!(store
+            .load_prepared_activation_intent(&state.activation_intent.as_ref().unwrap().remote_path)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            route_desktop_sync_v1(&compatible.conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        let state = activation_state(&compatible);
+        assert_eq!(state.status, MigrationStatusV1::MigrationComplete);
+        let mut store = SqliteS2LiteStoreV1::open(&compatible.conn, &compatible.root_id).unwrap();
+        assert!(!store.migration_source_protected_v1().unwrap());
+        assert_eq!(
+            store
+                .load_desktop_root_state()
+                .unwrap()
+                .unwrap()
+                .local_writer_id,
+            WRITER
+        );
 
         let incompatible = fixture();
         complete_stage_b(&incompatible);
@@ -1574,6 +1617,73 @@ mod tests {
             ActivationExecutionResultV1::RootFrozen
         );
         assert_eq!(incompatible.remote_state.lock().unwrap().put_calls, 2);
+    }
+
+    #[test]
+    fn verified_activation_adoption_converges_and_fatal_ordering_remains_authoritative() {
+        let (initial, second) = fixture_with_second_connection();
+        complete_stage_b(&initial);
+        let fingerprint = migration_fingerprint(&initial);
+        let mut cutover = super::super::activation_cutover::create_activation_cutover_state_v1();
+        cutover.remote_s2_activated = true;
+        cutover.verified_activation_evidence.push(
+            super::super::activation_cutover::VerifiedActivationEvidenceV1 {
+                path: "activations/two-connection-third-party.json".into(),
+                activation_id: "94000000-0000-4000-8000-000000000001".into(),
+                content_hash: "c".repeat(64),
+                exact_bytes_hash: "c".repeat(64),
+                legacy_fingerprint: Some(fingerprint.clone()),
+            },
+        );
+        cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+            legacy_fingerprint: Some(fingerprint),
+        };
+        let mut first = SqliteS2LiteStoreV1::open(&initial.conn, &initial.root_id).unwrap();
+        MigrationStateStoreV1::persist_cutover_state(&mut first, &initial.root_id, &cutover)
+            .unwrap();
+        assert_eq!(
+            first.adopt_verified_activation_v1().unwrap(),
+            VerifiedActivationAdoptionResultV1::Adopted
+        );
+        let mut duplicate = SqliteS2LiteStoreV1::open(&second, &initial.root_id).unwrap();
+        assert_eq!(
+            duplicate.adopt_verified_activation_v1().unwrap(),
+            VerifiedActivationAdoptionResultV1::AlreadyVerified
+        );
+        assert_eq!(
+            activation_state(&initial).status,
+            MigrationStatusV1::ActivationVerified
+        );
+        assert_eq!(initial.remote_state.lock().unwrap().put_calls, 2);
+
+        MigrationStateStoreV1::persist_root_fatal(
+            &mut duplicate,
+            &initial.root_id,
+            "SYNC_ROOT_FROZEN_AFTER_ACTIVATION_ADOPTION",
+        )
+        .unwrap();
+        assert_eq!(
+            route_desktop_sync_v1(&initial.conn).unwrap(),
+            DesktopSyncRouteV1::ReadOnlyFrozen
+        );
+
+        let fatal_first = fixture();
+        complete_stage_b(&fatal_first);
+        let mut store = SqliteS2LiteStoreV1::open(&fatal_first.conn, &fatal_first.root_id).unwrap();
+        MigrationStateStoreV1::persist_root_fatal(
+            &mut store,
+            &fatal_first.root_id,
+            "SYNC_ROOT_FROZEN_BEFORE_ACTIVATION_ADOPTION",
+        )
+        .unwrap();
+        assert_eq!(
+            run_activation(&fatal_first),
+            ActivationExecutionResultV1::RootFrozen
+        );
+        assert_ne!(
+            activation_state(&fatal_first).status,
+            MigrationStatusV1::ActivationVerified
+        );
     }
 
     #[test]

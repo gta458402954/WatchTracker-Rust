@@ -79,6 +79,17 @@ pub enum MigrationFinalizationResultV1 {
     ReadOnlyFrozen,
 }
 
+/// Result of adopting already-verified compatible remote activation evidence.
+/// This transition never publishes, receipts, completes, or retires source
+/// authority; those remain the finalizer's separate responsibility.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VerifiedActivationAdoptionResultV1 {
+    Adopted,
+    AlreadyVerified,
+    AlreadyComplete,
+    ReadOnlyFrozen,
+}
+
 /// Test-only fault locations inside the single migration-finalization
 /// transaction.  Kept transaction-local so the production path cannot expose
 /// a partial cutover state.
@@ -1536,6 +1547,23 @@ fn load_exact_completed_migration_writer_from(
     Ok(state)
 }
 
+fn load_frozen_migration_execution_from(
+    conn: &Connection,
+    migration: &MigrationStateV1,
+    root_id: &str,
+) -> Result<MigrationExecutionBindingV1> {
+    let execution =
+        load_migration_execution_binding_from(conn, root_id)?.ok_or(STORE_CORRUPTION)?;
+    let snapshot = migration.snapshot.as_ref().ok_or(STORE_CORRUPTION)?;
+    if execution.physical_root_id != root_id
+        || execution.migration_id != migration.migration_id
+        || execution.legacy_fingerprint.as_deref() != Some(snapshot.legacy_fingerprint.as_str())
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(execution)
+}
+
 /// SQLite-backed S2 Lite state bound to one physical remote root.
 ///
 /// Every clone shares the application's existing connection mutex. This lets the
@@ -1916,6 +1944,70 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         self.finalize_verified_migration_with_fault_v1(None)
     }
 
+    /// Atomically adopts compatible, durably verified remote activation into
+    /// the local migration state. It deliberately stops before completion,
+    /// writer installation, or source-authority retirement.
+    pub fn adopt_verified_activation_v1(&mut self) -> Result<VerifiedActivationAdoptionResultV1> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty()
+            || !safety.cutover_state.root_fatal_signals.is_empty()
+        {
+            database(transaction.commit())?;
+            return Ok(VerifiedActivationAdoptionResultV1::ReadOnlyFrozen);
+        }
+        let migration = load_migration_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        let execution =
+            load_frozen_migration_execution_from(&transaction, &migration, self.root_id)?;
+        let fingerprint = migration
+            .snapshot
+            .as_ref()
+            .ok_or(STORE_CORRUPTION)?
+            .legacy_fingerprint
+            .as_str();
+        if execution.legacy_fingerprint.as_deref() != Some(fingerprint)
+            || !safety.cutover_state.remote_s2_activated
+            || !safety
+                .cutover_state
+                .verified_activation_evidence
+                .iter()
+                .any(|evidence| evidence.legacy_fingerprint.as_deref() == Some(fingerprint))
+            || !matches!(
+                &safety.cutover_state.fingerprint_consistency,
+                ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
+                    if legacy_fingerprint.as_deref() == Some(fingerprint)
+            )
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        if migration.status == MigrationStatusV1::MigrationComplete {
+            database(transaction.commit())?;
+            return Ok(VerifiedActivationAdoptionResultV1::AlreadyComplete);
+        }
+        let owner = load_migration_source_owner(&transaction)?.ok_or(STORE_CORRUPTION)?;
+        if owner.root_id != self.root_id || owner.migration_id != migration.migration_id {
+            return Err(STORE_CORRUPTION);
+        }
+        let result = match migration.status {
+            MigrationStatusV1::ActivationVerified => {
+                VerifiedActivationAdoptionResultV1::AlreadyVerified
+            }
+            MigrationStatusV1::StageBComplete | MigrationStatusV1::ActivationPublishing => {
+                let mut adopted = migration.clone();
+                adopted.status = MigrationStatusV1::ActivationVerified;
+                adopted.generation = adopted.generation.checked_add(1).ok_or(STORE_CORRUPTION)?;
+                validate_attempt_transition(&migration, &adopted)?;
+                save_migration(&transaction, &adopted)?;
+                VerifiedActivationAdoptionResultV1::Adopted
+            }
+            _ => return Err(STORE_CORRUPTION),
+        };
+        database(transaction.commit())?;
+        Ok(result)
+    }
+
     #[cfg(test)]
     pub(crate) fn finalize_verified_migration_with_injected_fault_v1(
         &mut self,
@@ -1954,11 +2046,8 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         {
             return Err(STORE_CORRUPTION);
         }
-        let execution = load_migration_execution_binding_from(&transaction, self.root_id)?
-            .ok_or(STORE_CORRUPTION)?;
-        if execution.migration_id != migration.migration_id {
-            return Err(STORE_CORRUPTION);
-        }
+        let _execution =
+            load_frozen_migration_execution_from(&transaction, &migration, self.root_id)?;
 
         if migration.status == MigrationStatusV1::MigrationComplete {
             if load_migration_source_owner(&transaction)?.is_some() {
