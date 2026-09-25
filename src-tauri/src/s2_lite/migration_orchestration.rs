@@ -1179,10 +1179,7 @@ pub fn execute_migration_step_v1<
         }
         return persist_transition(&durable, &state, migration_store);
     }
-    if matches!(
-        state.status,
-        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
-    ) {
+    if state.status == MigrationStatusV1::ActivationVerified {
         let discovery = activation_discovery(&state);
         let persisted = migration_store.load_cutover_state(&state.root_id)?;
         let recovery = recover_activation_cutover_v1(&discovery, persisted.as_ref());
@@ -1193,8 +1190,9 @@ pub fn execute_migration_step_v1<
             return Err(ProtocolError("activation_cutover_not_ready"));
         }
         migration_store.persist_cutover_state(&state.root_id, &cutover)?;
-        state.status = MigrationStatusV1::MigrationComplete;
-        state = persist_transition(&durable, &state, migration_store)?;
+        // The executor is intentionally publication/recovery-only.  The
+        // later local writer handoff and source-guard retirement must happen
+        // in the dedicated one-transaction durable finalizer.
     }
     Ok(state)
 }

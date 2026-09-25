@@ -317,6 +317,20 @@ fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
             .unwrap()
     };
     while state.status != MigrationStatusV1::MigrationComplete {
+        if state.status == MigrationStatusV1::ActivationVerified {
+            let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+            if MigrationStateStoreV1::load_root_safety(&mut store, &root)
+                .unwrap()
+                .cutover_state
+                .remote_s2_activated
+            {
+                store.finalize_verified_migration_v1().unwrap();
+                state = MigrationStateStoreV1::load(&mut store, &root)
+                    .unwrap()
+                    .unwrap();
+                continue;
+            }
+        }
         let mut migration_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
         let attachment = start_or_attach_migration_v1(&state, &mut migration_store).unwrap();
         let capability = if state.status == MigrationStatusV1::ActivationPublishing {
@@ -1111,6 +1125,14 @@ fn completed_migration_normal_admission_installs_its_writer_seed_exactly() {
         DesktopSyncRouteV1::EnterNormalS2
     );
     let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+    assert!(!store.migration_source_protected_v1().unwrap());
+    assert_eq!(
+        MigrationStateStoreV1::load(&mut store, &root)
+            .unwrap()
+            .unwrap()
+            .status,
+        MigrationStatusV1::MigrationComplete
+    );
     let writer = store.load_desktop_root_state().unwrap().unwrap();
     assert_eq!(writer.local_writer_id, migration_writer_id);
     assert_eq!(writer.writer_head, None);
@@ -1136,11 +1158,14 @@ fn completed_migration_fatal_before_normal_admission_installs_no_writer() {
         .unwrap(),
         DesktopSyncRouteV1::ReadOnlyFrozen
     );
+    // Finalization established the frozen migration writer atomically before
+    // this later fatal won normal-route admission; the fatal must block
+    // publication but cannot erase already-established writer authority.
     assert!(SqliteS2LiteStoreV1::open(&connection_a, &root)
         .unwrap()
         .load_desktop_root_state()
         .unwrap()
-        .is_none());
+        .is_some());
 }
 
 #[test]

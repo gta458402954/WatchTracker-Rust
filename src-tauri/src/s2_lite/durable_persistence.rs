@@ -70,6 +70,15 @@ pub enum NormalS2RouteAdmissionV1 {
     ReadOnlyFrozen,
 }
 
+/// Outcome of the local-only, root-authoritative migration cutover
+/// finalization. This API has no remote collaborator and never publishes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MigrationFinalizationResultV1 {
+    Finalized,
+    AlreadyFinalized,
+    ReadOnlyFrozen,
+}
+
 /// Admission outcome for the legacy S1 writer. A process lock can supplement
 /// this path, but only this SQLite transaction decides whether its one PUT is
 /// admitted across independent desktop processes.
@@ -1822,6 +1831,82 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         Ok(load_migration_source_owner(&conn)?.is_some())
     }
 
+    /// Atomically converts a durably verified compatible activation into the
+    /// normal S2 authority state. The migration state, frozen writer seed, and
+    /// database-wide source-owner/guard retirement share one BEGIN IMMEDIATE
+    /// transaction so none can become visible without the other two.
+    pub fn finalize_verified_migration_v1(&mut self) -> Result<MigrationFinalizationResultV1> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty()
+            || !safety.cutover_state.root_fatal_signals.is_empty()
+        {
+            database(transaction.commit())?;
+            return Ok(MigrationFinalizationResultV1::ReadOnlyFrozen);
+        }
+        let migration = load_migration_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        let fingerprint = migration
+            .snapshot
+            .as_ref()
+            .ok_or(STORE_CORRUPTION)?
+            .legacy_fingerprint
+            .as_str();
+        if !safety.cutover_state.remote_s2_activated
+            || !matches!(
+                &safety.cutover_state.fingerprint_consistency,
+                ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
+                    if legacy_fingerprint.as_deref() == Some(fingerprint)
+            )
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let execution = load_migration_execution_binding_from(&transaction, self.root_id)?
+            .ok_or(STORE_CORRUPTION)?;
+        if execution.migration_id != migration.migration_id {
+            return Err(STORE_CORRUPTION);
+        }
+
+        if migration.status == MigrationStatusV1::MigrationComplete {
+            if load_migration_source_owner(&transaction)?.is_some() {
+                return Err(STORE_CORRUPTION);
+            }
+            let _ = completed_migration_writer_seed(&migration, self.root_id)?
+                .ok_or(STORE_CORRUPTION)?;
+            initialize_desktop_writer_from(&transaction, self.root_id)?;
+            database(transaction.commit())?;
+            return Ok(MigrationFinalizationResultV1::AlreadyFinalized);
+        }
+        if migration.status != MigrationStatusV1::ActivationVerified {
+            return Err(STORE_CORRUPTION);
+        }
+        let owner = load_migration_source_owner(&transaction)?.ok_or(STORE_CORRUPTION)?;
+        if owner.root_id != self.root_id || owner.migration_id != migration.migration_id {
+            return Err(STORE_CORRUPTION);
+        }
+        let mut completed = migration;
+        completed.status = MigrationStatusV1::MigrationComplete;
+        completed.generation = completed
+            .generation
+            .checked_add(1)
+            .ok_or(STORE_CORRUPTION)?;
+        let _ =
+            completed_migration_writer_seed(&completed, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        save_migration(&transaction, &completed)?;
+        initialize_desktop_writer_from(&transaction, self.root_id)?;
+        database(transaction.execute(
+            "DELETE FROM s2_lite_migration_source_owner_v1 WHERE owner_key=1",
+            [],
+        ))?;
+        database(transaction.execute(
+            "DELETE FROM s2_lite_migration_source_guard_v1 WHERE root_id=?1",
+            [self.root_id],
+        ))?;
+        database(transaction.commit())?;
+        Ok(MigrationFinalizationResultV1::Finalized)
+    }
+
     /// Loads the database-wide migration source owner and its immutable
     /// historical target/root execution identity.  This lookup intentionally
     /// never consults the currently active target: an in-progress migration
@@ -1890,10 +1975,18 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 }
             }
             None => {
-                // A global migration owner is durable evidence that this was
-                // not a fresh non-migration normal-root route.
-                if owner.is_some() || migration.is_some() {
+                if owner.is_some() {
                     return Err(STORE_CORRUPTION);
+                }
+                if let Some(migration) = migration {
+                    if migration.status != MigrationStatusV1::MigrationComplete {
+                        return Err(STORE_CORRUPTION);
+                    }
+                    let execution = load_migration_execution_binding_from(&transaction, root_id)?
+                        .ok_or(STORE_CORRUPTION)?;
+                    if execution.migration_id != migration.migration_id {
+                        return Err(STORE_CORRUPTION);
+                    }
                 }
             }
         }

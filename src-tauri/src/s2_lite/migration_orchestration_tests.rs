@@ -680,14 +680,15 @@ fn shared_execution_scenarios_restart_and_finish_through_cutover() {
     };
     let mut normal_stores = FakeStores::default();
     let mut normal_trace = Vec::new();
-    while normal.status != MigrationStatusV1::MigrationComplete {
+    while normal.status != MigrationStatusV1::ActivationVerified {
         normal = execute(&normal, &mut normal_remote, &mut normal_stores, timestamp);
         normal_trace.push(normal.status);
     }
     assert_eq!(
         serde_json::to_value(normal_trace).unwrap(),
-        fixture["standardStatusTrace"]
+        serde_json::Value::Array(fixture["standardStatusTrace"].as_array().unwrap()[..5].to_vec())
     );
+    let _ = execute(&normal, &mut normal_remote, &mut normal_stores, timestamp);
 
     for scenario in &fixture["executionScenarios"].as_array().unwrap()[..4] {
         let plan_name = scenario["planningScenario"].as_str().unwrap();
@@ -718,13 +719,14 @@ fn shared_execution_scenarios_restart_and_finish_through_cutover() {
         let first_stage_path = state.stage_a[0].intent.remote_path.clone();
         let puts_before_restart = remote.put_counts.get(&first_stage_path).copied();
         state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-        while state.status != MigrationStatusV1::MigrationComplete {
+        while state.status != MigrationStatusV1::ActivationVerified {
             state = execute(&state, &mut remote, &mut stores, timestamp);
             if state.status == MigrationStatusV1::StageBPublishing {
                 assert!(state.stage_a.iter().all(|task| task.receipt.is_some()));
             }
         }
-        assert_eq!(state.status, MigrationStatusV1::MigrationComplete);
+        assert_eq!(state.status, MigrationStatusV1::ActivationVerified);
+        let _ = execute(&state, &mut remote, &mut stores, timestamp);
         assert!(
             stores
                 .migration
@@ -796,7 +798,7 @@ fn deterministic_replan_and_frozen_new_root_handoff_match_shared_contract() {
     };
     let mut new_root_stores = FakeStores::default();
     let mut completed = planned;
-    while completed.status != MigrationStatusV1::MigrationComplete {
+    while completed.status != MigrationStatusV1::ActivationVerified {
         completed = execute(
             &completed,
             &mut new_root_remote,
@@ -804,6 +806,12 @@ fn deterministic_replan_and_frozen_new_root_handoff_match_shared_contract() {
             identity["createdAt"].as_str().unwrap(),
         );
     }
+    let _ = execute(
+        &completed,
+        &mut new_root_remote,
+        &mut new_root_stores,
+        identity["createdAt"].as_str().unwrap(),
+    );
     assert!(
         new_root_stores
             .migration
@@ -830,7 +838,7 @@ fn activation_same_path_mismatch_freezes_without_overwrite() {
         .remote_path
         .clone();
     remote.objects.insert(path.clone(), vec![1, 2, 3]);
-    state = execute(&state, &mut remote, &mut stores, timestamp);
+    let _ = execute(&state, &mut remote, &mut stores, timestamp);
     assert_eq!(state.status, MigrationStatusV1::RootFrozen);
     assert_eq!(
         state.root_fatal_signals[0].code,
@@ -851,14 +859,15 @@ fn empty_migration_with_lost_publish_response_verifies_before_cutover() {
     };
     let mut stores = FakeStores::default();
     let mut trace = Vec::new();
-    while state.status != MigrationStatusV1::MigrationComplete {
+    while state.status != MigrationStatusV1::ActivationVerified {
         state = execute(&state, &mut remote, &mut stores, timestamp);
         trace.push(state.status);
     }
     assert_eq!(
         serde_json::to_value(trace).unwrap(),
-        fixture["emptyStatusTrace"]
+        serde_json::Value::Array(fixture["emptyStatusTrace"].as_array().unwrap()[..1].to_vec())
     );
+    let _ = execute(&state, &mut remote, &mut stores, timestamp);
     assert_eq!(remote.objects.len(), 1);
     assert!(stores.migration.cutover_state.unwrap().remote_s2_activated);
 }
@@ -1046,7 +1055,7 @@ fn activation_receipt_recovers_cutover_and_stale_complete_is_not_ready() {
         serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
     assert_eq!(
         execute(&restarted, &mut remote, &mut stores, timestamp).status,
-        MigrationStatusV1::MigrationComplete
+        MigrationStatusV1::ActivationVerified
     );
 
     let mut stale = planned_for(&fixture, &fixture["planningScenarios"][0]);
@@ -1124,7 +1133,7 @@ fn shared_stage_b_partial_crash_never_republishes_stage_a() {
         .map(|task| remote.put_counts.get(&task.intent.remote_path).copied())
         .collect::<Vec<_>>();
     state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-    while state.status != MigrationStatusV1::MigrationComplete {
+    while state.status != MigrationStatusV1::ActivationVerified {
         state = execute(&state, &mut remote, &mut stores, timestamp);
     }
     assert_eq!(

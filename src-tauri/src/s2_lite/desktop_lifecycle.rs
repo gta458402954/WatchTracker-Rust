@@ -11,8 +11,9 @@ use rusqlite::Connection;
 use super::business_projection::apply_complete_projection_v1;
 use super::canonical::Result;
 use super::durable_persistence::{
-    DesktopRootStateV1, DurableMaterializedProjectionV1, NormalS2RouteAdmissionV1,
-    OrdinaryPublishExclusiveResultV1, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
+    DesktopRootStateV1, DurableMaterializedProjectionV1, MigrationFinalizationResultV1,
+    NormalS2RouteAdmissionV1, OrdinaryPublishExclusiveResultV1, SqliteS2LiteStoreV1,
+    VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     persist_prepared_intent_before_publish_v1, publish_persisted_intent_v1,
@@ -124,7 +125,22 @@ fn route_bound_root_v1(
     {
         return Ok(DesktopSyncRouteV1::ReadOnlyFrozen);
     }
-    let migration = MigrationStateStoreV1::load(&mut store, root_id)?;
+    let mut migration = MigrationStateStoreV1::load(&mut store, root_id)?;
+    if safety.cutover_state.remote_s2_activated
+        && migration.as_ref().is_some_and(|state| {
+            state.status == super::migration_orchestration::MigrationStatusV1::ActivationVerified
+        })
+    {
+        match store.finalize_verified_migration_v1()? {
+            MigrationFinalizationResultV1::ReadOnlyFrozen => {
+                return Ok(DesktopSyncRouteV1::ReadOnlyFrozen)
+            }
+            MigrationFinalizationResultV1::Finalized
+            | MigrationFinalizationResultV1::AlreadyFinalized => {
+                migration = MigrationStateStoreV1::load(&mut store, root_id)?;
+            }
+        }
+    }
     let route = match migration {
         Some(state) => {
             route_migration_status_v1(state.status, safety.cutover_state.remote_s2_activated)?
