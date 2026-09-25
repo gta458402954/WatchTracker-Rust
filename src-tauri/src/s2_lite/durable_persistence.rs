@@ -3794,6 +3794,43 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
             // this same root-authoritative transaction. Bootstrap commit
             // admission intentionally has no corresponding requirement.
             if migration.status == MigrationStatusV1::ActivationPublishing {
+                // Rebuild the complete historical authority chain inside this
+                // same BEGIN IMMEDIATE admission. Nothing captured by the
+                // earlier production preflight is sufficient to authorize an
+                // activation PUT after another connection changed the source
+                // owner, guard, execution identity, or target/root binding.
+                let owner = load_migration_source_owner(transaction)?.ok_or(STORE_CORRUPTION)?;
+                if owner.root_id != root_id || owner.migration_id != migration.migration_id {
+                    return Err(STORE_CORRUPTION);
+                }
+                let execution = load_migration_execution_binding_from(transaction, root_id)?
+                    .ok_or(STORE_CORRUPTION)?;
+                let expected_fingerprint = migration
+                    .snapshot
+                    .as_ref()
+                    .ok_or(STORE_CORRUPTION)?
+                    .legacy_fingerprint
+                    .clone();
+                if execution.physical_root_id != root_id
+                    || execution.migration_id != migration.migration_id
+                    || execution.legacy_fingerprint.as_deref()
+                        != Some(expected_fingerprint.as_str())
+                {
+                    return Err(STORE_CORRUPTION);
+                }
+                let target = load_target_root_binding_from(
+                    transaction,
+                    &execution.target_id,
+                    execution.target_epoch,
+                )?
+                .ok_or(STORE_CORRUPTION)?;
+                if target.target_id != execution.target_id
+                    || target.target_epoch != execution.target_epoch
+                    || target.physical_root_id != execution.physical_root_id
+                    || target.physical_root_id != root_id
+                {
+                    return Err(STORE_CORRUPTION);
+                }
                 let intent = migration
                     .activation_intent
                     .as_ref()
@@ -3804,12 +3841,6 @@ impl MigrationStateStoreV1 for SqliteS2LiteStoreV1<'_> {
                 if durable != *intent {
                     return Err(STORE_CORRUPTION);
                 }
-                let expected_fingerprint = migration
-                    .snapshot
-                    .as_ref()
-                    .ok_or(STORE_CORRUPTION)?
-                    .legacy_fingerprint
-                    .clone();
                 match &safety.cutover_state.fingerprint_consistency {
                     super::activation_cutover::ActivationFingerprintConsistencyV1::NoEvidence => {}
                     super::activation_cutover::ActivationFingerprintConsistencyV1::Consistent {

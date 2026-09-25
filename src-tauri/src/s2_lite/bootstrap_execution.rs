@@ -512,6 +512,7 @@ pub fn execute_production_activation_with_webdav_v1(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
@@ -766,6 +767,67 @@ mod tests {
             |_, _| Ok(fake),
             CREATED,
         )
+    }
+
+    fn assert_activation_admission_rejects_authority_change<F>(mutate: F)
+    where
+        F: FnOnce(&Connection, &Fixture),
+    {
+        let (fixture, second) = fixture_with_second_connection();
+        complete_stage_b(&fixture);
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        let stale = activation_state(&fixture);
+        let remote = FakeRemote {
+            root_id: fixture.root_id.clone(),
+            state: fixture.remote_state.clone(),
+        };
+        let mut primary = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
+        let attachment = start_or_attach_migration_v1(&stale, &mut primary).unwrap();
+        let _capability =
+            create_activation_publication_execution_capability_v1(&attachment, &remote, &primary)
+                .unwrap();
+
+        mutate(&second.lock().unwrap(), &fixture);
+
+        let put_callback_called = Cell::new(false);
+        assert!(MigrationStateStoreV1::run_publish_exclusive(
+            &mut primary,
+            &fixture.root_id,
+            &stale.migration_id,
+            stale.generation,
+            || {
+                put_callback_called.set(true);
+                Ok(())
+            },
+        )
+        .is_err());
+        assert!(!put_callback_called.get());
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 2);
+    }
+
+    fn mutate_execution_binding<F>(connection: &Connection, root_id: &str, mutate: F)
+    where
+        F: FnOnce(&mut serde_json::Value),
+    {
+        let bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT state_json FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                [root_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        mutate(envelope.get_mut("payload").unwrap());
+        connection
+            .execute(
+                "UPDATE s2_lite_migration_execution_binding_v1
+                 SET state_json=?1 WHERE root_id=?2",
+                rusqlite::params![serde_json::to_vec(&envelope).unwrap(), root_id],
+            )
+            .unwrap();
     }
 
     /// Reproduces the precise crash boundary after the exact prepared intent
@@ -1559,6 +1621,135 @@ mod tests {
         assert_eq!(next.status, MigrationStatusV1::RootFrozen);
         assert_eq!(incompatible.remote_state.lock().unwrap().put_calls, 2);
     }
+
+    macro_rules! activation_authority_race {
+        ($name:ident, $mutate:expr) => {
+            #[test]
+            fn $name() {
+                // The capability is created from an intact A/epoch-1 chain;
+                // the callback is the one activation PUT admitted by SQLite.
+                assert_activation_admission_rejects_authority_change($mutate);
+            }
+        };
+    }
+
+    activation_authority_race!(
+        activation_admission_rejects_deleted_source_owner,
+        |connection, _| {
+            connection
+                .execute("DELETE FROM s2_lite_migration_source_owner_v1", [])
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_deleted_source_guard,
+        |connection, _| {
+            connection
+                .pragma_update(None, "foreign_keys", "OFF")
+                .unwrap();
+            connection
+                .execute("DELETE FROM s2_lite_migration_source_guard_v1", [])
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_owner_guard_mismatch,
+        |connection, _| {
+            connection
+                .execute(
+                    "UPDATE s2_lite_migration_source_owner_v1
+                 SET migration_id='90000000-0000-4000-8000-000000000002'",
+                    [],
+                )
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_changed_guard_generation,
+        |connection, _| {
+            connection
+                .execute(
+                    "UPDATE s2_lite_migration_source_guard_v1
+                 SET captured_records_generation='999'",
+                    [],
+                )
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_deleted_execution_binding,
+        |connection, fixture| {
+            connection
+                .execute(
+                    "DELETE FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1",
+                    [&fixture.root_id],
+                )
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_execution_migration_id_mismatch,
+        |connection, fixture| {
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["migrationId"] =
+                    serde_json::Value::String("90000000-0000-4000-8000-000000000002".into());
+            });
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_execution_generation_mismatch,
+        |connection, fixture| {
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["capturedRecordsGeneration"] = serde_json::Value::from(999);
+            });
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_execution_fingerprint_mismatch,
+        |connection, fixture| {
+            mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                binding["legacyFingerprint"] = serde_json::Value::String("a".repeat(64));
+            });
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_deleted_target_root_binding,
+        |connection, fixture| {
+            connection
+                .execute(
+                    "DELETE FROM s2_lite_target_root_binding_v1 WHERE target_id=?1",
+                    [&fixture.target_a],
+                )
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_wrong_target_root_binding,
+        |connection, fixture| {
+            connection
+                .pragma_update(None, "foreign_keys", "OFF")
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE s2_lite_target_root_binding_v1
+                 SET physical_root_id='wrong-root' WHERE target_id=?1",
+                    [&fixture.target_a],
+                )
+                .unwrap();
+        }
+    );
+    activation_authority_race!(
+        activation_admission_rejects_changed_target_epoch,
+        |connection, fixture| {
+            connection
+                .execute(
+                    "UPDATE s2_lite_target_root_binding_v1
+                 SET target_epoch='2' WHERE target_id=?1",
+                    [&fixture.target_a],
+                )
+                .unwrap();
+        }
+    );
 
     #[test]
     fn activation_phase_fence_stops_stale_execution_at_verified_or_complete() {
