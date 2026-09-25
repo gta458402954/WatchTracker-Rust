@@ -12,8 +12,9 @@ use super::desktop_lifecycle::{
 };
 use super::durable_persistence::{
     migration_execution_identity_v1, DesktopRootStateV1, IncompatibleActivationFreezeFaultV1,
-    MigrationExecutionBindingV1, OrdinaryPublishExclusiveResultV1, OutboundBatchMutationV1,
-    OutboundBatchV1, SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
+    MigrationExecutionBindingV1, MigrationFinalizationFaultV1, MigrationFinalizationResultV1,
+    OrdinaryPublishExclusiveResultV1, OutboundBatchMutationV1, OutboundBatchV1,
+    SqliteS2LiteStoreV1, VersionedDiscoveryStateV1,
 };
 use super::immutable_publish::{
     prepare_activation_intent_v1, prepare_commit_intent_v1, ImmutableObjectRemoteV1,
@@ -301,10 +302,9 @@ fn latch_compatible_router_activation(conn: &Mutex<Connection>) -> String {
     bound.binding.physical_root_id
 }
 
-/// Drives an empty, durably admitted bootstrap through activation.  Empty is
-/// still a valid migration: the frozen handoff must seed the migration writer
-/// with a null head and sequence one rather than allocate a random writer.
-fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
+/// Drives an empty, durably admitted bootstrap through verified activation,
+/// without entering the local-only finalization transaction.
+fn verified_router_migration(conn: &Mutex<Connection>) -> (String, String) {
     let (_target, root) = admit_router_migration(conn);
     let mut remote = FakeRemote {
         root_id: root.clone(),
@@ -316,7 +316,7 @@ fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
             .unwrap()
             .unwrap()
     };
-    while state.status != MigrationStatusV1::MigrationComplete {
+    loop {
         if state.status == MigrationStatusV1::ActivationVerified {
             let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
             if MigrationStateStoreV1::load_root_safety(&mut store, &root)
@@ -324,11 +324,7 @@ fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
                 .cutover_state
                 .remote_s2_activated
             {
-                store.finalize_verified_migration_v1().unwrap();
-                state = MigrationStateStoreV1::load(&mut store, &root)
-                    .unwrap()
-                    .unwrap();
-                continue;
+                break;
             }
         }
         let mut migration_store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
@@ -369,6 +365,399 @@ fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
         .unwrap_or_else(|error| panic!("migration state {:?}: {error:?}", state.status));
     }
     (root, state.writer_id)
+}
+
+/// Drives an empty, durably admitted bootstrap through activation. Empty is
+/// still a valid migration: the frozen handoff must seed the migration writer
+/// with a null head and sequence one rather than allocate a random writer.
+fn complete_router_migration(conn: &Mutex<Connection>) -> (String, String) {
+    let (root, writer_id) = verified_router_migration(conn);
+    let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+    assert_eq!(
+        store.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::Finalized
+    );
+    (root, writer_id)
+}
+
+fn assert_verified_finalization_is_unchanged(conn: &Mutex<Connection>, root: &str) {
+    let mut store = SqliteS2LiteStoreV1::open(conn, root).unwrap();
+    let migration = MigrationStateStoreV1::load(&mut store, root)
+        .unwrap()
+        .unwrap();
+    assert_eq!(migration.status, MigrationStatusV1::ActivationVerified);
+    assert!(store.migration_source_protected_v1().unwrap());
+    assert!(store.load_desktop_root_state().unwrap().is_none());
+    assert!(
+        MigrationStateStoreV1::load_root_safety(&mut store, root)
+            .unwrap()
+            .cutover_state
+            .remote_s2_activated
+    );
+    let mut puts = 0;
+    assert_eq!(
+        store
+            .run_legacy_s1_publish_exclusive(root, || {
+                puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        super::durable_persistence::LegacyS1PublishAdmissionV1::RejectedMigrationSourceProtected
+    );
+    assert_eq!(puts, 0);
+
+    let guard = conn.lock().unwrap();
+    let owner_count: i64 = guard
+        .query_row(
+            "SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let guard_count: i64 = guard
+        .query_row(
+            "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1 WHERE root_id=?1",
+            [root],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((owner_count, guard_count), (1, 1));
+}
+
+#[test]
+fn finalization_faults_rollback_every_cutover_authority_fact() {
+    for (name, fault) in [
+        (
+            "after-migration-complete",
+            MigrationFinalizationFaultV1::MigrationCompletePersisted,
+        ),
+        (
+            "after-writer-handoff",
+            MigrationFinalizationFaultV1::WriterHandoffPersisted,
+        ),
+        (
+            "after-source-retirement",
+            MigrationFinalizationFaultV1::SourceRetired,
+        ),
+    ] {
+        let database = TempDatabase::new(name);
+        let connection = database.connection();
+        let (root, _) = verified_router_migration(&connection);
+        let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+        assert!(store
+            .finalize_verified_migration_with_injected_fault_v1(fault)
+            .is_err());
+        // A separate connection proves that no intermediate write became
+        // durable before the failed BEGIN IMMEDIATE transaction was dropped.
+        let restarted = database.connection();
+        assert_verified_finalization_is_unchanged(&restarted, &root);
+    }
+}
+
+#[test]
+fn finalization_rejects_canonical_but_different_source_generation() {
+    let database = TempDatabase::new("finalization-source-generation-mismatch");
+    let connection = database.connection();
+    let (root, _) = verified_router_migration(&connection);
+    let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+    let before_migration: Vec<u8> = connection
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT state_json FROM s2_lite_migration_v1 WHERE root_id=?1",
+            [&root],
+            |row| row.get(0),
+        )
+        .unwrap();
+    connection
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE s2_lite_migration_source_guard_v1
+             SET captured_records_generation='1' WHERE root_id=?1",
+            [&root],
+        )
+        .unwrap();
+
+    assert!(store.finalize_verified_migration_v1().is_err());
+    let guard = connection.lock().unwrap();
+    let after_migration: Vec<u8> = guard
+        .query_row(
+            "SELECT state_json FROM s2_lite_migration_v1 WHERE root_id=?1",
+            [&root],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(after_migration, before_migration);
+    let owner_count: i64 = guard
+        .query_row(
+            "SELECT COUNT(*) FROM s2_lite_migration_source_owner_v1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let guard_count: i64 = guard
+        .query_row(
+            "SELECT COUNT(*) FROM s2_lite_migration_source_guard_v1 WHERE root_id=?1",
+            [&root],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((owner_count, guard_count), (1, 1));
+    assert_eq!(
+        guard
+            .query_row(
+                "SELECT COUNT(*) FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+                [&root],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    drop(guard);
+    // Restart intentionally rejects the inconsistent source authority instead
+    // of treating it as absent or silently refreshing its generation.
+    let restarted = Mutex::new(Connection::open(&database.path).unwrap());
+    assert!(SqliteS2LiteStoreV1::open(&restarted, &root).is_err());
+}
+
+#[test]
+fn finalization_retires_source_protection_but_s2_cutover_still_blocks_s1_after_restart() {
+    let database = TempDatabase::new("finalization-post-retirement-s1");
+    let connection_a = database.connection();
+    let (root, writer_id) = verified_router_migration(&connection_a);
+    let mut finalizer = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    assert_eq!(
+        finalizer.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::Finalized
+    );
+    let writer = finalizer.load_desktop_root_state().unwrap().unwrap();
+    assert_eq!(writer.local_writer_id, writer_id);
+    assert!(!finalizer.migration_source_protected_v1().unwrap());
+    assert!(
+        MigrationStateStoreV1::load_root_safety(&mut finalizer, &root)
+            .unwrap()
+            .cutover_state
+            .remote_s2_activated
+    );
+    for connection in [database.connection(), database.connection()] {
+        let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+        let mut puts = 0;
+        assert_eq!(
+            store
+                .run_legacy_s1_publish_exclusive(&root, || {
+                    puts += 1;
+                    Ok(())
+                })
+                .unwrap(),
+            super::durable_persistence::LegacyS1PublishAdmissionV1::RejectedActivation
+        );
+        assert_eq!(puts, 0);
+    }
+}
+
+#[test]
+fn fatal_before_finalization_keeps_verified_migration_and_source_protection() {
+    let database = TempDatabase::new("finalization-fatal-first");
+    let connection_a = database.connection();
+    let (root, _) = verified_router_migration(&connection_a);
+    let connection_b = database.connection();
+    let mut fatal_authority = SqliteS2LiteStoreV1::open(&connection_b, &root).unwrap();
+    MigrationStateStoreV1::persist_root_fatal(
+        &mut fatal_authority,
+        &root,
+        "SYNC_ROOT_FROZEN_FINALIZATION_FIRST",
+    )
+    .unwrap();
+    let mut finalizer = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    assert_eq!(
+        finalizer.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::ReadOnlyFrozen
+    );
+    let restarted = database.connection();
+    let mut restarted_store = SqliteS2LiteStoreV1::open(&restarted, &root).unwrap();
+    assert_eq!(
+        MigrationStateStoreV1::load(&mut restarted_store, &root)
+            .unwrap()
+            .unwrap()
+            .status,
+        MigrationStatusV1::RootFrozen
+    );
+    assert!(restarted_store.load_desktop_root_state().unwrap().is_none());
+    assert!(restarted_store.migration_source_protected_v1().unwrap());
+    let mut puts = 0;
+    assert_eq!(
+        restarted_store
+            .run_legacy_s1_publish_exclusive(&root, || {
+                puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        super::durable_persistence::LegacyS1PublishAdmissionV1::RejectedRootFrozen
+    );
+    assert_eq!(puts, 0);
+}
+
+#[test]
+fn finalization_then_fatal_preserves_exact_handoff_and_blocks_normal_publication() {
+    let database = TempDatabase::new("finalization-before-fatal");
+    let connection_a = database.connection();
+    let (root, writer_id) = verified_router_migration(&connection_a);
+    let mut finalizer = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    assert_eq!(
+        finalizer.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::Finalized
+    );
+    let writer = finalizer.load_desktop_root_state().unwrap().unwrap();
+    assert_eq!(
+        (
+            writer.local_writer_id,
+            writer.writer_head,
+            writer.next_writer_sequence
+        ),
+        (writer_id, None, 1,)
+    );
+    let intent = prepared();
+    PreparedIntentStoreV1::persist(&mut finalizer, &intent).unwrap();
+    let connection_b = database.connection();
+    let mut fatal_authority = SqliteS2LiteStoreV1::open(&connection_b, &root).unwrap();
+    MigrationStateStoreV1::persist_root_fatal(
+        &mut fatal_authority,
+        &root,
+        "SYNC_ROOT_FROZEN_AFTER_FINALIZATION",
+    )
+    .unwrap();
+    let restarted_router = database.connection();
+    assert_eq!(
+        route_desktop_sync_v1(&restarted_router).unwrap(),
+        DesktopSyncRouteV1::ReadOnlyFrozen
+    );
+    let restarted_publisher = database.connection();
+    let mut publisher = SqliteS2LiteStoreV1::open(&restarted_publisher, &root).unwrap();
+    let mut puts = 0;
+    assert_eq!(
+        publisher
+            .run_ordinary_publish_exclusive(&root, &intent, || {
+                puts += 1;
+                Ok(())
+            })
+            .unwrap(),
+        OrdinaryPublishExclusiveResultV1::RejectedRootFrozen
+    );
+    assert_eq!(puts, 0);
+}
+
+#[test]
+fn independent_finalizers_converge_on_one_exact_completed_state() {
+    let database = TempDatabase::new("duplicate-finalizers");
+    let connection_a = database.connection();
+    let (root, writer_id) = verified_router_migration(&connection_a);
+    let connection_b = database.connection();
+
+    let mut first = SqliteS2LiteStoreV1::open(&connection_a, &root).unwrap();
+    assert_eq!(
+        first.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::Finalized
+    );
+    let first_writer = first.load_desktop_root_state().unwrap().unwrap();
+    let mut second = SqliteS2LiteStoreV1::open(&connection_b, &root).unwrap();
+    assert_eq!(
+        second.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::AlreadyFinalized
+    );
+    assert_eq!(
+        second.load_desktop_root_state().unwrap(),
+        Some(first_writer)
+    );
+    assert_eq!(
+        second
+            .load_desktop_root_state()
+            .unwrap()
+            .unwrap()
+            .local_writer_id,
+        writer_id
+    );
+    assert!(!second.migration_source_protected_v1().unwrap());
+    let restarted_connection = database.connection();
+    let mut restarted = SqliteS2LiteStoreV1::open(&restarted_connection, &root).unwrap();
+    assert_eq!(
+        restarted.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::AlreadyFinalized
+    );
+}
+
+#[test]
+fn finalization_requires_an_exact_existing_writer_seed_and_never_repairs_mismatch() {
+    let database = TempDatabase::new("finalization-writer-seed-mismatch");
+    let connection = database.connection();
+    let (root, migration_writer_id) = verified_router_migration(&connection);
+    let mismatched = DesktopRootStateV1 {
+        state_version: 1,
+        physical_root_id: root.clone(),
+        local_writer_id: migration_writer_id,
+        next_writer_sequence: 2,
+        writer_head: None,
+        lifecycle_generation: 0,
+        materialized_projection_generation: None,
+        business_applied_projection_generation: None,
+    };
+    let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+    store.persist_desktop_root_state(&mismatched).unwrap();
+    assert!(store.finalize_verified_migration_v1().is_err());
+    assert_eq!(store.load_desktop_root_state().unwrap(), Some(mismatched));
+    assert_eq!(
+        MigrationStateStoreV1::load(&mut store, &root)
+            .unwrap()
+            .unwrap()
+            .status,
+        MigrationStatusV1::ActivationVerified
+    );
+    assert!(store.migration_source_protected_v1().unwrap());
+}
+
+#[test]
+fn finalization_accepts_an_exact_existing_writer_seed_without_replacing_it() {
+    let database = TempDatabase::new("finalization-writer-seed-exact");
+    let connection = database.connection();
+    let (root, migration_writer_id) = verified_router_migration(&connection);
+    let exact = DesktopRootStateV1 {
+        state_version: 1,
+        physical_root_id: root.clone(),
+        local_writer_id: migration_writer_id,
+        next_writer_sequence: 1,
+        writer_head: None,
+        lifecycle_generation: 0,
+        materialized_projection_generation: None,
+        business_applied_projection_generation: None,
+    };
+    let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+    store.persist_desktop_root_state(&exact).unwrap();
+    assert_eq!(
+        store.finalize_verified_migration_v1().unwrap(),
+        MigrationFinalizationResultV1::Finalized
+    );
+    assert_eq!(store.load_desktop_root_state().unwrap(), Some(exact));
+}
+
+#[test]
+fn completed_state_writer_corruption_fails_closed_without_replacement() {
+    let database = TempDatabase::new("completed-writer-corruption");
+    let connection = database.connection();
+    let (root, _) = complete_router_migration(&connection);
+    let mut store = SqliteS2LiteStoreV1::open(&connection, &root).unwrap();
+    let corrupted = DesktopRootStateV1 {
+        state_version: 1,
+        physical_root_id: root.clone(),
+        local_writer_id: "42000000-0000-4000-8000-000000000001".into(),
+        next_writer_sequence: 1,
+        writer_head: None,
+        lifecycle_generation: 0,
+        materialized_projection_generation: None,
+        business_applied_projection_generation: None,
+    };
+    store.persist_desktop_root_state(&corrupted).unwrap();
+    assert!(store.finalize_verified_migration_v1().is_err());
+    assert_eq!(store.load_desktop_root_state().unwrap(), Some(corrupted));
 }
 
 fn prepared() -> super::immutable_publish::PreparedIntentV1 {

@@ -79,6 +79,16 @@ pub enum MigrationFinalizationResultV1 {
     ReadOnlyFrozen,
 }
 
+/// Test-only fault locations inside the single migration-finalization
+/// transaction.  Kept transaction-local so the production path cannot expose
+/// a partial cutover state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MigrationFinalizationFaultV1 {
+    MigrationCompletePersisted,
+    WriterHandoffPersisted,
+    SourceRetired,
+}
+
 /// Admission outcome for the legacy S1 writer. A process lock can supplement
 /// this path, but only this SQLite transaction decides whether its one PUT is
 /// admitted across independent desktop processes.
@@ -1459,6 +1469,41 @@ fn initialize_desktop_writer_from(conn: &Connection, root_id: &str) -> Result<De
     }
 }
 
+/// A verified migration may only hand off to a writer that is absent or
+/// already exactly equal to its frozen seed. This stricter pre-finalization
+/// check prevents corrupt pre-existing authority from being accepted merely
+/// because its sequence happens to be ahead of the bootstrap seed.
+fn validate_verified_migration_writer_handoff_from(
+    conn: &Connection,
+    migration: &MigrationStateV1,
+    root_id: &str,
+) -> Result<()> {
+    let Some((writer_id, writer_head, next_writer_sequence)) =
+        completed_migration_writer_seed(migration, root_id)?
+    else {
+        return Err(STORE_CORRUPTION);
+    };
+    let existing = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?;
+    if let Some(bytes) = existing {
+        let state: DesktopRootStateV1 = decode(&bytes)?;
+        validate_desktop_root_state(&state, root_id)?;
+        if state.local_writer_id != writer_id
+            || state.writer_head != writer_head
+            || state.next_writer_sequence != next_writer_sequence
+        {
+            return Err(STORE_CORRUPTION);
+        }
+    }
+    Ok(())
+}
+
 /// SQLite-backed S2 Lite state bound to one physical remote root.
 ///
 /// Every clone shares the application's existing connection mutex. This lets the
@@ -1836,6 +1881,21 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
     /// database-wide source-owner/guard retirement share one BEGIN IMMEDIATE
     /// transaction so none can become visible without the other two.
     pub fn finalize_verified_migration_v1(&mut self) -> Result<MigrationFinalizationResultV1> {
+        self.finalize_verified_migration_with_fault_v1(None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn finalize_verified_migration_with_injected_fault_v1(
+        &mut self,
+        fault: MigrationFinalizationFaultV1,
+    ) -> Result<MigrationFinalizationResultV1> {
+        self.finalize_verified_migration_with_fault_v1(Some(fault))
+    }
+
+    fn finalize_verified_migration_with_fault_v1(
+        &mut self,
+        fault: Option<MigrationFinalizationFaultV1>,
+    ) -> Result<MigrationFinalizationResultV1> {
         let mut conn = self.connection()?;
         let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
         ensure_root_authority(&transaction, self.root_id)?;
@@ -1893,8 +1953,15 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             .ok_or(STORE_CORRUPTION)?;
         let _ =
             completed_migration_writer_seed(&completed, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        validate_verified_migration_writer_handoff_from(&transaction, &completed, self.root_id)?;
         save_migration(&transaction, &completed)?;
+        if fault == Some(MigrationFinalizationFaultV1::MigrationCompletePersisted) {
+            return Err(STORE_FAILURE);
+        }
         initialize_desktop_writer_from(&transaction, self.root_id)?;
+        if fault == Some(MigrationFinalizationFaultV1::WriterHandoffPersisted) {
+            return Err(STORE_FAILURE);
+        }
         database(transaction.execute(
             "DELETE FROM s2_lite_migration_source_owner_v1 WHERE owner_key=1",
             [],
@@ -1903,6 +1970,9 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             "DELETE FROM s2_lite_migration_source_guard_v1 WHERE root_id=?1",
             [self.root_id],
         ))?;
+        if fault == Some(MigrationFinalizationFaultV1::SourceRetired) {
+            return Err(STORE_FAILURE);
+        }
         database(transaction.commit())?;
         Ok(MigrationFinalizationResultV1::Finalized)
     }

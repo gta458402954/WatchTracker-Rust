@@ -838,7 +838,7 @@ fn activation_same_path_mismatch_freezes_without_overwrite() {
         .remote_path
         .clone();
     remote.objects.insert(path.clone(), vec![1, 2, 3]);
-    let _ = execute(&state, &mut remote, &mut stores, timestamp);
+    state = execute(&state, &mut remote, &mut stores, timestamp);
     assert_eq!(state.status, MigrationStatusV1::RootFrozen);
     assert_eq!(
         state.root_fatal_signals[0].code,
