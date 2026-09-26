@@ -20,9 +20,10 @@ use super::desktop_lifecycle::{
     DesktopS2RootBindingV1, DesktopSyncRouteV1,
 };
 use super::durable_persistence::{
-    MigrationAdmissionResultV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
+    MigrationAdmissionInputV1, MigrationAdmissionResultV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
 };
-use super::migration_admission::admit_and_capture_migration_v1;
+use super::migration_admission::capture_production_legacy_snapshot_v1;
+use super::migration_orchestration::MigrationStateStoreV1;
 use super::outbound_freeze::{freeze_active_outbound_v1, OutboundFreezeResultV1};
 use super::outbound_publish::{
     publish_frozen_outbound_batch_with_webdav_v1, OutboundPublishResultV1,
@@ -118,14 +119,36 @@ pub fn load_bound_coordinator_route_v1(
 pub fn admit_migration_from_production_coordinator_v1(
     conn: &Mutex<Connection>,
 ) -> Result<MigrationAdmissionResultV1> {
+    // This database-wide strict lookup is the retry path. It validates the
+    // stored execution/binding before exposing it and deliberately precedes
+    // any UUID allocation, including after an active-target switch.
+    if let Some(execution_binding) =
+        SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
+    {
+        let mut store = SqliteS2LiteStoreV1::open(conn, &execution_binding.physical_root_id)?;
+        let state = MigrationStateStoreV1::load(&mut store, &execution_binding.physical_root_id)?
+            .ok_or(COORDINATOR_FAILURE)?;
+        if state.migration_id != execution_binding.migration_id {
+            return Err(COORDINATOR_FAILURE);
+        }
+        return Ok(MigrationAdmissionResultV1 {
+            execution_binding,
+            state,
+            attached_existing: true,
+        });
+    }
     let (target_id, target_epoch) = active_target_v1(conn)?;
-    admit_and_capture_migration_v1(
-        conn,
-        &target_id,
-        target_epoch,
-        &uuid::Uuid::new_v4().to_string(),
-        &uuid::Uuid::new_v4().to_string(),
-        &diagnostic_now_v1(),
+    let binding = resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?.binding;
+    let mut store = SqliteS2LiteStoreV1::open(conn, &binding.physical_root_id)?;
+    store.admit_and_capture_migration_with_input_factory_v1(
+        &binding,
+        capture_production_legacy_snapshot_v1,
+        || MigrationAdmissionInputV1 {
+            target_binding: binding.clone(),
+            migration_id: uuid::Uuid::new_v4().to_string(),
+            migration_writer_id: uuid::Uuid::new_v4().to_string(),
+            created_at: diagnostic_now_v1(),
+        },
     )
 }
 
@@ -360,12 +383,13 @@ pub fn run_production_sync_coordinator_step_v1(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use rusqlite::Connection;
 
     use super::*;
     use crate::db_atomic_helpers::set_setting_tx;
+    use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
     use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
 
@@ -479,5 +503,58 @@ mod tests {
         // boundary immediately; the important coordinator invariant is that
         // this route remains bound to A, never the newly active B.
         assert_eq!(bound.route, DesktopSyncRouteV1::ResumeActivation);
+    }
+
+    #[test]
+    fn lost_response_retry_reuses_the_exact_durable_migration_identity() {
+        let conn = connection();
+        let active = target("https://dav.example.test/retry/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let first = admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        // The first return is deliberately discarded, modelling a crash after
+        // SQLite commit and before the caller receives its response.
+        let retry = admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        assert!(!first.attached_existing);
+        assert!(retry.attached_existing);
+        assert_eq!(retry.execution_binding, first.execution_binding);
+        assert_eq!(retry.state, first.state);
+        assert_eq!(
+            load_bound_coordinator_route_v1(&conn).unwrap().route,
+            DesktopSyncRouteV1::ResumeActivation
+        );
+    }
+
+    #[test]
+    fn concurrent_coordinator_admission_converges_on_one_identity() {
+        let conn = Arc::new(connection());
+        let active = target("https://dav.example.test/concurrent/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let first_conn = Arc::clone(&conn);
+        let second_conn = Arc::clone(&conn);
+        let first =
+            std::thread::spawn(move || admit_migration_from_production_coordinator_v1(&first_conn));
+        let second = std::thread::spawn(move || {
+            admit_migration_from_production_coordinator_v1(&second_conn)
+        });
+        let first = first.join().unwrap().unwrap();
+        let second = second.join().unwrap().unwrap();
+        assert_eq!(first.execution_binding, second.execution_binding);
+        assert_ne!(first.attached_existing, second.attached_existing);
+    }
+
+    #[test]
+    fn corrupt_existing_authority_is_not_treated_as_a_retry() {
+        let conn = connection();
+        let active = target("https://dav.example.test/corrupt/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        conn.lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM s2_lite_migration_v1 WHERE root_id=?1",
+                [&admitted.execution_binding.physical_root_id],
+            )
+            .unwrap();
+        assert!(admit_migration_from_production_coordinator_v1(&conn).is_err());
     }
 }

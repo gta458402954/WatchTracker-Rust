@@ -1931,6 +1931,139 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         })
     }
 
+    /// Coordinator-facing admission variant.  The input factory is evaluated
+    /// only after this `BEGIN IMMEDIATE` transaction has proved that no
+    /// durable migration owner or execution row exists for the root.  A retry
+    /// or concurrent loser therefore attaches to the immutable winner without
+    /// manufacturing replacement migration or writer identities.
+    pub fn admit_and_capture_migration_with_input_factory_v1<F, G>(
+        &mut self,
+        target_binding: &TargetRootBindingV1,
+        capture: F,
+        create_input: G,
+    ) -> Result<MigrationAdmissionResultV1>
+    where
+        F: FnOnce(&Connection) -> Result<(i64, CapturedLegacySnapshotV1)>,
+        G: FnOnce() -> MigrationAdmissionInputV1,
+    {
+        if target_binding.physical_root_id != self.root_id {
+            return Err(ROOT_MISMATCH);
+        }
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        database(install_migration_source_guard_triggers(&transaction))?;
+        if let Some(owner) = load_migration_source_owner(&transaction)? {
+            if owner.root_id != self.root_id {
+                return Err(ROOT_MISMATCH);
+            }
+            let state = load_migration_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+            let execution = load_migration_execution_binding_from(&transaction, self.root_id)?
+                .ok_or(STORE_CORRUPTION)?;
+            validate_migration_execution_target_authority(&transaction, &execution, self.root_id)?;
+            if owner.migration_id != execution.migration_id
+                || execution.target_id != target_binding.target_id
+                || execution.target_epoch != target_binding.target_epoch
+                || execution.physical_root_id != target_binding.physical_root_id
+                || state.migration_id != execution.migration_id
+                || state
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.legacy_fingerprint.as_str())
+                    != execution.legacy_fingerprint.as_deref()
+            {
+                return Err(STORE_CORRUPTION);
+            }
+            database(transaction.commit())?;
+            return Ok(MigrationAdmissionResultV1 {
+                execution_binding: execution,
+                state,
+                attached_existing: true,
+            });
+        }
+
+        validate_active_migration_binding(&transaction, target_binding, self.root_id)?;
+        let safety = load_root_safety_from(&transaction, self.root_id)?.ok_or(ROOT_MISMATCH)?;
+        if !safety.root_fatal_signals.is_empty()
+            || decide_legacy_put_v1(&recover_activation_cutover_v1(
+                &load_discovery_state_from(&transaction, self.root_id)?
+                    .map(|state| state.state)
+                    .unwrap_or_else(create_discovery_state_v1),
+                Some(&safety.cutover_state),
+            )) != LegacyPutDecisionV1::AllowedS2NotActivated
+        {
+            return Err(ROOT_MISMATCH);
+        }
+        if transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM s2_lite_migration_execution_binding_v1 WHERE root_id=?1)",
+                [self.root_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| STORE_FAILURE)?
+            != 0
+            || load_migration_source_owner(&transaction)?.is_some()
+        {
+            return Err(STORE_CORRUPTION);
+        }
+
+        let input = create_input();
+        if input.target_binding != *target_binding
+            || input.target_binding.physical_root_id != self.root_id
+        {
+            return Err(ROOT_MISMATCH);
+        }
+        let (captured_records_generation, snapshot) = capture(&transaction)?;
+        if captured_records_generation < 0 || snapshot.snapshot_version != 1 {
+            return Err(STORE_CORRUPTION);
+        }
+        let initial = create_migration_state_v1(
+            &input.migration_id,
+            self.root_id,
+            &input.migration_writer_id,
+            &input.created_at,
+            "legacy-bootstrap",
+        )?;
+        let captured = retain_captured_snapshot_v1(&initial, &snapshot)?;
+        let state = reconcile_migration_state_v1(&plan_captured_migration_v1(&captured)?)?;
+        let execution_binding = MigrationExecutionBindingV1 {
+            binding_version: 1,
+            physical_root_id: self.root_id.to_string(),
+            target_id: input.target_binding.target_id,
+            target_epoch: input.target_binding.target_epoch,
+            captured_records_generation,
+            legacy_fingerprint: Some(snapshot.legacy_fingerprint.clone()),
+            migration_id: input.migration_id,
+        };
+        validate_migration_execution_binding(&execution_binding)?;
+        insert_migration(&transaction, &state)?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_migration_execution_binding_v1(root_id, state_json)
+             VALUES(?1, ?2)",
+            params![self.root_id, encode(&execution_binding)?],
+        ))?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_migration_source_guard_v1(
+                 root_id, migration_id, captured_records_generation
+             ) VALUES(?1, ?2, ?3)",
+            params![
+                self.root_id,
+                execution_binding.migration_id,
+                execution_binding.captured_records_generation.to_string(),
+            ],
+        ))?;
+        database(transaction.execute(
+            "INSERT INTO s2_lite_migration_source_owner_v1(owner_key, root_id, migration_id)
+             VALUES(1, ?1, ?2)",
+            params![self.root_id, execution_binding.migration_id],
+        ))?;
+        database(transaction.commit())?;
+        Ok(MigrationAdmissionResultV1 {
+            execution_binding,
+            state,
+            attached_existing: false,
+        })
+    }
+
     pub fn migration_source_protected_v1(&self) -> Result<bool> {
         let conn = self.connection()?;
         Ok(load_migration_source_owner(&conn)?.is_some())
