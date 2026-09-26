@@ -144,6 +144,7 @@ fn resume_dispatch_is_current_v1(
     conn: &Mutex<Connection>,
     captured: &BoundCoordinatorRouteV1,
     expected_execution: &MigrationExecutionBindingV1,
+    expected_migration_generation: u64,
 ) -> Result<bool> {
     let fresh = load_bound_coordinator_route_v1(conn)?;
     if fresh.route != captured.route
@@ -154,10 +155,29 @@ fn resume_dispatch_is_current_v1(
     {
         return Ok(false);
     }
+    if SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?.as_ref()
+        != Some(expected_execution)
+    {
+        return Ok(false);
+    }
+    let mut store = SqliteS2LiteStoreV1::open(conn, &expected_execution.physical_root_id)?;
     Ok(
-        SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?.as_ref()
-            == Some(expected_execution),
+        MigrationStateStoreV1::load(&mut store, &expected_execution.physical_root_id)?
+            .is_some_and(|state| state.generation == expected_migration_generation),
     )
+}
+
+fn historical_resume_generation_v1(
+    conn: &Mutex<Connection>,
+    execution: &MigrationExecutionBindingV1,
+) -> Result<u64> {
+    let mut store = SqliteS2LiteStoreV1::open(conn, &execution.physical_root_id)?;
+    let state = MigrationStateStoreV1::load(&mut store, &execution.physical_root_id)?
+        .ok_or(COORDINATOR_FAILURE)?;
+    if state.migration_id != execution.migration_id {
+        return Err(COORDINATOR_FAILURE);
+    }
+    Ok(state.generation)
 }
 
 fn load_bound_coordinator_route_inner_v1(
@@ -626,32 +646,56 @@ fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitive
             }
             DesktopSyncRouteV1::ResumeBootstrap => {
                 let execution = historical_resume_execution_v1(conn, &bound)?;
-                if !resume_dispatch_is_current_v1(conn, &bound, &execution)? {
+                let generation = historical_resume_generation_v1(conn, &execution)?;
+                if !resume_dispatch_is_current_v1(conn, &bound, &execution, generation)? {
                     continue;
                 }
-                match map_bootstrap_result_v1(dispatch.execute_bootstrap(
+                let result = match dispatch.execute_bootstrap(
                     conn,
                     paths,
                     coordinator,
                     &execution,
                     &diagnostic_now_v1(),
-                )?) {
+                ) {
+                    Ok(result) => result,
+                    Err(_)
+                        if !resume_dispatch_is_current_v1(
+                            conn, &bound, &execution, generation,
+                        )? =>
+                    {
+                        continue
+                    }
+                    Err(error) => return Err(error),
+                };
+                match map_bootstrap_result_v1(result) {
                     None => continue,
                     Some(result) => return Ok(result),
                 }
             }
             DesktopSyncRouteV1::ResumeActivation => {
                 let execution = historical_resume_execution_v1(conn, &bound)?;
-                if !resume_dispatch_is_current_v1(conn, &bound, &execution)? {
+                let generation = historical_resume_generation_v1(conn, &execution)?;
+                if !resume_dispatch_is_current_v1(conn, &bound, &execution, generation)? {
                     continue;
                 }
-                match map_activation_result_v1(dispatch.execute_activation(
+                let result = match dispatch.execute_activation(
                     conn,
                     paths,
                     coordinator,
                     &execution,
                     &diagnostic_now_v1(),
-                )?) {
+                ) {
+                    Ok(result) => result,
+                    Err(_)
+                        if !resume_dispatch_is_current_v1(
+                            conn, &bound, &execution, generation,
+                        )? =>
+                    {
+                        continue
+                    }
+                    Err(error) => return Err(error),
+                };
+                match map_activation_result_v1(result) {
                     None => continue,
                     Some(result) => return Ok(result),
                 }
@@ -746,6 +790,7 @@ mod tests {
     #[derive(Default)]
     struct BootstrapRemoteStateV1 {
         objects: BTreeMap<String, Vec<u8>>,
+        put_calls: usize,
     }
     #[derive(Clone)]
     struct BootstrapRemoteV1 {
@@ -772,11 +817,9 @@ mod tests {
                 )
         }
         fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
-            self.state
-                .lock()
-                .unwrap()
-                .objects
-                .insert(path.to_string(), bytes.to_vec());
+            let mut state = self.state.lock().unwrap();
+            state.put_calls += 1;
+            state.objects.insert(path.to_string(), bytes.to_vec());
             RemotePutResultV1::Indeterminate
         }
     }
@@ -1854,6 +1897,7 @@ mod tests {
                 ObservedPrimitiveV1::Normal
             ]
         );
+        assert_eq!(dispatch.remote.lock().unwrap().put_calls, 2);
         assert!(
             SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
                 .unwrap()
@@ -2023,6 +2067,7 @@ mod tests {
                 ObservedPrimitiveV1::Bootstrap
             ]
         );
+        assert_eq!(dispatch.remote.lock().unwrap().put_calls, 1);
     }
 
     #[test]
@@ -2052,7 +2097,13 @@ mod tests {
             route_desktop_sync_v1(&conn).unwrap(),
             DesktopSyncRouteV1::EnterNormalS2
         );
-        assert!(!resume_dispatch_is_current_v1(&conn, &bound, &execution).unwrap());
+        assert!(!resume_dispatch_is_current_v1(
+            &conn,
+            &bound,
+            &execution,
+            historical_resume_generation_v1(&conn, &execution).unwrap(),
+        )
+        .unwrap());
     }
 
     #[test]

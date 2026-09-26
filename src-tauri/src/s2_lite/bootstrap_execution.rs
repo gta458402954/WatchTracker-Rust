@@ -358,9 +358,34 @@ where
     if let Some(result) = no_network_result(durable.status) {
         return Ok(result);
     }
-    let attachment = start_or_attach_migration_v1(&durable, &mut migration_store)?;
+    let attachment = match start_or_attach_migration_v1(&durable, &mut migration_store) {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            let latest = MigrationStateStoreV1::load(&mut migration_store, &root_id)?
+                .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+            if latest.migration_id == durable.migration_id
+                && bootstrap_semantics_advanced(&durable, &latest)
+            {
+                return Ok(BootstrapExecutionResultV1::StaleRouteAdvanced);
+            }
+            return Err(error);
+        }
+    };
     let capability =
-        create_migration_root_execution_capability_v1(&attachment, &remote, &migration_store)?;
+        match create_migration_root_execution_capability_v1(&attachment, &remote, &migration_store)
+        {
+            Ok(capability) => capability,
+            Err(error) => {
+                let latest = MigrationStateStoreV1::load(&mut migration_store, &root_id)?
+                    .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+                if latest.migration_id == durable.migration_id
+                    && bootstrap_semantics_advanced(&durable, &latest)
+                {
+                    return Ok(BootstrapExecutionResultV1::StaleRouteAdvanced);
+                }
+                return Err(error);
+            }
+        };
     let mut intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
     let mut receipt_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
     let mut activation_intent_store = SqliteS2LiteStoreV1::open(conn, &root_id)?;
