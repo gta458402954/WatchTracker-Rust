@@ -629,6 +629,7 @@ pub fn run_production_sync_coordinator_step_v1(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
     use rusqlite::Connection;
@@ -639,8 +640,11 @@ mod tests {
         create_activation_cutover_state_v1, ActivationFingerprintConsistencyV1,
         VerifiedActivationEvidenceV1,
     };
+    use crate::s2_lite::bootstrap_execution::execute_production_bootstrap_with_factory_v1;
+    use crate::s2_lite::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
     use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
     use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
+    use crate::s2_lite::outbound_publish::HistoricalWebDavCredentialsV1;
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
 
     const TIME: &str = "2026-09-26T00:00:00.000Z";
@@ -653,6 +657,125 @@ mod tests {
     }
 
     type AfterPrimitiveHookV1 = Box<dyn FnOnce(&Mutex<Connection>) + Send>;
+
+    #[derive(Default)]
+    struct BootstrapRemoteStateV1 {
+        objects: BTreeMap<String, Vec<u8>>,
+    }
+    #[derive(Clone)]
+    struct BootstrapRemoteV1 {
+        root_id: String,
+        state: Arc<Mutex<BootstrapRemoteStateV1>>,
+    }
+    impl ImmutableObjectRemoteV1 for BootstrapRemoteV1 {
+        fn physical_root_id(&self) -> Option<&str> {
+            Some(&self.root_id)
+        }
+        fn execution_context_identity(&self) -> u64 {
+            401
+        }
+        fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
+            self.state
+                .lock()
+                .unwrap()
+                .objects
+                .get(path)
+                .cloned()
+                .map_or(
+                    RemoteExactGetResultV1::DefinitelyAbsent,
+                    RemoteExactGetResultV1::DefinitelyPresent,
+                )
+        }
+        fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
+            self.state
+                .lock()
+                .unwrap()
+                .objects
+                .insert(path.to_string(), bytes.to_vec());
+            RemotePutResultV1::Indeterminate
+        }
+    }
+
+    struct DeterministicBootstrapDispatchV1 {
+        observed: Mutex<Vec<ObservedPrimitiveV1>>,
+        remote: Arc<Mutex<BootstrapRemoteStateV1>>,
+        after_bootstrap: Mutex<Option<AfterPrimitiveHookV1>>,
+    }
+    impl DeterministicBootstrapDispatchV1 {
+        fn new(after_bootstrap: Option<AfterPrimitiveHookV1>) -> Self {
+            Self {
+                observed: Mutex::new(vec![]),
+                remote: Arc::new(Mutex::new(BootstrapRemoteStateV1::default())),
+                after_bootstrap: Mutex::new(after_bootstrap),
+            }
+        }
+        fn observed(&self) -> Vec<ObservedPrimitiveV1> {
+            self.observed.lock().unwrap().clone()
+        }
+        fn observe(&self, value: ObservedPrimitiveV1) {
+            self.observed.lock().unwrap().push(value);
+        }
+    }
+    impl CoordinatorPrimitiveDispatchV1 for DeterministicBootstrapDispatchV1 {
+        fn execute_bootstrap(
+            &self,
+            conn: &Mutex<Connection>,
+            _: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            time: &str,
+        ) -> Result<BootstrapExecutionResultV1> {
+            let remote = Arc::clone(&self.remote);
+            let result = execute_production_bootstrap_with_factory_v1(
+                conn,
+                coordinator,
+                |binding| {
+                    Ok(Some(HistoricalWebDavCredentialsV1 {
+                        canonical_url: binding.canonical_url.clone(),
+                        username: binding.normalized_account.clone(),
+                        password: "test".into(),
+                    }))
+                },
+                |binding, _| {
+                    Ok(BootstrapRemoteV1 {
+                        root_id: binding.physical_root_id.clone(),
+                        state: remote,
+                    })
+                },
+                time,
+            );
+            self.observe(ObservedPrimitiveV1::Bootstrap);
+            if let Some(hook) = self.after_bootstrap.lock().unwrap().take() {
+                hook(conn);
+            }
+            result
+        }
+        fn execute_activation(
+            &self,
+            conn: &Mutex<Connection>,
+            paths: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            time: &str,
+        ) -> Result<ActivationExecutionResultV1> {
+            let result =
+                execute_production_activation_with_webdav_v1(conn, paths, coordinator, time);
+            self.observe(ObservedPrimitiveV1::Activation);
+            result
+        }
+        fn execute_normal_s2(
+            &self,
+            conn: &Mutex<Connection>,
+            paths: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            binding: &TargetRootBindingV1,
+            budgets: &DiscoveryBudgetsV1,
+            time: &str,
+        ) -> Result<ProductionCoordinatorResultV1> {
+            let result =
+                run_one_normal_s2_cycle_v1(conn, paths, coordinator, binding, budgets, time);
+            self.observe(ObservedPrimitiveV1::Normal);
+            result
+        }
+    }
 
     /// A module-local observer only. Every result comes from the production
     /// primitive; the optional one-shot hook runs strictly after that call so
@@ -809,6 +932,67 @@ mod tests {
             1,
             "98000000-0000-4000-8000-000000000001",
             "98000000-0000-4000-8000-000000000002",
+            TIME,
+        )
+        .unwrap()
+    }
+
+    fn admit_bootstrap_migration(
+        conn: &Mutex<Connection>,
+        target: &SyncTarget,
+    ) -> crate::s2_lite::durable_persistence::MigrationAdmissionResultV1 {
+        crate::db::insert_record(
+            &conn.lock().unwrap(),
+            crate::models::WatchRecord {
+                id: "coordinator-bootstrap-record".into(),
+                original_name: "Bootstrap".into(),
+                chinese_name: "".into(),
+                progress: "".into(),
+                total_episodes: Some(1),
+                episode_tracking_enabled: false,
+                next_episode: None,
+                movie_progress: None,
+                movie_duration: None,
+                release_year: None,
+                poster_path: None,
+                status: crate::models::RecordStatus::Unwatched,
+                platform: "".into(),
+                rating: None,
+                start_date: None,
+                end_date: None,
+                notes: "".into(),
+                created_at: TIME.into(),
+                updated_at: None,
+                imdb_id: None,
+                is_locked: None,
+                genres: None,
+                origin_country: None,
+                imdb_rating: None,
+                tmdb_status: None,
+                interest_level: None,
+                episode_runtime: None,
+                media_type: "剧集".into(),
+                content_tags: None,
+                tmdb_media_kind: None,
+                tmdb_id: None,
+                tmdb_parent_id: None,
+                tmdb_season_number: None,
+                series_record_kind: None,
+                rev: 0,
+                rev_actor: "".into(),
+            },
+        )
+        .unwrap();
+        let episode_id = crate::s2_lite::canonical::sha256_hex(
+            b"episode-completion:v1\x00coordinator-bootstrap-record\x001",
+        );
+        conn.lock().unwrap().execute("INSERT INTO episode_completions(id, recordId, episodeNumber, completedAt, createdAt, updatedAt, rev, revActor) VALUES(?1, 'coordinator-bootstrap-record', 1, NULL, ?2, ?2, 0, '')", rusqlite::params![episode_id, TIME]).unwrap();
+        admit_and_capture_migration_v1(
+            conn,
+            &target.id,
+            1,
+            "99000000-0000-4000-8000-000000000001",
+            "99000000-0000-4000-8000-000000000002",
             TIME,
         )
         .unwrap()
@@ -1415,5 +1599,88 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn real_bootstrap_progress_survives_a_fresh_coordinator_restart() {
+        let conn = connection();
+        let active = target("https://dav.example.test/phase-bootstrap/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_bootstrap_migration(&conn, &active);
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let first = DeterministicBootstrapDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &first
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(first.observed(), vec![ObservedPrimitiveV1::Bootstrap]);
+        let exact = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(exact, admitted.execution_binding);
+        assert_eq!(
+            load_bound_coordinator_route_v1(&conn).unwrap().route,
+            DesktopSyncRouteV1::ResumeBootstrap
+        );
+        let restart = DeterministicBootstrapDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &restart
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(restart.observed(), vec![ObservedPrimitiveV1::Bootstrap]);
+        assert_eq!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .unwrap(),
+            exact
+        );
+    }
+
+    #[test]
+    fn fatal_after_real_bootstrap_progress_wins_fresh_reroute() {
+        let conn = connection();
+        let active = target("https://dav.example.test/phase-bootstrap-fatal/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_bootstrap_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = DeterministicBootstrapDispatchV1::new(Some(Box::new(move |conn| {
+            let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+            MigrationStateStoreV1::persist_root_fatal(
+                &mut store,
+                &root,
+                "BOOTSTRAP_BOUNDARY_FATAL",
+            )
+            .unwrap();
+        })));
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                4,
+                &dispatch
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::ReadOnlyFrozen
+        );
+        assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Bootstrap]);
     }
 }
