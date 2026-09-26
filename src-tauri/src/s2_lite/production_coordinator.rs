@@ -37,6 +37,7 @@ use super::{immutable_publish::ImmutableObjectRemoteV1, remote_discovery::Discov
 
 const COORDINATOR_FAILURE: ProtocolError = ProtocolError("S2_PRODUCTION_COORDINATOR_FAILURE");
 const DEFAULT_PHASE_STEP_BUDGET: u8 = 4;
+const BOUND_ROUTE_CAPTURE_RETRIES: u8 = 3;
 
 /// Exact durable binding selected with a lifecycle route.  The coordinator
 /// never derives a second root: migration routes use their frozen historical
@@ -46,6 +47,11 @@ pub struct BoundCoordinatorRouteV1 {
     pub route: DesktopSyncRouteV1,
     pub binding: TargetRootBindingV1,
     pub historical_migration: bool,
+    /// Present only when the router atomically completed the historical
+    /// migration while capturing this decision.  The route binding remains
+    /// the current normal-S2 authority; this field is solely the explicit
+    /// handoff needed to reject an A->B continuation in one invocation.
+    pub finalized_historical_binding: Option<TargetRootBindingV1>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,33 +91,126 @@ fn active_epoch_is_current_v1(
 /// Re-routes from SQLite and returns the exact binding which was authoritative
 /// before routing.  Capturing a source-owner binding before the router runs is
 /// important: the router may atomically finalize and retire that owner.
+fn historical_target_binding_v1(
+    conn: &Mutex<Connection>,
+    execution: &super::durable_persistence::MigrationExecutionBindingV1,
+) -> Result<TargetRootBindingV1> {
+    let binding =
+        load_historical_target_root_binding_v1(conn, &execution.target_id, execution.target_epoch)?
+            .ok_or(COORDINATOR_FAILURE)?;
+    if binding.physical_root_id != execution.physical_root_id {
+        return Err(COORDINATOR_FAILURE);
+    }
+    Ok(binding)
+}
+
+fn binding_is_current_active_v1(conn: &Mutex<Connection>, binding: &TargetRootBindingV1) -> bool {
+    active_epoch_is_current_v1(conn, &binding.target_id, binding.target_epoch)
+}
+
+fn load_bound_coordinator_route_inner_v1(
+    conn: &Mutex<Connection>,
+    mut before_route: impl FnMut(),
+) -> Result<BoundCoordinatorRouteV1> {
+    for _ in 0..BOUND_ROUTE_CAPTURE_RETRIES {
+        let before = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?;
+        before_route();
+        let route = route_desktop_sync_v1(conn)?;
+        let after = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?;
+
+        match (before.as_ref(), after.as_ref(), route) {
+            // Migration publication/finalization must always use the exact
+            // historical binding held by the unchanged source owner.
+            (
+                Some(before),
+                Some(after),
+                DesktopSyncRouteV1::ResumeBootstrap | DesktopSyncRouteV1::ResumeActivation,
+            ) if before == after => {
+                return Ok(BoundCoordinatorRouteV1 {
+                    route,
+                    binding: historical_target_binding_v1(conn, after)?,
+                    historical_migration: true,
+                    finalized_historical_binding: None,
+                });
+            }
+            // The router can finalize ActivationVerified and retire the
+            // owner in one transaction. Bind EnterNormalS2 to the *current*
+            // active authority, retaining A only as handoff evidence.
+            (Some(before), None, DesktopSyncRouteV1::EnterNormalS2) => {
+                let binding = {
+                    let (target_id, target_epoch) = active_target_v1(conn)?;
+                    resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?.binding
+                };
+                if route_desktop_sync_v1(conn)? == DesktopSyncRouteV1::EnterNormalS2
+                    && SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
+                        .is_none()
+                    && binding_is_current_active_v1(conn, &binding)
+                {
+                    return Ok(BoundCoordinatorRouteV1 {
+                        route,
+                        binding,
+                        historical_migration: false,
+                        finalized_historical_binding: Some(historical_target_binding_v1(
+                            conn, before,
+                        )?),
+                    });
+                }
+            }
+            // No owned migration means this is an active-target route. Route
+            // again after resolving the binding, so a route from B can never
+            // be returned with A's earlier binding.
+            (
+                None,
+                None,
+                DesktopSyncRouteV1::ContinueLegacyS1
+                | DesktopSyncRouteV1::EnterNormalS2
+                | DesktopSyncRouteV1::ReadOnlyFrozen,
+            ) => {
+                let binding = {
+                    let (target_id, target_epoch) = active_target_v1(conn)?;
+                    resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?.binding
+                };
+                if route_desktop_sync_v1(conn)? == route
+                    && SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
+                        .is_none()
+                    && binding_is_current_active_v1(conn, &binding)
+                {
+                    return Ok(BoundCoordinatorRouteV1 {
+                        route,
+                        binding,
+                        historical_migration: false,
+                        finalized_historical_binding: None,
+                    });
+                }
+            }
+            // A fatal root may be historical even if a phase transition raced
+            // us. It is safe only when its source-owner binding is unchanged.
+            (Some(before), Some(after), DesktopSyncRouteV1::ReadOnlyFrozen) if before == after => {
+                return Ok(BoundCoordinatorRouteV1 {
+                    route,
+                    binding: historical_target_binding_v1(conn, after)?,
+                    historical_migration: true,
+                    finalized_historical_binding: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    Err(COORDINATOR_FAILURE)
+}
+
 pub fn load_bound_coordinator_route_v1(
     conn: &Mutex<Connection>,
 ) -> Result<BoundCoordinatorRouteV1> {
-    let historical = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?;
-    let (binding, historical_migration) = if let Some(execution) = historical {
-        let binding = load_historical_target_root_binding_v1(
-            conn,
-            &execution.target_id,
-            execution.target_epoch,
-        )?
-        .ok_or(COORDINATOR_FAILURE)?;
-        if binding.physical_root_id != execution.physical_root_id {
-            return Err(COORDINATOR_FAILURE);
-        }
-        (binding, true)
-    } else {
-        let (target_id, target_epoch) = active_target_v1(conn)?;
-        (
-            resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?.binding,
-            false,
-        )
-    };
-    Ok(BoundCoordinatorRouteV1 {
-        route: route_desktop_sync_v1(conn)?,
-        binding,
-        historical_migration,
-    })
+    load_bound_coordinator_route_inner_v1(conn, || {})
+}
+
+#[cfg(test)]
+fn load_bound_coordinator_route_with_before_route_v1(
+    conn: &Mutex<Connection>,
+    before_route: impl FnMut(),
+) -> Result<BoundCoordinatorRouteV1> {
+    load_bound_coordinator_route_inner_v1(conn, before_route)
 }
 
 /// Rust owns all migration-admission identity values.  4C1 does not call this
@@ -298,6 +397,17 @@ pub fn run_production_sync_coordinator_step_with_budget_v1(
 ) -> Result<ProductionCoordinatorResultV1> {
     for _ in 0..phase_step_budget {
         let bound = load_bound_coordinator_route_v1(conn)?;
+        if bound
+            .finalized_historical_binding
+            .as_ref()
+            .is_some_and(|historical| {
+                historical.target_id != bound.binding.target_id
+                    || historical.target_epoch != bound.binding.target_epoch
+                    || historical.physical_root_id != bound.binding.physical_root_id
+            })
+        {
+            return Ok(ProductionCoordinatorResultV1::TargetChanged);
+        }
         if bound.historical_migration
             && !active_epoch_is_current_v1(
                 conn,
@@ -556,5 +666,66 @@ mod tests {
             )
             .unwrap();
         assert!(admit_migration_from_production_coordinator_v1(&conn).is_err());
+    }
+
+    #[test]
+    fn active_target_switch_during_capture_never_mixes_route_and_old_binding() {
+        let conn = connection();
+        let first = target("https://dav.example.test/route-a/", "alice");
+        let second = target("https://dav.example.test/route-b/", "bob");
+        set_active(&conn, &first, vec![first.clone(), second.clone()], 1);
+        let bound = load_bound_coordinator_route_with_before_route_v1(&conn, || {
+            set_active(&conn, &second, vec![first.clone(), second.clone()], 2);
+        })
+        .unwrap();
+        assert_eq!(bound.route, DesktopSyncRouteV1::ContinueLegacyS1);
+        assert_eq!(bound.binding.target_id, second.id);
+        assert_eq!(bound.binding.target_epoch, 2);
+        assert!(binding_is_current_active_v1(&conn, &bound.binding));
+    }
+
+    #[test]
+    fn migration_admission_during_capture_retries_into_its_historical_route() {
+        let conn = connection();
+        let active = target("https://dav.example.test/route-migration/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let mut admitted = false;
+        let bound = load_bound_coordinator_route_with_before_route_v1(&conn, || {
+            if !admitted {
+                admitted = true;
+                admit_and_capture_migration_v1(
+                    &conn,
+                    &active.id,
+                    1,
+                    "91000000-0000-4000-8000-000000000001",
+                    "91000000-0000-4000-8000-000000000002",
+                    TIME,
+                )
+                .unwrap();
+            }
+        })
+        .unwrap();
+        assert!(bound.historical_migration);
+        assert_eq!(bound.binding.target_id, active.id);
+        assert_eq!(bound.binding.target_epoch, 1);
+        assert_eq!(bound.route, DesktopSyncRouteV1::ResumeActivation);
+    }
+
+    #[test]
+    fn fatal_during_capture_returns_a_coherent_frozen_route() {
+        let conn = connection();
+        let active = target("https://dav.example.test/route-fatal/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let bound = resolve_active_target_root_binding_v1(&conn, &active.id, 1).unwrap();
+        let root_id = bound.binding.physical_root_id.clone();
+        let captured = load_bound_coordinator_route_with_before_route_v1(&conn, || {
+            let mut store = SqliteS2LiteStoreV1::open(&conn, &root_id).unwrap();
+            MigrationStateStoreV1::persist_root_fatal(&mut store, &root_id, "CAPTURE_FATAL")
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(captured.route, DesktopSyncRouteV1::ReadOnlyFrozen);
+        assert_eq!(captured.binding.physical_root_id, root_id);
+        assert!(binding_is_current_active_v1(&conn, &captured.binding));
     }
 }
