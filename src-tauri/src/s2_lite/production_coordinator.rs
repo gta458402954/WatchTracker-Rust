@@ -429,15 +429,83 @@ fn run_one_normal_s2_cycle_v1(
     }
 }
 
-/// Runs a bounded coordinator step.  Every phase re-enters through the
-/// authoritative SQLite router; no in-memory route is trusted after a durable
-/// primitive has run.
-pub fn run_production_sync_coordinator_step_with_budget_v1(
+// This deliberately-private seam owns no authority.  In particular, route
+// capture, historical binding selection, root safety, and phase budgeting all
+// remain in the coordinator loop below.  It exists solely so module tests can
+// observe a primitive which has made real durable progress before the next
+// authoritative SQLite re-route.
+trait CoordinatorPrimitiveDispatchV1 {
+    fn execute_bootstrap(
+        &self,
+        conn: &Mutex<Connection>,
+        paths: &crate::app_paths::AppPaths,
+        coordinator: &RootExecutionCoordinatorV1,
+        diagnostic_time: &str,
+    ) -> Result<BootstrapExecutionResultV1>;
+
+    fn execute_activation(
+        &self,
+        conn: &Mutex<Connection>,
+        paths: &crate::app_paths::AppPaths,
+        coordinator: &RootExecutionCoordinatorV1,
+        diagnostic_time: &str,
+    ) -> Result<ActivationExecutionResultV1>;
+
+    fn execute_normal_s2(
+        &self,
+        conn: &Mutex<Connection>,
+        paths: &crate::app_paths::AppPaths,
+        coordinator: &RootExecutionCoordinatorV1,
+        binding: &TargetRootBindingV1,
+        budgets: &DiscoveryBudgetsV1,
+        diagnostic_time: &str,
+    ) -> Result<ProductionCoordinatorResultV1>;
+}
+
+#[derive(Default)]
+struct ProductionCoordinatorPrimitiveDispatchV1;
+
+impl CoordinatorPrimitiveDispatchV1 for ProductionCoordinatorPrimitiveDispatchV1 {
+    fn execute_bootstrap(
+        &self,
+        conn: &Mutex<Connection>,
+        paths: &crate::app_paths::AppPaths,
+        coordinator: &RootExecutionCoordinatorV1,
+        diagnostic_time: &str,
+    ) -> Result<BootstrapExecutionResultV1> {
+        execute_production_bootstrap_with_webdav_v1(conn, paths, coordinator, diagnostic_time)
+    }
+
+    fn execute_activation(
+        &self,
+        conn: &Mutex<Connection>,
+        paths: &crate::app_paths::AppPaths,
+        coordinator: &RootExecutionCoordinatorV1,
+        diagnostic_time: &str,
+    ) -> Result<ActivationExecutionResultV1> {
+        execute_production_activation_with_webdav_v1(conn, paths, coordinator, diagnostic_time)
+    }
+
+    fn execute_normal_s2(
+        &self,
+        conn: &Mutex<Connection>,
+        paths: &crate::app_paths::AppPaths,
+        coordinator: &RootExecutionCoordinatorV1,
+        binding: &TargetRootBindingV1,
+        budgets: &DiscoveryBudgetsV1,
+        diagnostic_time: &str,
+    ) -> Result<ProductionCoordinatorResultV1> {
+        run_one_normal_s2_cycle_v1(conn, paths, coordinator, binding, budgets, diagnostic_time)
+    }
+}
+
+fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitiveDispatchV1>(
     conn: &Mutex<Connection>,
     paths: &crate::app_paths::AppPaths,
     coordinator: &RootExecutionCoordinatorV1,
     budgets: &DiscoveryBudgetsV1,
     phase_step_budget: u8,
+    dispatch: &D,
 ) -> Result<ProductionCoordinatorResultV1> {
     for _ in 0..phase_step_budget {
         let bound = load_bound_coordinator_route_v1(conn)?;
@@ -470,7 +538,7 @@ pub fn run_production_sync_coordinator_step_with_budget_v1(
                 return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
             }
             DesktopSyncRouteV1::ResumeBootstrap => {
-                match map_bootstrap_result_v1(execute_production_bootstrap_with_webdav_v1(
+                match map_bootstrap_result_v1(dispatch.execute_bootstrap(
                     conn,
                     paths,
                     coordinator,
@@ -481,7 +549,7 @@ pub fn run_production_sync_coordinator_step_with_budget_v1(
                 }
             }
             DesktopSyncRouteV1::ResumeActivation => {
-                match map_activation_result_v1(execute_production_activation_with_webdav_v1(
+                match map_activation_result_v1(dispatch.execute_activation(
                     conn,
                     paths,
                     coordinator,
@@ -492,7 +560,7 @@ pub fn run_production_sync_coordinator_step_with_budget_v1(
                 }
             }
             DesktopSyncRouteV1::EnterNormalS2 => {
-                return run_one_normal_s2_cycle_v1(
+                return dispatch.execute_normal_s2(
                     conn,
                     paths,
                     coordinator,
@@ -504,6 +572,26 @@ pub fn run_production_sync_coordinator_step_with_budget_v1(
         }
     }
     Ok(ProductionCoordinatorResultV1::Pending)
+}
+
+/// Runs a bounded coordinator step.  Every phase re-enters through the
+/// authoritative SQLite router; no in-memory route is trusted after a durable
+/// primitive has run.
+pub fn run_production_sync_coordinator_step_with_budget_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    budgets: &DiscoveryBudgetsV1,
+    phase_step_budget: u8,
+) -> Result<ProductionCoordinatorResultV1> {
+    run_production_sync_coordinator_step_with_dispatch_v1(
+        conn,
+        paths,
+        coordinator,
+        budgets,
+        phase_step_budget,
+        &ProductionCoordinatorPrimitiveDispatchV1,
+    )
 }
 
 pub fn run_production_sync_coordinator_step_v1(
@@ -529,11 +617,109 @@ mod tests {
 
     use super::*;
     use crate::db_atomic_helpers::set_setting_tx;
+    use crate::s2_lite::activation_cutover::{
+        create_activation_cutover_state_v1, ActivationFingerprintConsistencyV1,
+        VerifiedActivationEvidenceV1,
+    };
     use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
     use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
 
     const TIME: &str = "2026-09-26T00:00:00.000Z";
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ObservedPrimitiveV1 {
+        Bootstrap,
+        Activation,
+        Normal,
+    }
+
+    type AfterPrimitiveHookV1 = Box<dyn FnOnce(&Mutex<Connection>) + Send>;
+
+    /// A module-local observer only. Every result comes from the production
+    /// primitive; the optional one-shot hook runs strictly after that call so
+    /// the next coordinator invocation must obtain its route from SQLite.
+    struct ObservingProductionDispatchV1 {
+        observed: Mutex<Vec<ObservedPrimitiveV1>>,
+        after_call: Mutex<Option<AfterPrimitiveHookV1>>,
+    }
+
+    impl ObservingProductionDispatchV1 {
+        fn new(after_call: Option<AfterPrimitiveHookV1>) -> Self {
+            Self {
+                observed: Mutex::new(Vec::new()),
+                after_call: Mutex::new(after_call),
+            }
+        }
+
+        fn observe(&self, primitive: ObservedPrimitiveV1, conn: &Mutex<Connection>) {
+            self.observed.lock().unwrap().push(primitive);
+            if let Some(hook) = self.after_call.lock().unwrap().take() {
+                hook(conn);
+            }
+        }
+
+        fn observed(&self) -> Vec<ObservedPrimitiveV1> {
+            self.observed.lock().unwrap().clone()
+        }
+    }
+
+    impl CoordinatorPrimitiveDispatchV1 for ObservingProductionDispatchV1 {
+        fn execute_bootstrap(
+            &self,
+            conn: &Mutex<Connection>,
+            paths: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            diagnostic_time: &str,
+        ) -> Result<BootstrapExecutionResultV1> {
+            let result = execute_production_bootstrap_with_webdav_v1(
+                conn,
+                paths,
+                coordinator,
+                diagnostic_time,
+            );
+            self.observe(ObservedPrimitiveV1::Bootstrap, conn);
+            result
+        }
+
+        fn execute_activation(
+            &self,
+            conn: &Mutex<Connection>,
+            paths: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            diagnostic_time: &str,
+        ) -> Result<ActivationExecutionResultV1> {
+            let result = execute_production_activation_with_webdav_v1(
+                conn,
+                paths,
+                coordinator,
+                diagnostic_time,
+            );
+            self.observe(ObservedPrimitiveV1::Activation, conn);
+            result
+        }
+
+        fn execute_normal_s2(
+            &self,
+            conn: &Mutex<Connection>,
+            paths: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            binding: &TargetRootBindingV1,
+            budgets: &DiscoveryBudgetsV1,
+            diagnostic_time: &str,
+        ) -> Result<ProductionCoordinatorResultV1> {
+            let result = run_one_normal_s2_cycle_v1(
+                conn,
+                paths,
+                coordinator,
+                binding,
+                budgets,
+                diagnostic_time,
+            );
+            self.observe(ObservedPrimitiveV1::Normal, conn);
+            result
+        }
+    }
 
     fn connection() -> Mutex<Connection> {
         let conn = Connection::open_in_memory().unwrap();
@@ -868,6 +1054,143 @@ mod tests {
         assert_eq!(
             load_bound_coordinator_route_v1(&conn).unwrap().route,
             DesktopSyncRouteV1::ResumeActivation
+        );
+    }
+
+    #[test]
+    fn production_dispatch_forwards_the_existing_activation_primitive() {
+        let conn = connection();
+        let active = target("https://dav.example.test/dispatch-forward/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let coordinator = RootExecutionCoordinatorV1::default();
+        let production = ProductionCoordinatorPrimitiveDispatchV1;
+
+        assert_eq!(
+            production
+                .execute_activation(&conn, &paths, &coordinator, TIME)
+                .unwrap(),
+            execute_production_activation_with_webdav_v1(&conn, &paths, &coordinator, TIME)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_dispatch_cannot_select_the_durable_legacy_route_or_consume_budget() {
+        let conn = connection();
+        let active = target("https://dav.example.test/dispatch-route/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = ObservingProductionDispatchV1::new(None);
+
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::LegacyS1Required
+        );
+        assert!(dispatch.observed().is_empty());
+
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                0,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert!(dispatch.observed().is_empty());
+    }
+
+    #[test]
+    fn post_primitive_hook_is_one_shot_and_next_reroute_reads_its_durable_state() {
+        let conn = connection();
+        let active = target("https://dav.example.test/dispatch-hook/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let root_id = resolve_active_target_root_binding_v1(&conn, &active.id, 1)
+            .unwrap()
+            .binding
+            .physical_root_id;
+        // Make the *real* production activation primitive adopt an already
+        // verified compatible activation. This mutates migration authority
+        // durably without a remote credential or test-injected result.
+        {
+            let mut store = SqliteS2LiteStoreV1::open(&conn, &root_id).unwrap();
+            let migration = MigrationStateStoreV1::load(&mut store, &root_id)
+                .unwrap()
+                .unwrap();
+            let fingerprint = migration.snapshot.unwrap().legacy_fingerprint;
+            let mut cutover = create_activation_cutover_state_v1();
+            cutover.remote_s2_activated = true;
+            cutover
+                .verified_activation_evidence
+                .push(VerifiedActivationEvidenceV1 {
+                    path: "activations/dispatch-hook.json".to_string(),
+                    activation_id: "96000000-0000-4000-8000-000000000001".to_string(),
+                    content_hash: "d".repeat(64),
+                    exact_bytes_hash: "d".repeat(64),
+                    legacy_fingerprint: Some(fingerprint.clone()),
+                });
+            cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+                legacy_fingerprint: Some(fingerprint),
+            };
+            MigrationStateStoreV1::persist_cutover_state(&mut store, &root_id, &cutover).unwrap();
+        }
+        let hook_root_id = root_id.clone();
+        let dispatch = ObservingProductionDispatchV1::new(Some(Box::new(move |conn| {
+            let mut store = SqliteS2LiteStoreV1::open(conn, &hook_root_id).unwrap();
+            MigrationStateStoreV1::persist_root_fatal(&mut store, &hook_root_id, "HOOK_FATAL")
+                .unwrap();
+        })));
+
+        // The real activation primitive first adopts the compatible verified
+        // activation in SQLite. Only after it returns does the hook durably
+        // freeze the root; the observer cannot manufacture a route or result.
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::ReadOnlyFrozen
+        );
+        assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
+        assert_eq!(
+            load_bound_coordinator_route_v1(&conn)
+                .unwrap()
+                .binding
+                .physical_root_id,
+            root_id
         );
     }
 }
