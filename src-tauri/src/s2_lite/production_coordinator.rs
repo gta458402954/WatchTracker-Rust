@@ -1279,4 +1279,105 @@ mod tests {
         );
         assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
     }
+
+    #[test]
+    fn historical_finalization_stops_before_fresh_normal_s2_target_work() {
+        let conn = connection();
+        let first = target("https://dav.example.test/continuity-normal-a/", "alice");
+        let second = target("https://dav.example.test/continuity-normal-b/", "bob");
+        set_active(&conn, &first, vec![first.clone(), second.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &first);
+        set_active(&conn, &second, vec![first, second.clone()], 2);
+        let bound = resolve_active_target_root_binding_v1(&conn, &second.id, 2).unwrap();
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        store.initialize_desktop_writer_v1().unwrap();
+        let mut activated = create_activation_cutover_state_v1();
+        activated.remote_s2_activated = true;
+        MigrationStateStoreV1::persist_cutover_state(
+            &mut store,
+            &bound.binding.physical_root_id,
+            &activated,
+        )
+        .unwrap();
+        persist_compatible_activation(
+            &conn,
+            &admitted.execution_binding.physical_root_id,
+            "98000000-0000-4000-8000-000000000004",
+        );
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                4,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::TargetChanged
+        );
+        assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
+    }
+
+    #[test]
+    fn historical_finalization_on_same_active_authority_does_not_stop() {
+        let conn = connection();
+        let active = target("https://dav.example.test/continuity-same-a/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        persist_compatible_activation(
+            &conn,
+            &admitted.execution_binding.physical_root_id,
+            "98000000-0000-4000-8000-000000000005",
+        );
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                4,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(
+            dispatch.observed(),
+            vec![ObservedPrimitiveV1::Activation, ObservedPrimitiveV1::Normal]
+        );
+    }
+
+    #[test]
+    fn historical_finalization_with_same_target_id_and_new_epoch_stops() {
+        let conn = connection();
+        let active = target("https://dav.example.test/continuity-epoch-a/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        set_active(&conn, &active, vec![active.clone()], 2);
+        persist_compatible_activation(
+            &conn,
+            &admitted.execution_binding.physical_root_id,
+            "98000000-0000-4000-8000-000000000006",
+        );
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                4,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::TargetChanged
+        );
+        assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
+    }
 }
