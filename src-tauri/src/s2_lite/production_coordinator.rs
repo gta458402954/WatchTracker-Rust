@@ -657,6 +657,7 @@ mod tests {
     }
 
     type AfterPrimitiveHookV1 = Box<dyn FnOnce(&Mutex<Connection>) + Send>;
+    type AfterEachBootstrapHookV1 = Box<dyn FnMut(&Mutex<Connection>) + Send>;
 
     #[derive(Default)]
     struct BootstrapRemoteStateV1 {
@@ -700,6 +701,7 @@ mod tests {
         observed: Mutex<Vec<ObservedPrimitiveV1>>,
         remote: Arc<Mutex<BootstrapRemoteStateV1>>,
         after_bootstrap: Mutex<Option<AfterPrimitiveHookV1>>,
+        after_each_bootstrap: Mutex<Option<AfterEachBootstrapHookV1>>,
     }
     impl DeterministicBootstrapDispatchV1 {
         fn new(after_bootstrap: Option<AfterPrimitiveHookV1>) -> Self {
@@ -707,6 +709,15 @@ mod tests {
                 observed: Mutex::new(vec![]),
                 remote: Arc::new(Mutex::new(BootstrapRemoteStateV1::default())),
                 after_bootstrap: Mutex::new(after_bootstrap),
+                after_each_bootstrap: Mutex::new(None),
+            }
+        }
+        fn with_after_each_bootstrap(hook: AfterEachBootstrapHookV1) -> Self {
+            Self {
+                observed: Mutex::new(vec![]),
+                remote: Arc::new(Mutex::new(BootstrapRemoteStateV1::default())),
+                after_bootstrap: Mutex::new(None),
+                after_each_bootstrap: Mutex::new(Some(hook)),
             }
         }
         fn observed(&self) -> Vec<ObservedPrimitiveV1> {
@@ -745,6 +756,9 @@ mod tests {
             );
             self.observe(ObservedPrimitiveV1::Bootstrap);
             if let Some(hook) = self.after_bootstrap.lock().unwrap().take() {
+                hook(conn);
+            }
+            if let Some(hook) = self.after_each_bootstrap.lock().unwrap().as_mut() {
                 hook(conn);
             }
             result
@@ -1682,5 +1696,129 @@ mod tests {
             ProductionCoordinatorResultV1::ReadOnlyFrozen
         );
         assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Bootstrap]);
+    }
+
+    #[test]
+    fn one_coordinator_invocation_routes_real_bootstrap_activation_finalization_and_normal() {
+        let conn = connection();
+        let active = target("https://dav.example.test/phase-full/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_bootstrap_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        let hook_root = root.clone();
+        let mut published_activation = false;
+        let dispatch =
+            DeterministicBootstrapDispatchV1::with_after_each_bootstrap(Box::new(move |conn| {
+                if published_activation {
+                    return;
+                }
+                let stage_b_complete = {
+                    let mut store = SqliteS2LiteStoreV1::open(conn, &hook_root).unwrap();
+                    MigrationStateStoreV1::load(&mut store, &hook_root)
+                    .unwrap()
+                    .unwrap()
+                    .status
+                == crate::s2_lite::migration_orchestration::MigrationStatusV1::StageBComplete
+                };
+                if stage_b_complete {
+                    persist_compatible_activation(
+                        conn,
+                        &hook_root,
+                        "99000000-0000-4000-8000-000000000003",
+                    );
+                    published_activation = true;
+                }
+            }));
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                5,
+                &dispatch
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(
+            dispatch.observed(),
+            vec![
+                ObservedPrimitiveV1::Bootstrap,
+                ObservedPrimitiveV1::Bootstrap,
+                ObservedPrimitiveV1::Bootstrap,
+                ObservedPrimitiveV1::Activation,
+                ObservedPrimitiveV1::Normal
+            ]
+        );
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_none()
+        );
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert!(store.load_desktop_root_state().unwrap().is_some());
+        assert_eq!(
+            load_bound_coordinator_route_v1(&conn).unwrap().route,
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+    }
+
+    #[test]
+    fn fatal_after_real_finalization_blocks_the_next_normal_admission() {
+        let conn = connection();
+        let active = target("https://dav.example.test/finalization-fatal/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        persist_compatible_activation(&conn, &root, "99000000-0000-4000-8000-000000000004");
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let activation = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &activation
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(activation.observed(), vec![ObservedPrimitiveV1::Activation]);
+        assert_eq!(
+            load_bound_coordinator_route_v1(&conn).unwrap().route,
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        let completed = store.load_desktop_root_state().unwrap().unwrap();
+        MigrationStateStoreV1::persist_root_fatal(&mut store, &root, "FINALIZATION_BOUNDARY_FATAL")
+            .unwrap();
+        let normal = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &normal
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::ReadOnlyFrozen
+        );
+        assert!(normal.observed().is_empty());
+        let mut verified = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert_eq!(
+            verified.load_desktop_root_state().unwrap().unwrap(),
+            completed
+        );
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_none()
+        );
     }
 }
