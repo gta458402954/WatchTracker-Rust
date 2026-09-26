@@ -290,8 +290,10 @@ fn map_lifecycle_result_v1(result: DesktopS2LifecycleResultV1) -> ProductionCoor
         DesktopS2LifecycleResultV1::SuccessSynced | DesktopS2LifecycleResultV1::SuccessNoOp => {
             ProductionCoordinatorResultV1::Success
         }
-        DesktopS2LifecycleResultV1::PendingRemoteIndeterminate
-        | DesktopS2LifecycleResultV1::PendingDiscoveryDependencies
+        DesktopS2LifecycleResultV1::PendingRemoteIndeterminate => {
+            ProductionCoordinatorResultV1::RemoteIndeterminate
+        }
+        DesktopS2LifecycleResultV1::PendingDiscoveryDependencies
         | DesktopS2LifecycleResultV1::CancelledAtSafeBoundary => {
             ProductionCoordinatorResultV1::Pending
         }
@@ -318,6 +320,48 @@ fn map_outbound_publish_v1(result: OutboundPublishResultV1) -> ProductionCoordin
             ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked
         }
         OutboundPublishResultV1::RootFrozen => ProductionCoordinatorResultV1::ReadOnlyFrozen,
+    }
+}
+
+fn map_bootstrap_result_v1(
+    result: BootstrapExecutionResultV1,
+) -> Option<ProductionCoordinatorResultV1> {
+    match result {
+        BootstrapExecutionResultV1::Progressed | BootstrapExecutionResultV1::BootstrapComplete => {
+            None
+        }
+        BootstrapExecutionResultV1::ActivationDeferred | BootstrapExecutionResultV1::Pending => {
+            Some(ProductionCoordinatorResultV1::Pending)
+        }
+        BootstrapExecutionResultV1::RemoteIndeterminate => {
+            Some(ProductionCoordinatorResultV1::RemoteIndeterminate)
+        }
+        BootstrapExecutionResultV1::RemoteAuthOrCapabilityBlocked => {
+            Some(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked)
+        }
+        BootstrapExecutionResultV1::RootFrozen => {
+            Some(ProductionCoordinatorResultV1::ReadOnlyFrozen)
+        }
+    }
+}
+
+fn map_activation_result_v1(
+    result: ActivationExecutionResultV1,
+) -> Option<ProductionCoordinatorResultV1> {
+    match result {
+        ActivationExecutionResultV1::Progressed
+        | ActivationExecutionResultV1::ActivationVerified => None,
+        ActivationExecutionResultV1::AlreadyVerifiedRemotely
+        | ActivationExecutionResultV1::Pending => Some(ProductionCoordinatorResultV1::Pending),
+        ActivationExecutionResultV1::RemoteIndeterminate => {
+            Some(ProductionCoordinatorResultV1::RemoteIndeterminate)
+        }
+        ActivationExecutionResultV1::RemoteAuthOrCapabilityBlocked => {
+            Some(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked)
+        }
+        ActivationExecutionResultV1::RootFrozen => {
+            Some(ProductionCoordinatorResultV1::ReadOnlyFrozen)
+        }
     }
 }
 
@@ -426,39 +470,25 @@ pub fn run_production_sync_coordinator_step_with_budget_v1(
                 return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
             }
             DesktopSyncRouteV1::ResumeBootstrap => {
-                match execute_production_bootstrap_with_webdav_v1(
+                match map_bootstrap_result_v1(execute_production_bootstrap_with_webdav_v1(
                     conn,
                     paths,
                     coordinator,
                     &diagnostic_now_v1(),
-                )? {
-                    BootstrapExecutionResultV1::Progressed
-                    | BootstrapExecutionResultV1::BootstrapComplete => continue,
-                    BootstrapExecutionResultV1::ActivationDeferred
-                    | BootstrapExecutionResultV1::Pending => {
-                        return Ok(ProductionCoordinatorResultV1::Pending)
-                    }
-                    BootstrapExecutionResultV1::RootFrozen => {
-                        return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
-                    }
+                )?) {
+                    None => continue,
+                    Some(result) => return Ok(result),
                 }
             }
             DesktopSyncRouteV1::ResumeActivation => {
-                match execute_production_activation_with_webdav_v1(
+                match map_activation_result_v1(execute_production_activation_with_webdav_v1(
                     conn,
                     paths,
                     coordinator,
                     &diagnostic_now_v1(),
-                )? {
-                    ActivationExecutionResultV1::Progressed
-                    | ActivationExecutionResultV1::ActivationVerified => continue,
-                    ActivationExecutionResultV1::AlreadyVerifiedRemotely
-                    | ActivationExecutionResultV1::Pending => {
-                        return Ok(ProductionCoordinatorResultV1::Pending)
-                    }
-                    ActivationExecutionResultV1::RootFrozen => {
-                        return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
-                    }
+                )?) {
+                    None => continue,
+                    Some(result) => return Ok(result),
                 }
             }
             DesktopSyncRouteV1::EnterNormalS2 => {
@@ -727,5 +757,45 @@ mod tests {
         assert_eq!(captured.route, DesktopSyncRouteV1::ReadOnlyFrozen);
         assert_eq!(captured.binding.physical_root_id, root_id);
         assert!(binding_is_current_active_v1(&conn, &captured.binding));
+    }
+
+    #[test]
+    fn typed_execution_classifications_are_not_collapsed_to_pending() {
+        assert_eq!(
+            map_lifecycle_result_v1(DesktopS2LifecycleResultV1::PendingRemoteIndeterminate),
+            ProductionCoordinatorResultV1::RemoteIndeterminate
+        );
+        assert_eq!(
+            map_lifecycle_result_v1(DesktopS2LifecycleResultV1::PendingDiscoveryDependencies),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(
+            map_lifecycle_result_v1(DesktopS2LifecycleResultV1::ActiveWithConflicts),
+            ProductionCoordinatorResultV1::Conflicts
+        );
+        assert_eq!(
+            map_lifecycle_result_v1(DesktopS2LifecycleResultV1::TargetChanged),
+            ProductionCoordinatorResultV1::TargetChanged
+        );
+        assert_eq!(
+            map_lifecycle_result_v1(DesktopS2LifecycleResultV1::RootFrozen),
+            ProductionCoordinatorResultV1::ReadOnlyFrozen
+        );
+        assert_eq!(
+            map_bootstrap_result_v1(BootstrapExecutionResultV1::RemoteIndeterminate),
+            Some(ProductionCoordinatorResultV1::RemoteIndeterminate)
+        );
+        assert_eq!(
+            map_bootstrap_result_v1(BootstrapExecutionResultV1::RemoteAuthOrCapabilityBlocked),
+            Some(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked)
+        );
+        assert_eq!(
+            map_activation_result_v1(ActivationExecutionResultV1::RemoteIndeterminate),
+            Some(ProductionCoordinatorResultV1::RemoteIndeterminate)
+        );
+        assert_eq!(
+            map_activation_result_v1(ActivationExecutionResultV1::RemoteAuthOrCapabilityBlocked),
+            Some(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked)
+        );
     }
 }

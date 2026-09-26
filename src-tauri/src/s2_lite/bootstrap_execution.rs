@@ -16,6 +16,7 @@ use super::durable_persistence::{
     TargetRootBindingV1, VerifiedActivationAdoptionResultV1,
 };
 use super::immutable_publish::ImmutableObjectRemoteV1;
+use super::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
 use super::migration_orchestration::{
     create_activation_publication_execution_capability_v1,
     create_migration_root_execution_capability_v1, execute_migration_step_v1,
@@ -34,6 +35,8 @@ pub enum BootstrapExecutionResultV1 {
     BootstrapComplete,
     ActivationDeferred,
     Pending,
+    RemoteIndeterminate,
+    RemoteAuthOrCapabilityBlocked,
     RootFrozen,
 }
 
@@ -46,7 +49,106 @@ pub enum ActivationExecutionResultV1 {
     ActivationVerified,
     AlreadyVerifiedRemotely,
     Pending,
+    RemoteIndeterminate,
+    RemoteAuthOrCapabilityBlocked,
     RootFrozen,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObservedRemoteOutcomeV1 {
+    None,
+    Indeterminate,
+    AuthOrCapabilityBlocked,
+}
+
+/// Records only typed transport classifications already returned by the
+/// immutable-remote contract. It does not interpret provider strings or
+/// alter any request/recovery behavior owned by the frozen executor.
+struct ClassifiedImmutableRemoteV1<R> {
+    inner: R,
+    observed: ObservedRemoteOutcomeV1,
+}
+
+impl<R> ClassifiedImmutableRemoteV1<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            observed: ObservedRemoteOutcomeV1::None,
+        }
+    }
+
+    fn observe_get(&mut self, result: &RemoteExactGetResultV1) {
+        self.observed = match result {
+            RemoteExactGetResultV1::Indeterminate => ObservedRemoteOutcomeV1::Indeterminate,
+            RemoteExactGetResultV1::AuthOrCapabilityFailure => {
+                ObservedRemoteOutcomeV1::AuthOrCapabilityBlocked
+            }
+            _ => self.observed,
+        };
+    }
+
+    fn observe_put(&mut self, result: RemotePutResultV1) {
+        self.observed = match result {
+            RemotePutResultV1::Indeterminate => ObservedRemoteOutcomeV1::Indeterminate,
+            RemotePutResultV1::AuthOrCapabilityFailure => {
+                ObservedRemoteOutcomeV1::AuthOrCapabilityBlocked
+            }
+            RemotePutResultV1::Success => self.observed,
+        };
+    }
+}
+
+impl<R: ImmutableObjectRemoteV1> ImmutableObjectRemoteV1 for ClassifiedImmutableRemoteV1<R> {
+    fn execution_context_identity(&self) -> u64 {
+        self.inner.execution_context_identity()
+    }
+
+    fn physical_root_id(&self) -> Option<&str> {
+        self.inner.physical_root_id()
+    }
+
+    fn get_exact(&mut self, remote_path: &str) -> RemoteExactGetResultV1 {
+        let result = self.inner.get_exact(remote_path);
+        self.observe_get(&result);
+        result
+    }
+
+    fn put_exact(
+        &mut self,
+        remote_path: &str,
+        exact_bytes: &[u8],
+        if_none_match_star: bool,
+    ) -> RemotePutResultV1 {
+        let result = self
+            .inner
+            .put_exact(remote_path, exact_bytes, if_none_match_star);
+        self.observe_put(result);
+        result
+    }
+}
+
+fn bootstrap_observed_remote_result(
+    observed: ObservedRemoteOutcomeV1,
+) -> BootstrapExecutionResultV1 {
+    match observed {
+        ObservedRemoteOutcomeV1::None => BootstrapExecutionResultV1::Pending,
+        ObservedRemoteOutcomeV1::Indeterminate => BootstrapExecutionResultV1::RemoteIndeterminate,
+        ObservedRemoteOutcomeV1::AuthOrCapabilityBlocked => {
+            BootstrapExecutionResultV1::RemoteAuthOrCapabilityBlocked
+        }
+    }
+}
+
+fn activation_observed_remote_result(
+    observed: ObservedRemoteOutcomeV1,
+) -> ActivationExecutionResultV1 {
+    match observed {
+        ObservedRemoteOutcomeV1::None => ActivationExecutionResultV1::Pending,
+        ObservedRemoteOutcomeV1::Indeterminate => ActivationExecutionResultV1::RemoteIndeterminate,
+        ObservedRemoteOutcomeV1::AuthOrCapabilityBlocked => {
+            ActivationExecutionResultV1::RemoteAuthOrCapabilityBlocked
+        }
+    }
 }
 
 fn freeze_root(
@@ -171,7 +273,7 @@ where
             "S2_BOOTSTRAP_HISTORICAL_CREDENTIAL_BINDING_MISMATCH",
         );
     }
-    let mut remote = build_remote(&target, credentials)?;
+    let mut remote = ClassifiedImmutableRemoteV1::new(build_remote(&target, credentials)?);
     if remote.physical_root_id() != Some(root_id.as_str()) {
         return freeze_root(
             &mut preflight,
@@ -220,7 +322,7 @@ where
     Ok(if bootstrap_semantics_advanced(&durable, &next) {
         BootstrapExecutionResultV1::Progressed
     } else {
-        BootstrapExecutionResultV1::Pending
+        bootstrap_observed_remote_result(remote.observed)
     })
 }
 
@@ -345,7 +447,7 @@ where
         )?;
         return Ok(ActivationExecutionResultV1::RootFrozen);
     }
-    let mut remote = build_remote(&target, credentials)?;
+    let mut remote = ClassifiedImmutableRemoteV1::new(build_remote(&target, credentials)?);
     if remote.physical_root_id() != Some(root_id.as_str()) {
         freeze_root(
             &mut preflight,
@@ -436,7 +538,7 @@ where
     Ok(if activation_semantics_advanced(&durable, &next) {
         ActivationExecutionResultV1::Progressed
     } else {
-        ActivationExecutionResultV1::Pending
+        activation_observed_remote_result(remote.observed)
     })
 }
 
@@ -1170,7 +1272,10 @@ mod tests {
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
         drop(state);
-        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Pending);
+        assert_eq!(
+            run(&fixture),
+            BootstrapExecutionResultV1::RemoteIndeterminate
+        );
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 1);
         assert!(SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id)
             .unwrap()
@@ -1299,7 +1404,10 @@ mod tests {
         remote.put_calls = 0;
         drop(remote);
 
-        assert_eq!(run(&fixture), BootstrapExecutionResultV1::Pending);
+        assert_eq!(
+            run(&fixture),
+            BootstrapExecutionResultV1::RemoteIndeterminate
+        );
         let after = task(&fixture);
         assert_eq!(after.receipt, None);
         assert_eq!(after, before);
@@ -1388,7 +1496,7 @@ mod tests {
         drop(remote);
         assert_eq!(
             run_activation(&fixture),
-            ActivationExecutionResultV1::Pending
+            ActivationExecutionResultV1::RemoteIndeterminate
         );
         let store = SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id).unwrap();
         let frozen = store
@@ -1437,7 +1545,7 @@ mod tests {
         let puts_before = fixture.remote_state.lock().unwrap().put_calls;
         assert_eq!(
             run_activation(&fixture),
-            ActivationExecutionResultV1::Pending
+            ActivationExecutionResultV1::RemoteIndeterminate
         );
         let state = activation_state(&fixture);
         assert_eq!(state.status, MigrationStatusV1::ActivationPublishing);
@@ -1748,7 +1856,7 @@ mod tests {
             .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(
             run_activation(&fixture),
-            ActivationExecutionResultV1::Pending
+            ActivationExecutionResultV1::RemoteIndeterminate
         );
         let intent = activation_state(&fixture).activation_intent.unwrap();
         fixture
