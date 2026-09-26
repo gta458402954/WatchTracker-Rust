@@ -15,6 +15,7 @@ pub mod ordinary_mutation;
 pub mod outbound_completion;
 pub mod outbound_freeze;
 pub mod outbound_publish;
+pub mod production_coordinator;
 pub mod remote_discovery;
 pub mod root_coordinator;
 pub mod semantic;
