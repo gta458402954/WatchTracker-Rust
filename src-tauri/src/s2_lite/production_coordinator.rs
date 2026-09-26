@@ -1380,4 +1380,40 @@ mod tests {
         );
         assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
     }
+
+    #[test]
+    fn fresh_coordinator_finalizes_verified_activation_from_durable_state() {
+        let conn = connection();
+        let active = target("https://dav.example.test/restart-verified/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        persist_compatible_activation(
+            &conn,
+            &admitted.execution_binding.physical_root_id,
+            "98000000-0000-4000-8000-000000000007",
+        );
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                4,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(
+            dispatch.observed(),
+            vec![ObservedPrimitiveV1::Activation, ObservedPrimitiveV1::Normal]
+        );
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_none()
+        );
+    }
 }
