@@ -38,6 +38,10 @@ pub enum BootstrapExecutionResultV1 {
     RemoteIndeterminate,
     RemoteAuthOrCapabilityBlocked,
     RootFrozen,
+    /// The database-wide migration owner was retired by a concurrent, legal
+    /// finalization.  The coordinator must obtain a fresh durable route
+    /// before it dispatches any further target-specific work.
+    StaleRouteAdvanced,
 }
 
 /// Production result for the activation-publication checkpoint. This endpoint
@@ -52,6 +56,8 @@ pub enum ActivationExecutionResultV1 {
     RemoteIndeterminate,
     RemoteAuthOrCapabilityBlocked,
     RootFrozen,
+    /// See [`BootstrapExecutionResultV1::StaleRouteAdvanced`].
+    StaleRouteAdvanced,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -169,6 +175,46 @@ fn binding_matches_execution(
         && execution.physical_root_id == target.physical_root_id
 }
 
+/// A missing source owner is legal only after the *captured* historical
+/// execution has completed its exact local handoff. Current-active routing is
+/// deliberately not consulted here: it could point to a different target.
+enum MissingExpectedExecutionV1 {
+    Advanced,
+    RootFrozen,
+}
+
+fn classify_missing_expected_execution_v1(
+    conn: &Mutex<Connection>,
+    expected: &MigrationExecutionBindingV1,
+) -> Result<MissingExpectedExecutionV1> {
+    let target =
+        load_historical_target_root_binding_v1(conn, &expected.target_id, expected.target_epoch)?
+            .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+    if !binding_matches_execution(expected, &target) {
+        return Err(BOOTSTRAP_EXECUTION_FAILURE);
+    }
+    let mut store = SqliteS2LiteStoreV1::open(conn, &expected.physical_root_id)?;
+    let safety = MigrationStateStoreV1::load_root_safety(&mut store, &expected.physical_root_id)?;
+    if !safety.root_fatal_signals.is_empty() || !safety.cutover_state.root_fatal_signals.is_empty()
+    {
+        return Ok(MissingExpectedExecutionV1::RootFrozen);
+    }
+    let migration = MigrationStateStoreV1::load(&mut store, &expected.physical_root_id)?
+        .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+    if migration.migration_id != expected.migration_id
+        || migration.status != MigrationStatusV1::MigrationComplete
+    {
+        return Err(BOOTSTRAP_EXECUTION_FAILURE);
+    }
+    let writer = store
+        .load_desktop_root_state()?
+        .ok_or(BOOTSTRAP_EXECUTION_FAILURE)?;
+    if writer.local_writer_id != migration.writer_id {
+        return Err(BOOTSTRAP_EXECUTION_FAILURE);
+    }
+    Ok(MissingExpectedExecutionV1::Advanced)
+}
+
 fn no_network_result(status: MigrationStatusV1) -> Option<BootstrapExecutionResultV1> {
     match status {
         MigrationStatusV1::RootFrozen => Some(BootstrapExecutionResultV1::RootFrozen),
@@ -208,9 +254,10 @@ fn activation_semantics_advanced(
 /// historical target/root binding. The production factory is intentionally
 /// injected so deterministic tests can use a local fake remote without
 /// duplicating bootstrap behavior.
-pub fn execute_production_bootstrap_with_factory_v1<R, L, F>(
+fn execute_production_bootstrap_with_factory_inner_v1<R, L, F>(
     conn: &Mutex<Connection>,
     coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: Option<&MigrationExecutionBindingV1>,
     mut load_historical_credentials: L,
     build_remote: F,
     verified_at_diagnostic: &str,
@@ -220,9 +267,22 @@ where
     L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
     F: FnOnce(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
 {
-    let Some(execution) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
-    else {
-        return Err(BOOTSTRAP_EXECUTION_FAILURE);
+    let execution = match SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)? {
+        Some(execution) if expected_execution.map_or(true, |expected| expected == &execution) => {
+            execution
+        }
+        Some(_) => return Err(BOOTSTRAP_EXECUTION_FAILURE),
+        None => match expected_execution {
+            Some(expected) => match classify_missing_expected_execution_v1(conn, expected)? {
+                MissingExpectedExecutionV1::Advanced => {
+                    return Ok(BootstrapExecutionResultV1::StaleRouteAdvanced)
+                }
+                MissingExpectedExecutionV1::RootFrozen => {
+                    return Ok(BootstrapExecutionResultV1::RootFrozen)
+                }
+            },
+            None => return Err(BOOTSTRAP_EXECUTION_FAILURE),
+        },
     };
     let root_id = execution.physical_root_id.clone();
     let target =
@@ -326,12 +386,38 @@ where
     })
 }
 
+/// Executes at most one frozen bootstrap orchestration step using the exact
+/// database-wide historical source owner. Callers which already captured an
+/// execution identity should use the coordinator-only expected variant below.
+pub fn execute_production_bootstrap_with_factory_v1<R, L, F>(
+    conn: &Mutex<Connection>,
+    coordinator: &RootExecutionCoordinatorV1,
+    load_historical_credentials: L,
+    build_remote: F,
+    verified_at_diagnostic: &str,
+) -> Result<BootstrapExecutionResultV1>
+where
+    R: ImmutableObjectRemoteV1,
+    L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
+    F: FnOnce(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
+{
+    execute_production_bootstrap_with_factory_inner_v1(
+        conn,
+        coordinator,
+        None,
+        load_historical_credentials,
+        build_remote,
+        verified_at_diagnostic,
+    )
+}
+
 /// Executes at most one production activation recovery step for the migration
 /// bound to the database-wide historical source owner. It never performs the
 /// later local completion/cutover bookkeeping.
-pub fn execute_production_activation_with_factory_v1<R, L, F>(
+fn execute_production_activation_with_factory_inner_v1<R, L, F>(
     conn: &Mutex<Connection>,
     coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: Option<&MigrationExecutionBindingV1>,
     mut load_historical_credentials: L,
     build_remote: F,
     verified_at_diagnostic: &str,
@@ -341,9 +427,22 @@ where
     L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
     F: FnOnce(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
 {
-    let Some(execution) = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
-    else {
-        return Err(BOOTSTRAP_EXECUTION_FAILURE);
+    let execution = match SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)? {
+        Some(execution) if expected_execution.map_or(true, |expected| expected == &execution) => {
+            execution
+        }
+        Some(_) => return Err(BOOTSTRAP_EXECUTION_FAILURE),
+        None => match expected_execution {
+            Some(expected) => match classify_missing_expected_execution_v1(conn, expected)? {
+                MissingExpectedExecutionV1::Advanced => {
+                    return Ok(ActivationExecutionResultV1::StaleRouteAdvanced)
+                }
+                MissingExpectedExecutionV1::RootFrozen => {
+                    return Ok(ActivationExecutionResultV1::RootFrozen)
+                }
+            },
+            None => return Err(BOOTSTRAP_EXECUTION_FAILURE),
+        },
     };
     let expected_execution_identity = migration_execution_identity_v1(&execution);
     let root_id = execution.physical_root_id.clone();
@@ -542,17 +641,44 @@ where
     })
 }
 
+/// Executes one activation recovery step using the current database-wide
+/// source owner. The coordinator's expected variant below is used when a
+/// route was already captured for dispatch.
+pub fn execute_production_activation_with_factory_v1<R, L, F>(
+    conn: &Mutex<Connection>,
+    coordinator: &RootExecutionCoordinatorV1,
+    load_historical_credentials: L,
+    build_remote: F,
+    verified_at_diagnostic: &str,
+) -> Result<ActivationExecutionResultV1>
+where
+    R: ImmutableObjectRemoteV1,
+    L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
+    F: FnOnce(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
+{
+    execute_production_activation_with_factory_inner_v1(
+        conn,
+        coordinator,
+        None,
+        load_historical_credentials,
+        build_remote,
+        verified_at_diagnostic,
+    )
+}
+
 /// Production WebDAV entry point. Historical credentials are resolved only
 /// from the migration binding's target; the active target is never consulted.
-pub fn execute_production_bootstrap_with_webdav_v1(
+fn execute_production_bootstrap_with_webdav_inner_v1(
     conn: &Mutex<Connection>,
     paths: &crate::app_paths::AppPaths,
     coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: Option<&MigrationExecutionBindingV1>,
     verified_at_diagnostic: &str,
 ) -> Result<BootstrapExecutionResultV1> {
-    execute_production_bootstrap_with_factory_v1(
+    execute_production_bootstrap_with_factory_inner_v1(
         conn,
         coordinator,
+        expected_execution,
         |target| {
             let mut guard = conn.lock().map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)?;
             let credentials = crate::sync_targets::historical_request_credentials(
@@ -587,18 +713,51 @@ pub fn execute_production_bootstrap_with_webdav_v1(
     )
 }
 
-/// Production WebDAV activation entry point. Credentials are resolved from
-/// the migration's historical target only; a later active-target switch is
-/// never authority to retarget the frozen activation.
-pub fn execute_production_activation_with_webdav_v1(
+pub fn execute_production_bootstrap_with_webdav_v1(
     conn: &Mutex<Connection>,
     paths: &crate::app_paths::AppPaths,
     coordinator: &RootExecutionCoordinatorV1,
     verified_at_diagnostic: &str,
+) -> Result<BootstrapExecutionResultV1> {
+    execute_production_bootstrap_with_webdav_inner_v1(
+        conn,
+        paths,
+        coordinator,
+        None,
+        verified_at_diagnostic,
+    )
+}
+
+pub(crate) fn execute_production_bootstrap_with_webdav_for_execution_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: &MigrationExecutionBindingV1,
+    verified_at_diagnostic: &str,
+) -> Result<BootstrapExecutionResultV1> {
+    execute_production_bootstrap_with_webdav_inner_v1(
+        conn,
+        paths,
+        coordinator,
+        Some(expected_execution),
+        verified_at_diagnostic,
+    )
+}
+
+/// Production WebDAV activation entry point. Credentials are resolved from
+/// the migration's historical target only; a later active-target switch is
+/// never authority to retarget the frozen activation.
+fn execute_production_activation_with_webdav_inner_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: Option<&MigrationExecutionBindingV1>,
+    verified_at_diagnostic: &str,
 ) -> Result<ActivationExecutionResultV1> {
-    execute_production_activation_with_factory_v1(
+    execute_production_activation_with_factory_inner_v1(
         conn,
         coordinator,
+        expected_execution,
         |target| {
             let mut guard = conn.lock().map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)?;
             let credentials = crate::sync_targets::historical_request_credentials(
@@ -629,6 +788,37 @@ pub fn execute_production_activation_with_webdav_v1(
             })
             .map_err(|_| BOOTSTRAP_EXECUTION_FAILURE)
         },
+        verified_at_diagnostic,
+    )
+}
+
+pub fn execute_production_activation_with_webdav_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    verified_at_diagnostic: &str,
+) -> Result<ActivationExecutionResultV1> {
+    execute_production_activation_with_webdav_inner_v1(
+        conn,
+        paths,
+        coordinator,
+        None,
+        verified_at_diagnostic,
+    )
+}
+
+pub(crate) fn execute_production_activation_with_webdav_for_execution_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: &MigrationExecutionBindingV1,
+    verified_at_diagnostic: &str,
+) -> Result<ActivationExecutionResultV1> {
+    execute_production_activation_with_webdav_inner_v1(
+        conn,
+        paths,
+        coordinator,
+        Some(expected_execution),
         verified_at_diagnostic,
     )
 }

@@ -11,8 +11,9 @@ use chrono::{SecondsFormat, Utc};
 use rusqlite::Connection;
 
 use super::bootstrap_execution::{
-    execute_production_activation_with_webdav_v1, execute_production_bootstrap_with_webdav_v1,
-    ActivationExecutionResultV1, BootstrapExecutionResultV1,
+    execute_production_activation_with_webdav_for_execution_v1,
+    execute_production_bootstrap_with_webdav_for_execution_v1, ActivationExecutionResultV1,
+    BootstrapExecutionResultV1,
 };
 use super::canonical::{ProtocolError, Result};
 use super::desktop_lifecycle::{
@@ -20,7 +21,8 @@ use super::desktop_lifecycle::{
     DesktopS2RootBindingV1, DesktopSyncRouteV1,
 };
 use super::durable_persistence::{
-    MigrationAdmissionInputV1, MigrationAdmissionResultV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
+    MigrationAdmissionInputV1, MigrationAdmissionResultV1, MigrationExecutionBindingV1,
+    SqliteS2LiteStoreV1, TargetRootBindingV1,
 };
 use super::migration_admission::capture_production_legacy_snapshot_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
@@ -106,6 +108,56 @@ fn historical_target_binding_v1(
 
 fn binding_is_current_active_v1(conn: &Mutex<Connection>, binding: &TargetRootBindingV1) -> bool {
     active_epoch_is_current_v1(conn, &binding.target_id, binding.target_epoch)
+}
+
+/// Captures the exact source-owner record which makes a resume route legal.
+/// This is dispatch evidence only: the durable router remains the sole source
+/// of authority for any later route.
+fn historical_resume_execution_v1(
+    conn: &Mutex<Connection>,
+    bound: &BoundCoordinatorRouteV1,
+) -> Result<MigrationExecutionBindingV1> {
+    if !bound.historical_migration
+        || !matches!(
+            bound.route,
+            DesktopSyncRouteV1::ResumeBootstrap | DesktopSyncRouteV1::ResumeActivation
+        )
+    {
+        return Err(COORDINATOR_FAILURE);
+    }
+    let execution = SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?
+        .ok_or(COORDINATOR_FAILURE)?;
+    if execution.target_id != bound.binding.target_id
+        || execution.target_epoch != bound.binding.target_epoch
+        || execution.physical_root_id != bound.binding.physical_root_id
+    {
+        return Err(COORDINATOR_FAILURE);
+    }
+    Ok(execution)
+}
+
+/// Close the route-capture-to-dispatch gap without giving the coordinator a
+/// process-wide lock.  A changed phase or source-owner identity is a normal
+/// concurrent advance only when the normal router can recapture it; callers
+/// then loop and obtain fresh durable authority before dispatching.
+fn resume_dispatch_is_current_v1(
+    conn: &Mutex<Connection>,
+    captured: &BoundCoordinatorRouteV1,
+    expected_execution: &MigrationExecutionBindingV1,
+) -> Result<bool> {
+    let fresh = load_bound_coordinator_route_v1(conn)?;
+    if fresh.route != captured.route
+        || !fresh.historical_migration
+        || fresh.binding.target_id != captured.binding.target_id
+        || fresh.binding.target_epoch != captured.binding.target_epoch
+        || fresh.binding.physical_root_id != captured.binding.physical_root_id
+    {
+        return Ok(false);
+    }
+    Ok(
+        SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(conn)?.as_ref()
+            == Some(expected_execution),
+    )
 }
 
 fn load_bound_coordinator_route_inner_v1(
@@ -327,9 +379,9 @@ fn map_bootstrap_result_v1(
     result: BootstrapExecutionResultV1,
 ) -> Option<ProductionCoordinatorResultV1> {
     match result {
-        BootstrapExecutionResultV1::Progressed | BootstrapExecutionResultV1::BootstrapComplete => {
-            None
-        }
+        BootstrapExecutionResultV1::Progressed
+        | BootstrapExecutionResultV1::BootstrapComplete
+        | BootstrapExecutionResultV1::StaleRouteAdvanced => None,
         BootstrapExecutionResultV1::ActivationDeferred | BootstrapExecutionResultV1::Pending => {
             Some(ProductionCoordinatorResultV1::Pending)
         }
@@ -350,7 +402,8 @@ fn map_activation_result_v1(
 ) -> Option<ProductionCoordinatorResultV1> {
     match result {
         ActivationExecutionResultV1::Progressed
-        | ActivationExecutionResultV1::ActivationVerified => None,
+        | ActivationExecutionResultV1::ActivationVerified
+        | ActivationExecutionResultV1::StaleRouteAdvanced => None,
         ActivationExecutionResultV1::AlreadyVerifiedRemotely
         | ActivationExecutionResultV1::Pending => Some(ProductionCoordinatorResultV1::Pending),
         ActivationExecutionResultV1::RemoteIndeterminate => {
@@ -440,6 +493,7 @@ trait CoordinatorPrimitiveDispatchV1 {
         conn: &Mutex<Connection>,
         paths: &crate::app_paths::AppPaths,
         coordinator: &RootExecutionCoordinatorV1,
+        expected_execution: &MigrationExecutionBindingV1,
         diagnostic_time: &str,
     ) -> Result<BootstrapExecutionResultV1>;
 
@@ -448,6 +502,7 @@ trait CoordinatorPrimitiveDispatchV1 {
         conn: &Mutex<Connection>,
         paths: &crate::app_paths::AppPaths,
         coordinator: &RootExecutionCoordinatorV1,
+        expected_execution: &MigrationExecutionBindingV1,
         diagnostic_time: &str,
     ) -> Result<ActivationExecutionResultV1>;
 
@@ -471,9 +526,16 @@ impl CoordinatorPrimitiveDispatchV1 for ProductionCoordinatorPrimitiveDispatchV1
         conn: &Mutex<Connection>,
         paths: &crate::app_paths::AppPaths,
         coordinator: &RootExecutionCoordinatorV1,
+        expected_execution: &MigrationExecutionBindingV1,
         diagnostic_time: &str,
     ) -> Result<BootstrapExecutionResultV1> {
-        execute_production_bootstrap_with_webdav_v1(conn, paths, coordinator, diagnostic_time)
+        execute_production_bootstrap_with_webdav_for_execution_v1(
+            conn,
+            paths,
+            coordinator,
+            expected_execution,
+            diagnostic_time,
+        )
     }
 
     fn execute_activation(
@@ -481,9 +543,16 @@ impl CoordinatorPrimitiveDispatchV1 for ProductionCoordinatorPrimitiveDispatchV1
         conn: &Mutex<Connection>,
         paths: &crate::app_paths::AppPaths,
         coordinator: &RootExecutionCoordinatorV1,
+        expected_execution: &MigrationExecutionBindingV1,
         diagnostic_time: &str,
     ) -> Result<ActivationExecutionResultV1> {
-        execute_production_activation_with_webdav_v1(conn, paths, coordinator, diagnostic_time)
+        execute_production_activation_with_webdav_for_execution_v1(
+            conn,
+            paths,
+            coordinator,
+            expected_execution,
+            diagnostic_time,
+        )
     }
 
     fn execute_normal_s2(
@@ -556,10 +625,15 @@ fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitive
                 return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
             }
             DesktopSyncRouteV1::ResumeBootstrap => {
+                let execution = historical_resume_execution_v1(conn, &bound)?;
+                if !resume_dispatch_is_current_v1(conn, &bound, &execution)? {
+                    continue;
+                }
                 match map_bootstrap_result_v1(dispatch.execute_bootstrap(
                     conn,
                     paths,
                     coordinator,
+                    &execution,
                     &diagnostic_now_v1(),
                 )?) {
                     None => continue,
@@ -567,10 +641,15 @@ fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitive
                 }
             }
             DesktopSyncRouteV1::ResumeActivation => {
+                let execution = historical_resume_execution_v1(conn, &bound)?;
+                if !resume_dispatch_is_current_v1(conn, &bound, &execution)? {
+                    continue;
+                }
                 match map_activation_result_v1(dispatch.execute_activation(
                     conn,
                     paths,
                     coordinator,
+                    &execution,
                     &diagnostic_now_v1(),
                 )?) {
                     None => continue,
@@ -640,7 +719,11 @@ mod tests {
         create_activation_cutover_state_v1, ActivationFingerprintConsistencyV1,
         VerifiedActivationEvidenceV1,
     };
-    use crate::s2_lite::bootstrap_execution::execute_production_bootstrap_with_factory_v1;
+    use crate::s2_lite::bootstrap_execution::{
+        execute_production_activation_with_webdav_for_execution_v1,
+        execute_production_activation_with_webdav_v1, execute_production_bootstrap_with_factory_v1,
+        execute_production_bootstrap_with_webdav_for_execution_v1,
+    };
     use crate::s2_lite::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
     use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
     use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
@@ -733,6 +816,7 @@ mod tests {
             conn: &Mutex<Connection>,
             _: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
+            _: &MigrationExecutionBindingV1,
             time: &str,
         ) -> Result<BootstrapExecutionResultV1> {
             let remote = Arc::clone(&self.remote);
@@ -768,10 +852,16 @@ mod tests {
             conn: &Mutex<Connection>,
             paths: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
+            expected_execution: &MigrationExecutionBindingV1,
             time: &str,
         ) -> Result<ActivationExecutionResultV1> {
-            let result =
-                execute_production_activation_with_webdav_v1(conn, paths, coordinator, time);
+            let result = execute_production_activation_with_webdav_for_execution_v1(
+                conn,
+                paths,
+                coordinator,
+                expected_execution,
+                time,
+            );
             self.observe(ObservedPrimitiveV1::Activation);
             result
         }
@@ -825,12 +915,14 @@ mod tests {
             conn: &Mutex<Connection>,
             paths: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
+            expected_execution: &MigrationExecutionBindingV1,
             diagnostic_time: &str,
         ) -> Result<BootstrapExecutionResultV1> {
-            let result = execute_production_bootstrap_with_webdav_v1(
+            let result = execute_production_bootstrap_with_webdav_for_execution_v1(
                 conn,
                 paths,
                 coordinator,
+                expected_execution,
                 diagnostic_time,
             );
             self.observe(ObservedPrimitiveV1::Bootstrap, conn);
@@ -842,12 +934,14 @@ mod tests {
             conn: &Mutex<Connection>,
             paths: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
+            expected_execution: &MigrationExecutionBindingV1,
             diagnostic_time: &str,
         ) -> Result<ActivationExecutionResultV1> {
-            let result = execute_production_activation_with_webdav_v1(
+            let result = execute_production_activation_with_webdav_for_execution_v1(
                 conn,
                 paths,
                 coordinator,
+                expected_execution,
                 diagnostic_time,
             );
             self.observe(ObservedPrimitiveV1::Activation, conn);
@@ -1316,14 +1410,20 @@ mod tests {
         let conn = connection();
         let active = target("https://dav.example.test/dispatch-forward/", "alice");
         set_active(&conn, &active, vec![active.clone()], 1);
-        admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        let admitted = admit_migration_from_production_coordinator_v1(&conn).unwrap();
         let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
         let coordinator = RootExecutionCoordinatorV1::default();
         let production = ProductionCoordinatorPrimitiveDispatchV1;
 
         assert_eq!(
             production
-                .execute_activation(&conn, &paths, &coordinator, TIME)
+                .execute_activation(
+                    &conn,
+                    &paths,
+                    &coordinator,
+                    &admitted.execution_binding,
+                    TIME,
+                )
                 .unwrap(),
             execute_production_activation_with_webdav_v1(&conn, &paths, &coordinator, TIME)
                 .unwrap()
@@ -1820,5 +1920,210 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn concurrent_activation_coordinator_entrypoints_converge_on_one_writer_handoff() {
+        let conn = connection();
+        let active = target("https://dav.example.test/concurrent-activation/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        persist_compatible_activation(&conn, &root, "99000000-0000-4000-8000-000000000005");
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                run_production_sync_coordinator_step_with_budget_v1(
+                    &conn,
+                    &paths,
+                    &RootExecutionCoordinatorV1::default(),
+                    &DiscoveryBudgetsV1::default(),
+                    4,
+                )
+            });
+            let b = scope.spawn(|| {
+                run_production_sync_coordinator_step_with_budget_v1(
+                    &conn,
+                    &paths,
+                    &RootExecutionCoordinatorV1::default(),
+                    &DiscoveryBudgetsV1::default(),
+                    4,
+                )
+            });
+            assert_eq!(
+                a.join().unwrap().unwrap(),
+                ProductionCoordinatorResultV1::Pending
+            );
+            assert_eq!(
+                b.join().unwrap().unwrap(),
+                ProductionCoordinatorResultV1::Pending
+            );
+        });
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_none()
+        );
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        let writer = store.load_desktop_root_state().unwrap().unwrap();
+        assert_eq!(writer.local_writer_id, admitted.state.writer_id);
+        assert_eq!(writer.next_writer_sequence, 1);
+    }
+
+    #[test]
+    fn concurrent_bootstrap_coordinator_entrypoints_reuse_one_migration_identity() {
+        let conn = connection();
+        let active = target("https://dav.example.test/concurrent-bootstrap/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_bootstrap_migration(&conn, &active);
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = DeterministicBootstrapDispatchV1::new(None);
+        std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                run_production_sync_coordinator_step_with_dispatch_v1(
+                    &conn,
+                    &paths,
+                    &RootExecutionCoordinatorV1::default(),
+                    &DiscoveryBudgetsV1::default(),
+                    1,
+                    &dispatch,
+                )
+            });
+            let b = scope.spawn(|| {
+                run_production_sync_coordinator_step_with_dispatch_v1(
+                    &conn,
+                    &paths,
+                    &RootExecutionCoordinatorV1::default(),
+                    &DiscoveryBudgetsV1::default(),
+                    1,
+                    &dispatch,
+                )
+            });
+            assert_eq!(
+                a.join().unwrap().unwrap(),
+                ProductionCoordinatorResultV1::Pending
+            );
+            assert_eq!(
+                b.join().unwrap().unwrap(),
+                ProductionCoordinatorResultV1::Pending
+            );
+        });
+        assert_eq!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .unwrap(),
+            admitted.execution_binding
+        );
+        assert_eq!(
+            dispatch.observed(),
+            vec![
+                ObservedPrimitiveV1::Bootstrap,
+                ObservedPrimitiveV1::Bootstrap
+            ]
+        );
+    }
+
+    #[test]
+    fn stale_activation_route_is_rerouted_before_primitive_dispatch() {
+        let conn = connection();
+        let active = target("https://dav.example.test/stale-before-dispatch/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        persist_compatible_activation(&conn, &root, "99000000-0000-4000-8000-000000000006");
+        let bound = load_bound_coordinator_route_v1(&conn).unwrap();
+        let execution = historical_resume_execution_v1(&conn, &bound).unwrap();
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+
+        assert_eq!(
+            execute_production_activation_with_webdav_for_execution_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &execution,
+                TIME,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(
+            route_desktop_sync_v1(&conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        assert!(!resume_dispatch_is_current_v1(&conn, &bound, &execution).unwrap());
+    }
+
+    #[test]
+    fn retired_execution_is_typed_reroute_only_after_exact_completed_handoff() {
+        let conn = connection();
+        let active = target("https://dav.example.test/stale-typed-reroute/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        persist_compatible_activation(&conn, &root, "99000000-0000-4000-8000-000000000007");
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+
+        assert_eq!(
+            execute_production_activation_with_webdav_for_execution_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &admitted.execution_binding,
+                TIME,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(
+            route_desktop_sync_v1(&conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        assert_eq!(
+            execute_production_activation_with_webdav_for_execution_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &admitted.execution_binding,
+                TIME,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::StaleRouteAdvanced
+        );
+
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        MigrationStateStoreV1::persist_root_fatal(&mut store, &root, "TEST_FATAL").unwrap();
+        assert_eq!(
+            execute_production_activation_with_webdav_for_execution_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &admitted.execution_binding,
+                TIME,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::RootFrozen
+        );
+    }
+
+    #[test]
+    fn missing_source_owner_without_completed_handoff_fails_closed() {
+        let conn = connection();
+        let active = target("https://dav.example.test/stale-corrupt-owner/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        conn.lock()
+            .unwrap()
+            .execute("DELETE FROM s2_lite_migration_source_owner_v1", [])
+            .unwrap();
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+
+        assert!(execute_production_activation_with_webdav_for_execution_v1(
+            &conn,
+            &paths,
+            &RootExecutionCoordinatorV1::default(),
+            &admitted.execution_binding,
+            TIME,
+        )
+        .is_err());
     }
 }
