@@ -507,8 +507,26 @@ fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitive
     phase_step_budget: u8,
     dispatch: &D,
 ) -> Result<ProductionCoordinatorResultV1> {
+    // This invocation may execute a historical migration for a target that is
+    // no longer active. Retain only its exact, already-validated authority as
+    // handoff evidence. Once that migration finalizes, a fresh SQLite route
+    // for a different active target must terminate this invocation before any
+    // target-specific work can be dispatched.
+    let mut completed_historical_handoff: Option<TargetRootBindingV1> = None;
     for _ in 0..phase_step_budget {
         let bound = load_bound_coordinator_route_v1(conn)?;
+        if bound.historical_migration {
+            completed_historical_handoff = Some(bound.binding.clone());
+        } else if completed_historical_handoff
+            .as_ref()
+            .is_some_and(|historical| {
+                historical.target_id != bound.binding.target_id
+                    || historical.target_epoch != bound.binding.target_epoch
+                    || historical.physical_root_id != bound.binding.physical_root_id
+            })
+        {
+            return Ok(ProductionCoordinatorResultV1::TargetChanged);
+        }
         if bound
             .finalized_historical_binding
             .as_ref()
@@ -756,6 +774,44 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+    }
+
+    fn persist_compatible_activation(conn: &Mutex<Connection>, root_id: &str, activation_id: &str) {
+        let mut store = SqliteS2LiteStoreV1::open(conn, root_id).unwrap();
+        let migration = MigrationStateStoreV1::load(&mut store, root_id)
+            .unwrap()
+            .unwrap();
+        let fingerprint = migration.snapshot.unwrap().legacy_fingerprint;
+        let mut cutover = create_activation_cutover_state_v1();
+        cutover.remote_s2_activated = true;
+        cutover
+            .verified_activation_evidence
+            .push(VerifiedActivationEvidenceV1 {
+                path: format!("activations/{activation_id}.json"),
+                activation_id: activation_id.to_string(),
+                content_hash: "e".repeat(64),
+                exact_bytes_hash: "e".repeat(64),
+                legacy_fingerprint: Some(fingerprint.clone()),
+            });
+        cutover.fingerprint_consistency = ActivationFingerprintConsistencyV1::Consistent {
+            legacy_fingerprint: Some(fingerprint),
+        };
+        MigrationStateStoreV1::persist_cutover_state(&mut store, root_id, &cutover).unwrap();
+    }
+
+    fn admit_empty_historical_migration(
+        conn: &Mutex<Connection>,
+        target: &SyncTarget,
+    ) -> crate::s2_lite::durable_persistence::MigrationAdmissionResultV1 {
+        admit_and_capture_migration_v1(
+            conn,
+            &target.id,
+            1,
+            "98000000-0000-4000-8000-000000000001",
+            "98000000-0000-4000-8000-000000000002",
+            TIME,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1192,5 +1248,35 @@ mod tests {
                 .physical_root_id,
             root_id
         );
+    }
+
+    #[test]
+    fn historical_finalization_stops_before_fresh_legacy_target_work() {
+        let conn = connection();
+        let first = target("https://dav.example.test/post-final-a/", "alice");
+        let second = target("https://dav.example.test/post-final-b/", "bob");
+        set_active(&conn, &first, vec![first.clone(), second.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &first);
+        set_active(&conn, &second, vec![first, second.clone()], 2);
+        persist_compatible_activation(
+            &conn,
+            &admitted.execution_binding.physical_root_id,
+            "98000000-0000-4000-8000-000000000003",
+        );
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        let dispatch = ObservingProductionDispatchV1::new(None);
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                4,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::TargetChanged
+        );
+        assert_eq!(dispatch.observed(), vec![ObservedPrimitiveV1::Activation]);
     }
 }
