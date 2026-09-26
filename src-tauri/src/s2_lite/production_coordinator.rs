@@ -721,7 +721,8 @@ mod tests {
     };
     use crate::s2_lite::bootstrap_execution::{
         execute_production_activation_with_webdav_for_execution_v1,
-        execute_production_activation_with_webdav_v1, execute_production_bootstrap_with_factory_v1,
+        execute_production_activation_with_webdav_v1,
+        execute_production_bootstrap_with_factory_for_execution_v1,
         execute_production_bootstrap_with_webdav_for_execution_v1,
     };
     use crate::s2_lite::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
@@ -816,13 +817,14 @@ mod tests {
             conn: &Mutex<Connection>,
             _: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
-            _: &MigrationExecutionBindingV1,
+            expected_execution: &MigrationExecutionBindingV1,
             time: &str,
         ) -> Result<BootstrapExecutionResultV1> {
             let remote = Arc::clone(&self.remote);
-            let result = execute_production_bootstrap_with_factory_v1(
+            let result = execute_production_bootstrap_with_factory_for_execution_v1(
                 conn,
                 coordinator,
+                expected_execution,
                 |binding| {
                     Ok(Some(HistoricalWebDavCredentialsV1 {
                         canonical_url: binding.canonical_url.clone(),
@@ -2088,6 +2090,29 @@ mod tests {
             )
             .unwrap(),
             ActivationExecutionResultV1::StaleRouteAdvanced
+        );
+        assert_eq!(
+            execute_production_bootstrap_with_factory_for_execution_v1(
+                &conn,
+                &RootExecutionCoordinatorV1::default(),
+                &admitted.execution_binding,
+                |binding| {
+                    Ok(Some(HistoricalWebDavCredentialsV1 {
+                        canonical_url: binding.canonical_url.clone(),
+                        username: binding.normalized_account.clone(),
+                        password: "test".into(),
+                    }))
+                },
+                |binding, _| {
+                    Ok(BootstrapRemoteV1 {
+                        root_id: binding.physical_root_id.clone(),
+                        state: Arc::new(Mutex::new(BootstrapRemoteStateV1::default())),
+                    })
+                },
+                TIME,
+            )
+            .unwrap(),
+            BootstrapExecutionResultV1::StaleRouteAdvanced
         );
 
         let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();

@@ -411,6 +411,30 @@ where
     )
 }
 
+#[cfg(test)]
+pub(crate) fn execute_production_bootstrap_with_factory_for_execution_v1<R, L, F>(
+    conn: &Mutex<Connection>,
+    coordinator: &RootExecutionCoordinatorV1,
+    expected_execution: &MigrationExecutionBindingV1,
+    load_historical_credentials: L,
+    build_remote: F,
+    verified_at_diagnostic: &str,
+) -> Result<BootstrapExecutionResultV1>
+where
+    R: ImmutableObjectRemoteV1,
+    L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
+    F: FnOnce(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
+{
+    execute_production_bootstrap_with_factory_inner_v1(
+        conn,
+        coordinator,
+        Some(expected_execution),
+        load_historical_credentials,
+        build_remote,
+        verified_at_diagnostic,
+    )
+}
+
 /// Executes at most one production activation recovery step for the migration
 /// bound to the database-wide historical source owner. It never performs the
 /// later local completion/cutover bookkeeping.
