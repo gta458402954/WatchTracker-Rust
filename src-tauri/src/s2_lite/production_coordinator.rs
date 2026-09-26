@@ -762,6 +762,10 @@ mod tests {
     #[test]
     fn typed_execution_classifications_are_not_collapsed_to_pending() {
         assert_eq!(
+            map_lifecycle_result_v1(DesktopS2LifecycleResultV1::SuccessNoOp),
+            ProductionCoordinatorResultV1::Success
+        );
+        assert_eq!(
             map_lifecycle_result_v1(DesktopS2LifecycleResultV1::PendingRemoteIndeterminate),
             ProductionCoordinatorResultV1::RemoteIndeterminate
         );
@@ -796,6 +800,74 @@ mod tests {
         assert_eq!(
             map_activation_result_v1(ActivationExecutionResultV1::RemoteAuthOrCapabilityBlocked),
             Some(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked)
+        );
+    }
+
+    #[test]
+    fn production_entrypoint_returns_legacy_and_frozen_terminals_without_remote_work() {
+        let conn = connection();
+        let active = target("https://dav.example.test/coordinator-entry/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        assert_eq!(
+            run_production_sync_coordinator_step_with_budget_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::LegacyS1Required
+        );
+
+        let bound = resolve_active_target_root_binding_v1(&conn, &active.id, 1).unwrap();
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &bound.binding.physical_root_id).unwrap();
+        MigrationStateStoreV1::persist_root_fatal(
+            &mut store,
+            &bound.binding.physical_root_id,
+            "COORDINATOR_ENTRY_FATAL",
+        )
+        .unwrap();
+        assert_eq!(
+            run_production_sync_coordinator_step_with_budget_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::ReadOnlyFrozen
+        );
+    }
+
+    #[test]
+    fn positive_budget_pending_keeps_durable_migration_resumable() {
+        let conn = connection();
+        let active = target("https://dav.example.test/coordinator-budget/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+        // The admitted empty source is at the activation boundary. With no
+        // credential, the real production wrapper is locally resumable; the
+        // positive budget is consumed without manufacturing a fatal state.
+        assert_eq!(
+            run_production_sync_coordinator_step_with_budget_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        let resumed = admit_migration_from_production_coordinator_v1(&conn).unwrap();
+        assert_eq!(resumed.execution_binding, admitted.execution_binding);
+        assert_eq!(
+            load_bound_coordinator_route_v1(&conn).unwrap().route,
+            DesktopSyncRouteV1::ResumeActivation
         );
     }
 }
