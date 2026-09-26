@@ -1547,6 +1547,115 @@ fn load_exact_completed_migration_writer_from(
     Ok(state)
 }
 
+fn has_root_bound_commit_receipt_from(
+    conn: &Connection,
+    root_id: &str,
+    expected: &CommitRef,
+) -> Result<bool> {
+    let mut statement = database(conn.prepare(
+        "SELECT remote_path FROM s2_lite_published_receipt_v1
+         WHERE root_id=?1 AND receipt_kind='commit' ORDER BY remote_path",
+    ))?;
+    let rows = database(statement.query_map([root_id], |row| row.get::<_, String>(0)))?;
+    let paths = database(rows.collect::<std::result::Result<Vec<_>, _>>())?;
+    paths.into_iter().try_fold(false, |found, path| {
+        Ok(found
+            || load_commit_receipt_from(conn, root_id, &path)?
+                .is_some_and(|receipt| receipt.commit_ref == *expected))
+    })
+}
+
+/// Once the finalization transaction has installed the exact migration writer
+/// seed, ordinary S2 completion is allowed to advance that same writer. A
+/// later normal-route admission therefore verifies continuity, not the stale
+/// handoff snapshot. The exact check above remains mandatory for the one
+/// finalization admission that still carries the historical execution binding.
+fn load_continued_completed_migration_writer_from(
+    conn: &Connection,
+    migration: &MigrationStateV1,
+    root_id: &str,
+) -> Result<DesktopRootStateV1> {
+    let Some((writer_id, initial_writer_head, minimum_next_sequence)) =
+        completed_migration_writer_seed(migration, root_id)?
+    else {
+        return Err(STORE_CORRUPTION);
+    };
+    let bytes = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?
+    .ok_or(STORE_CORRUPTION)?;
+    let state: DesktopRootStateV1 = decode(&bytes)?;
+    validate_desktop_root_state(&state, root_id)?;
+    if state.local_writer_id != writer_id || state.next_writer_sequence < minimum_next_sequence {
+        return Err(STORE_CORRUPTION);
+    }
+    if state.writer_head == initial_writer_head
+        && state.next_writer_sequence == minimum_next_sequence
+    {
+        return Ok(state);
+    }
+
+    // A reservation is the only legal pre-receipt continuation. It retains
+    // the prior head and advances the next sequence exactly once for the
+    // durable unfinished batch it created.
+    let unfinished = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?
+    .map(|bytes| {
+        let batch: OutboundBatchV1 = decode(&bytes)?;
+        validate_outbound_batch(&batch, root_id)?;
+        Ok(batch)
+    })
+    .transpose()?;
+    if let Some(batch) = unfinished.filter(|batch| !batch.bookkeeping_completed) {
+        let predecessor_is_verified = match batch.previous_writer_ref.as_ref() {
+            None => initial_writer_head.is_none(),
+            Some(head) => {
+                initial_writer_head.as_ref() == Some(head)
+                    || has_root_bound_commit_receipt_from(conn, root_id, head)?
+            }
+        };
+        if predecessor_is_verified
+            && state.writer_head == batch.previous_writer_ref
+            && batch.writer_id == writer_id
+            && batch.writer_sequence.checked_add(1) == Some(state.next_writer_sequence)
+        {
+            return Ok(state);
+        }
+    }
+
+    // Once completion advances the head, the matching root-bound verified
+    // receipt is the durable proof that this is a lawful continuation rather
+    // than a stale whole-object write or arbitrary writer mutation.
+    let Some(head) = state.writer_head.as_ref() else {
+        return Err(STORE_CORRUPTION);
+    };
+    let head_sequence = head
+        .writer_seq
+        .parse::<u64>()
+        .map_err(|_| STORE_CORRUPTION)?;
+    if head.writer_id != writer_id
+        || head_sequence.checked_add(1) != Some(state.next_writer_sequence)
+    {
+        return Err(STORE_CORRUPTION);
+    }
+    if has_root_bound_commit_receipt_from(conn, root_id, head)? {
+        Ok(state)
+    } else {
+        Err(STORE_CORRUPTION)
+    }
+}
+
 fn load_frozen_migration_execution_from(
     conn: &Connection,
     migration: &MigrationStateV1,
@@ -2296,7 +2405,15 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 if execution.migration_id != migration.migration_id {
                     return Err(STORE_CORRUPTION);
                 }
-                load_exact_completed_migration_writer_from(&transaction, &migration, root_id)?
+                if expected_migration_binding.is_some() {
+                    load_exact_completed_migration_writer_from(&transaction, &migration, root_id)?
+                } else {
+                    load_continued_completed_migration_writer_from(
+                        &transaction,
+                        &migration,
+                        root_id,
+                    )?
+                }
             }
             None => {
                 if owner.is_some() {

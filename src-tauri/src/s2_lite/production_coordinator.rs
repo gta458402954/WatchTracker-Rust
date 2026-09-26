@@ -28,7 +28,8 @@ use super::migration_admission::capture_production_legacy_snapshot_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
 use super::outbound_freeze::{freeze_active_outbound_v1, OutboundFreezeResultV1};
 use super::outbound_publish::{
-    publish_frozen_outbound_batch_with_webdav_v1, OutboundPublishResultV1,
+    publish_frozen_outbound_batch_with_factory_v1, HistoricalWebDavCredentialsV1,
+    OutboundPublishResultV1,
 };
 use super::root_coordinator::RootExecutionCoordinatorV1;
 use super::target_root_binding::{
@@ -323,40 +324,6 @@ pub fn admit_migration_from_production_coordinator_v1(
     )
 }
 
-fn webdav_remote_for_binding_v1(
-    conn: &Mutex<Connection>,
-    paths: &crate::app_paths::AppPaths,
-    binding: &TargetRootBindingV1,
-) -> Result<Option<WebDavS2RemoteV1>> {
-    let Some(credentials) = ({
-        let mut guard = conn.lock().map_err(|_| COORDINATOR_FAILURE)?;
-        crate::sync_targets::historical_request_credentials(&mut guard, paths, &binding.target_id)
-            .map_err(|_| COORDINATOR_FAILURE)?
-    }) else {
-        return Ok(None);
-    };
-    let root = webdav_root_v1(&credentials.0, &credentials.1).map_err(|_| COORDINATOR_FAILURE)?;
-    if root.canonical_url != binding.canonical_url
-        || root.normalized_account != binding.normalized_account
-        || root.physical_root_id != binding.physical_root_id
-    {
-        return Err(COORDINATOR_FAILURE);
-    }
-    WebDavS2RemoteV1::new(WebDavS2ConfigV1 {
-        root: WebDavRootV1 {
-            canonical_url: binding.canonical_url.clone(),
-            normalized_account: binding.normalized_account.clone(),
-            physical_root_id: binding.physical_root_id.clone(),
-        },
-        username: credentials.1,
-        password: credentials.2.to_string(),
-        proxy: None,
-        timeout: Duration::from_secs(30),
-    })
-    .map(Some)
-    .map_err(|_| COORDINATOR_FAILURE)
-}
-
 fn map_lifecycle_result_v1(result: DesktopS2LifecycleResultV1) -> ProductionCoordinatorResultV1 {
     match result {
         DesktopS2LifecycleResultV1::SuccessSynced | DesktopS2LifecycleResultV1::SuccessNoOp => {
@@ -438,17 +405,24 @@ fn map_activation_result_v1(
     }
 }
 
-fn run_one_normal_s2_cycle_v1(
+fn run_one_normal_s2_cycle_with_factory_v1<R, L, F>(
     conn: &Mutex<Connection>,
-    paths: &crate::app_paths::AppPaths,
     coordinator: &RootExecutionCoordinatorV1,
     binding: &TargetRootBindingV1,
     budgets: &DiscoveryBudgetsV1,
     diagnostic_time: &str,
-) -> Result<ProductionCoordinatorResultV1> {
-    let Some(mut remote) = webdav_remote_for_binding_v1(conn, paths, binding)? else {
+    mut load_credentials: L,
+    mut build_remote: F,
+) -> Result<ProductionCoordinatorResultV1>
+where
+    R: ImmutableObjectRemoteV1 + super::remote_discovery::DiscoveryRemoteV1,
+    L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
+    F: FnMut(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
+{
+    let Some(credentials) = load_credentials(binding)? else {
         return Ok(ProductionCoordinatorResultV1::Pending);
     };
+    let mut remote = build_remote(binding, credentials.clone())?;
     let lifecycle_binding = DesktopS2RootBindingV1 {
         target_id: binding.target_id.clone(),
         target_epoch: binding.target_epoch,
@@ -483,11 +457,14 @@ fn run_one_normal_s2_cycle_v1(
         diagnostic_time,
     )? {
         OutboundFreezeResultV1::Frozen { batch, .. } => Ok(map_outbound_publish_v1(
-            publish_frozen_outbound_batch_with_webdav_v1(
+            publish_frozen_outbound_batch_with_factory_v1(
                 conn,
-                paths,
                 coordinator,
                 &batch,
+                |_| Ok(Some(credentials.clone())),
+                |publish_binding, publish_credentials| {
+                    build_remote(publish_binding, publish_credentials)
+                },
                 diagnostic_time,
             )?,
         )),
@@ -500,6 +477,61 @@ fn run_one_normal_s2_cycle_v1(
             Ok(ProductionCoordinatorResultV1::Conflicts)
         }
     }
+}
+
+fn run_one_normal_s2_cycle_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    binding: &TargetRootBindingV1,
+    budgets: &DiscoveryBudgetsV1,
+    diagnostic_time: &str,
+) -> Result<ProductionCoordinatorResultV1> {
+    run_one_normal_s2_cycle_with_factory_v1(
+        conn,
+        coordinator,
+        binding,
+        budgets,
+        diagnostic_time,
+        |binding| {
+            let mut guard = conn.lock().map_err(|_| COORDINATOR_FAILURE)?;
+            let credentials = crate::sync_targets::historical_request_credentials(
+                &mut guard,
+                paths,
+                &binding.target_id,
+            )
+            .map_err(|_| COORDINATOR_FAILURE)?;
+            Ok(credentials.map(|(canonical_url, username, password)| {
+                HistoricalWebDavCredentialsV1 {
+                    canonical_url,
+                    username,
+                    password: password.to_string(),
+                }
+            }))
+        },
+        |binding, credentials| {
+            let root = webdav_root_v1(&credentials.canonical_url, &credentials.username)
+                .map_err(|_| COORDINATOR_FAILURE)?;
+            if root.canonical_url != binding.canonical_url
+                || root.normalized_account != binding.normalized_account
+                || root.physical_root_id != binding.physical_root_id
+            {
+                return Err(COORDINATOR_FAILURE);
+            }
+            WebDavS2RemoteV1::new(WebDavS2ConfigV1 {
+                root: WebDavRootV1 {
+                    canonical_url: binding.canonical_url.clone(),
+                    normalized_account: binding.normalized_account.clone(),
+                    physical_root_id: binding.physical_root_id.clone(),
+                },
+                username: credentials.username,
+                password: credentials.password,
+                proxy: None,
+                timeout: Duration::from_secs(30),
+            })
+            .map_err(|_| COORDINATOR_FAILURE)
+        },
+    )
 }
 
 // This deliberately-private seam owns no authority.  In particular, route
@@ -753,7 +785,7 @@ pub fn run_production_sync_coordinator_step_v1(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Barrier, Mutex};
 
     use rusqlite::Connection;
 
@@ -769,10 +801,22 @@ mod tests {
         execute_production_bootstrap_with_factory_for_execution_v1,
         execute_production_bootstrap_with_webdav_for_execution_v1,
     };
+    use crate::s2_lite::business_projection::apply_complete_projection_v1;
+    use crate::s2_lite::durable_persistence::{
+        DurableMaterializedProjectionV1, SqliteS2LiteStoreV1,
+    };
     use crate::s2_lite::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
+    use crate::s2_lite::materialized_projection::{
+        MaterializedProjectionStateV1, MaterializedProjectionStatusV1,
+    };
     use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
     use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
     use crate::s2_lite::outbound_publish::HistoricalWebDavCredentialsV1;
+    use crate::s2_lite::remote_discovery::{
+        create_discovery_state_v1, DirectoryListResultV1, DiscoveryExactGetResultV1,
+        DiscoveryRemoteV1,
+    };
+    use crate::sync_staging::stage_entity_upsert;
     use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
 
     const TIME: &str = "2026-09-26T00:00:00.000Z";
@@ -821,6 +865,165 @@ mod tests {
             state.put_calls += 1;
             state.objects.insert(path.to_string(), bytes.to_vec());
             RemotePutResultV1::Indeterminate
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum NormalRemoteGetModeV1 {
+        Exact,
+        Indeterminate,
+        AuthOrCapabilityBlocked,
+    }
+
+    struct NormalRemoteStateV1 {
+        objects: BTreeMap<String, Vec<u8>>,
+        listings: BTreeMap<String, Vec<String>>,
+        events: Vec<String>,
+        put_calls: usize,
+        list_indeterminate: bool,
+        old_intent_path: String,
+        old_intent_get_mode: NormalRemoteGetModeV1,
+        old_intent_get_calls: usize,
+    }
+
+    impl NormalRemoteStateV1 {
+        fn exact(old_intent_path: String, old_intent_bytes: Vec<u8>) -> Self {
+            let mut objects = BTreeMap::new();
+            objects.insert(old_intent_path.clone(), old_intent_bytes);
+            let parts = old_intent_path.split('/').collect::<Vec<_>>();
+            assert!(parts.len() >= 5 && parts[0] == "writers" && parts[2] == "segments");
+            let writer = parts[1];
+            let segment = parts[3];
+            let writer_directory = format!("writers/{writer}/");
+            let segment_directory = format!("writers/{writer}/segments/{segment}/");
+            let mut listings = BTreeMap::new();
+            listings.insert("activations/".into(), vec![]);
+            listings.insert("writers/".into(), vec![writer_directory]);
+            listings.insert(
+                format!("writers/{writer}/segments/"),
+                vec![segment_directory.clone()],
+            );
+            listings.insert(segment_directory, vec![old_intent_path.clone()]);
+            Self {
+                objects,
+                listings,
+                events: vec![],
+                put_calls: 0,
+                list_indeterminate: false,
+                old_intent_path,
+                old_intent_get_mode: NormalRemoteGetModeV1::Exact,
+                old_intent_get_calls: 0,
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct NormalRemoteV1 {
+        root_id: String,
+        state: Arc<Mutex<NormalRemoteStateV1>>,
+    }
+
+    impl ImmutableObjectRemoteV1 for NormalRemoteV1 {
+        fn physical_root_id(&self) -> Option<&str> {
+            Some(&self.root_id)
+        }
+
+        fn execution_context_identity(&self) -> u64 {
+            402
+        }
+
+        fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
+            let mut state = self.state.lock().unwrap();
+            state.events.push(format!("get:{path}"));
+            if path == state.old_intent_path {
+                state.old_intent_get_calls += 1;
+                // Discovery validates the candidate before lifecycle recovery.
+                // Script the recovery observation only after that exact GET.
+                if state.old_intent_get_calls == 1 {
+                    return state.objects.get(path).cloned().map_or(
+                        RemoteExactGetResultV1::DefinitelyAbsent,
+                        RemoteExactGetResultV1::DefinitelyPresent,
+                    );
+                }
+                return match state.old_intent_get_mode {
+                    NormalRemoteGetModeV1::Exact => state.objects.get(path).cloned().map_or(
+                        RemoteExactGetResultV1::DefinitelyAbsent,
+                        RemoteExactGetResultV1::DefinitelyPresent,
+                    ),
+                    NormalRemoteGetModeV1::Indeterminate => RemoteExactGetResultV1::Indeterminate,
+                    NormalRemoteGetModeV1::AuthOrCapabilityBlocked => {
+                        RemoteExactGetResultV1::AuthOrCapabilityFailure
+                    }
+                };
+            }
+            state.objects.get(path).cloned().map_or(
+                RemoteExactGetResultV1::DefinitelyAbsent,
+                RemoteExactGetResultV1::DefinitelyPresent,
+            )
+        }
+
+        fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
+            let mut state = self.state.lock().unwrap();
+            state.events.push(format!("put:{path}"));
+            state.put_calls += 1;
+            state.objects.insert(path.to_string(), bytes.to_vec());
+            let parts = path.split('/').collect::<Vec<_>>();
+            if parts.len() >= 5 && parts[0] == "writers" && parts[2] == "segments" {
+                let writer = parts[1];
+                let segment = parts[3];
+                let writer_directory = format!("writers/{writer}/");
+                let segment_directory = format!("writers/{writer}/segments/{segment}/");
+                let writer_entries = state.listings.entry("writers/".into()).or_default();
+                if !writer_entries.contains(&writer_directory) {
+                    writer_entries.push(writer_directory);
+                    writer_entries.sort();
+                }
+                let segment_entries = state
+                    .listings
+                    .entry(format!("writers/{writer}/segments/"))
+                    .or_default();
+                if !segment_entries.contains(&segment_directory) {
+                    segment_entries.push(segment_directory.clone());
+                    segment_entries.sort();
+                }
+                let object_entries = state.listings.entry(segment_directory).or_default();
+                if !object_entries.contains(&path.to_string()) {
+                    object_entries.push(path.to_string());
+                    object_entries.sort();
+                }
+            }
+            // Model a response lost after the immutable object reached the
+            // provider. The approved immutable publisher must GET-verify it.
+            RemotePutResultV1::Indeterminate
+        }
+    }
+
+    impl DiscoveryRemoteV1 for NormalRemoteV1 {
+        fn list_directory(&mut self, path: &str) -> DirectoryListResultV1 {
+            let mut state = self.state.lock().unwrap();
+            state.events.push(format!("list:{path}"));
+            if state.list_indeterminate {
+                DirectoryListResultV1::Indeterminate
+            } else {
+                DirectoryListResultV1::Entries(
+                    state.listings.get(path).cloned().unwrap_or_default(),
+                )
+            }
+        }
+
+        fn get_exact(&mut self, path: &str) -> DiscoveryExactGetResultV1 {
+            match ImmutableObjectRemoteV1::get_exact(self, path) {
+                RemoteExactGetResultV1::DefinitelyPresent(bytes) => {
+                    DiscoveryExactGetResultV1::DefinitelyPresent(bytes)
+                }
+                RemoteExactGetResultV1::DefinitelyAbsent => {
+                    DiscoveryExactGetResultV1::DefinitelyAbsent
+                }
+                RemoteExactGetResultV1::Indeterminate => DiscoveryExactGetResultV1::Indeterminate,
+                RemoteExactGetResultV1::AuthOrCapabilityFailure => {
+                    DiscoveryExactGetResultV1::AuthOrCapabilityFailure
+                }
+            }
         }
     }
 
@@ -923,6 +1126,98 @@ mod tests {
                 run_one_normal_s2_cycle_v1(conn, paths, coordinator, binding, budgets, time);
             self.observe(ObservedPrimitiveV1::Normal);
             result
+        }
+    }
+
+    /// This dispatch substitutes only the remote constructor.  Its normal-S2
+    /// arm calls the same private production cycle used by the WebDAV path;
+    /// routing, discovery/replay, freeze, publication, receipts, and result
+    /// classification are deliberately not test-controlled.
+    struct DeterministicNormalDispatchV1 {
+        remote: Arc<Mutex<NormalRemoteStateV1>>,
+        normal_calls: Mutex<usize>,
+        before_normal: Option<Arc<Barrier>>,
+    }
+
+    impl DeterministicNormalDispatchV1 {
+        fn new(remote: Arc<Mutex<NormalRemoteStateV1>>) -> Self {
+            Self {
+                remote,
+                normal_calls: Mutex::new(0),
+                before_normal: None,
+            }
+        }
+
+        fn concurrently_started(remote: Arc<Mutex<NormalRemoteStateV1>>) -> Self {
+            Self {
+                remote,
+                normal_calls: Mutex::new(0),
+                before_normal: Some(Arc::new(Barrier::new(2))),
+            }
+        }
+
+        fn normal_calls(&self) -> usize {
+            *self.normal_calls.lock().unwrap()
+        }
+    }
+
+    impl CoordinatorPrimitiveDispatchV1 for DeterministicNormalDispatchV1 {
+        fn execute_bootstrap(
+            &self,
+            _: &Mutex<Connection>,
+            _: &crate::app_paths::AppPaths,
+            _: &RootExecutionCoordinatorV1,
+            _: &MigrationExecutionBindingV1,
+            _: &str,
+        ) -> Result<BootstrapExecutionResultV1> {
+            Err(COORDINATOR_FAILURE)
+        }
+
+        fn execute_activation(
+            &self,
+            _: &Mutex<Connection>,
+            _: &crate::app_paths::AppPaths,
+            _: &RootExecutionCoordinatorV1,
+            _: &MigrationExecutionBindingV1,
+            _: &str,
+        ) -> Result<ActivationExecutionResultV1> {
+            Err(COORDINATOR_FAILURE)
+        }
+
+        fn execute_normal_s2(
+            &self,
+            conn: &Mutex<Connection>,
+            _: &crate::app_paths::AppPaths,
+            coordinator: &RootExecutionCoordinatorV1,
+            binding: &TargetRootBindingV1,
+            budgets: &DiscoveryBudgetsV1,
+            time: &str,
+        ) -> Result<ProductionCoordinatorResultV1> {
+            if let Some(barrier) = &self.before_normal {
+                barrier.wait();
+            }
+            *self.normal_calls.lock().unwrap() += 1;
+            let remote = Arc::clone(&self.remote);
+            run_one_normal_s2_cycle_with_factory_v1(
+                conn,
+                coordinator,
+                binding,
+                budgets,
+                time,
+                |candidate| {
+                    Ok(Some(HistoricalWebDavCredentialsV1 {
+                        canonical_url: candidate.canonical_url.clone(),
+                        username: candidate.normalized_account.clone(),
+                        password: "test".into(),
+                    }))
+                },
+                |candidate, _| {
+                    Ok(NormalRemoteV1 {
+                        root_id: candidate.physical_root_id.clone(),
+                        state: Arc::clone(&remote),
+                    })
+                },
+            )
         }
     }
 
@@ -1149,6 +1444,384 @@ mod tests {
             TIME,
         )
         .unwrap()
+    }
+
+    fn normal_record_value(id: &str, name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "originalName": name,
+            "chineseName": "",
+            "progress": "",
+            "totalEpisodes": 1,
+            "episodeTrackingEnabled": false,
+            "nextEpisode": null,
+            "movieProgress": null,
+            "movieDuration": null,
+            "releaseYear": null,
+            "posterPath": null,
+            "status": "未看",
+            "platform": "",
+            "rating": null,
+            "startDate": null,
+            "endDate": null,
+            "notes": "",
+            "createdAt": TIME,
+            "updatedAt": null,
+            "imdbId": null,
+            "isLocked": false,
+            "genres": null,
+            "originCountry": null,
+            "imdbRating": null,
+            "tmdbStatus": null,
+            "interestLevel": null,
+            "episodeRuntime": null,
+            "mediaType": "剧集",
+            "contentTags": null,
+            "tmdbMediaKind": null,
+            "tmdbId": null,
+            "tmdbParentId": null,
+            "tmdbSeasonNumber": null,
+            "seriesRecordKind": null,
+            "rev": 1,
+            "revActor": "local"
+        })
+    }
+
+    /// Produces an already-normal durable root with one actual frozen batch
+    /// and later local work on a different entity. Recovery of the first
+    /// batch must complete before the coordinator can freeze that successor.
+    fn prepare_normal_recovery_fixture_v1(
+        conn: &Mutex<Connection>,
+        active: &SyncTarget,
+    ) -> (
+        String,
+        super::super::durable_persistence::OutboundBatchV1,
+        super::super::immutable_publish::PreparedIntentV1,
+    ) {
+        let admitted = admit_empty_historical_migration(conn, active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        persist_compatible_activation(conn, &root, "79000000-0000-4000-8000-000000000001");
+        assert_eq!(
+            execute_production_activation_with_webdav_for_execution_v1(
+                conn,
+                &normal_paths(),
+                &RootExecutionCoordinatorV1::default(),
+                &admitted.execution_binding,
+                TIME,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(
+            route_desktop_sync_v1(conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        let mut store = SqliteS2LiteStoreV1::open(conn, &root).unwrap();
+        if store.load_discovery_state().unwrap().is_none() {
+            assert!(store
+                .compare_and_swap_discovery_state(None, &create_discovery_state_v1())
+                .unwrap());
+        }
+        let discovery_generation = store
+            .load_discovery_state()
+            .unwrap()
+            .unwrap()
+            .storage_generation;
+        let prior_projection = store.load_materialized_projection().unwrap();
+        let projection_generation = prior_projection
+            .as_ref()
+            .map_or(1, |value| value.projection_generation + 1);
+        let root_safety_generation = MigrationStateStoreV1::load_root_safety(&mut store, &root)
+            .unwrap()
+            .generation;
+        let projection = DurableMaterializedProjectionV1 {
+            projection_version: 1,
+            physical_root_id: root.clone(),
+            projection_generation,
+            source_discovery_generation: discovery_generation,
+            source_root_safety_generation: root_safety_generation,
+            replay_input_fingerprint: "a".repeat(64),
+            business_projection_applied_generation: None,
+            state: MaterializedProjectionStateV1 {
+                state_version: 1,
+                status: MaterializedProjectionStatusV1::Complete,
+                basis_clock: vec![],
+                entities: vec![],
+                relation_blocked_entity_keys: vec![],
+                replay_input_fingerprint: "a".repeat(64),
+            },
+        };
+        assert!(store
+            .compare_and_swap_materialized_projection(
+                prior_projection
+                    .as_ref()
+                    .map(|value| value.projection_generation),
+                &projection,
+            )
+            .unwrap());
+        store
+            .update_materialized_projection_generation(projection_generation)
+            .unwrap();
+        apply_complete_projection_v1(&mut store, projection_generation).unwrap();
+        let _ = store;
+
+        stage_entity_upsert(
+            &conn.lock().unwrap(),
+            "record",
+            "normal-coordinator-record",
+            normal_record_value("normal-coordinator-record", "first local value"),
+            1,
+        )
+        .unwrap();
+        let (batch, intent) = match freeze_active_outbound_v1(conn, &active.id, 1, TIME).unwrap() {
+            OutboundFreezeResultV1::Frozen { batch, intent } => (*batch, *intent),
+            other => panic!("expected initial frozen batch, got {other:?}"),
+        };
+        // This later local write has its own causal base. Completion of the
+        // old batch can acknowledge the old capture without consuming it.
+        stage_entity_upsert(
+            &conn.lock().unwrap(),
+            "record",
+            "normal-coordinator-successor",
+            normal_record_value("normal-coordinator-successor", "successor local value"),
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            route_desktop_sync_v1(conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        (root, batch, intent)
+    }
+
+    fn normal_paths() -> crate::app_paths::AppPaths {
+        crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap()
+    }
+
+    fn run_normal_coordinator_v1(
+        conn: &Mutex<Connection>,
+        dispatch: &DeterministicNormalDispatchV1,
+    ) -> ProductionCoordinatorResultV1 {
+        run_production_sync_coordinator_step_with_dispatch_v1(
+            conn,
+            &normal_paths(),
+            &RootExecutionCoordinatorV1::default(),
+            &DiscoveryBudgetsV1::default(),
+            1,
+            dispatch,
+        )
+        .unwrap()
+    }
+
+    fn assert_old_batch_remains_the_only_outbound_authority_v1(
+        conn: &Mutex<Connection>,
+        root: &str,
+        old: &super::super::durable_persistence::OutboundBatchV1,
+        old_intent: &super::super::immutable_publish::PreparedIntentV1,
+    ) {
+        let mut store = SqliteS2LiteStoreV1::open(conn, root).unwrap();
+        assert_eq!(
+            store.load_unfinished_outbound_batch().unwrap(),
+            Some(old.clone())
+        );
+        assert!(store
+            .load_prepared_intent(&old_intent.remote_path)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            store
+                .load_desktop_root_state()
+                .unwrap()
+                .unwrap()
+                .next_writer_sequence,
+            old.writer_sequence + 1
+        );
+    }
+
+    #[test]
+    fn coordinator_normal_s2_recovers_old_work_before_freezing_and_publishing_one_successor() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-recovery/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let (root, old_batch, old_intent) = prepare_normal_recovery_fixture_v1(&conn, &active);
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::exact(
+            old_intent.remote_path.clone(),
+            old_intent.exact_bytes.clone(),
+        )));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Success
+        );
+        assert_eq!(dispatch.normal_calls(), 1);
+
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert!(store
+            .load_published_receipt(&old_intent.remote_path)
+            .unwrap()
+            .is_some());
+        let successor = store.load_unfinished_outbound_batch().unwrap().unwrap();
+        assert_ne!(successor.batch_id, old_batch.batch_id);
+        assert!(store
+            .load_published_receipt(&successor.prepared_intent_path)
+            .unwrap()
+            .is_some());
+        let state = remote.lock().unwrap();
+        let old_get = state
+            .events
+            .iter()
+            .position(|event| event == &format!("get:{}", old_intent.remote_path))
+            .unwrap();
+        let successor_put = state
+            .events
+            .iter()
+            .position(|event| event == &format!("put:{}", successor.prepared_intent_path))
+            .unwrap();
+        assert!(old_get < successor_put);
+        assert_eq!(state.put_calls, 1);
+    }
+
+    #[test]
+    fn coordinator_normal_s2_pending_recovery_creates_no_successor_authority() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-pending/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let (root, old_batch, old_intent) = prepare_normal_recovery_fixture_v1(&conn, &active);
+        let mut state = NormalRemoteStateV1::exact(
+            old_intent.remote_path.clone(),
+            old_intent.exact_bytes.clone(),
+        );
+        state.list_indeterminate = true;
+        let remote = Arc::new(Mutex::new(state));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_old_batch_remains_the_only_outbound_authority_v1(
+            &conn,
+            &root,
+            &old_batch,
+            &old_intent,
+        );
+        assert_eq!(remote.lock().unwrap().put_calls, 0);
+    }
+
+    #[test]
+    fn coordinator_normal_s2_indeterminate_recovery_creates_no_successor_authority() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-indeterminate/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let (root, old_batch, old_intent) = prepare_normal_recovery_fixture_v1(&conn, &active);
+        let mut state = NormalRemoteStateV1::exact(
+            old_intent.remote_path.clone(),
+            old_intent.exact_bytes.clone(),
+        );
+        state.old_intent_get_mode = NormalRemoteGetModeV1::Indeterminate;
+        let remote = Arc::new(Mutex::new(state));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::RemoteIndeterminate
+        );
+        assert_old_batch_remains_the_only_outbound_authority_v1(
+            &conn,
+            &root,
+            &old_batch,
+            &old_intent,
+        );
+        assert_eq!(remote.lock().unwrap().put_calls, 0);
+    }
+
+    #[test]
+    fn coordinator_normal_s2_auth_blocked_recovery_creates_no_successor_authority() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-auth/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let (root, old_batch, old_intent) = prepare_normal_recovery_fixture_v1(&conn, &active);
+        let mut state = NormalRemoteStateV1::exact(
+            old_intent.remote_path.clone(),
+            old_intent.exact_bytes.clone(),
+        );
+        state.old_intent_get_mode = NormalRemoteGetModeV1::AuthOrCapabilityBlocked;
+        let remote = Arc::new(Mutex::new(state));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked
+        );
+        assert_old_batch_remains_the_only_outbound_authority_v1(
+            &conn,
+            &root,
+            &old_batch,
+            &old_intent,
+        );
+        assert_eq!(remote.lock().unwrap().put_calls, 0);
+    }
+
+    #[test]
+    fn concurrent_normal_s2_coordinators_share_one_recovery_and_successor_authority() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-concurrent/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let (root, old_batch, old_intent) = prepare_normal_recovery_fixture_v1(&conn, &active);
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::exact(
+            old_intent.remote_path.clone(),
+            old_intent.exact_bytes.clone(),
+        )));
+        let dispatch = DeterministicNormalDispatchV1::concurrently_started(Arc::clone(&remote));
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| run_normal_coordinator_v1(&conn, &dispatch));
+            let second = scope.spawn(|| run_normal_coordinator_v1(&conn, &dispatch));
+            let first = first.join().unwrap();
+            let second = second.join().unwrap();
+            assert!(matches!(
+                first,
+                ProductionCoordinatorResultV1::Success | ProductionCoordinatorResultV1::Pending
+            ));
+            assert!(matches!(
+                second,
+                ProductionCoordinatorResultV1::Success | ProductionCoordinatorResultV1::Pending
+            ));
+            assert!(
+                first == ProductionCoordinatorResultV1::Success
+                    || second == ProductionCoordinatorResultV1::Success
+            );
+        });
+
+        assert_eq!(dispatch.normal_calls(), 2);
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        let successor = store.load_unfinished_outbound_batch().unwrap().unwrap();
+        assert_ne!(successor.batch_id, old_batch.batch_id);
+        assert!(store
+            .load_published_receipt(&successor.prepared_intent_path)
+            .unwrap()
+            .is_some());
+        assert!(store
+            .load_published_receipt(&old_intent.remote_path)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            store
+                .load_desktop_root_state()
+                .unwrap()
+                .unwrap()
+                .next_writer_sequence,
+            old_batch.writer_sequence + 2
+        );
+        assert_eq!(remote.lock().unwrap().put_calls, 1);
+        assert_eq!(
+            store.complete_verified_outbound_batch().unwrap(),
+            super::super::durable_persistence::OutboundCompletionResultV1::Completed
+        );
+        assert_eq!(
+            route_desktop_sync_v1(&conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
     }
 
     #[test]
