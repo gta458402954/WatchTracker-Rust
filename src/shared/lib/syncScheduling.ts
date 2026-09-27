@@ -14,12 +14,14 @@ export function parsePullInterval(value: string | null, fallback = DEFAULT_PULL_
 
 export function classifySyncFailure(error?: string): SyncFailureDisposition {
   const value = error ?? '';
-  if (value.includes('stale_local_snapshot')) return 'stale-local';
+  if (value.includes('stale_local_snapshot') || value.includes('s2_target_changed')) return 'stale-local';
   if (
     value.includes('conditional_write_unsupported')
     || value.includes('conditional_validator_rejected')
     || value.includes('unsupported_remote_schema')
     || value.includes('legacy_remote_changed')
+    || value.includes('s2_read_only_frozen')
+    || value.includes('s2_remote_auth_or_capability_blocked')
     || value.includes('未配置凭据')
     || /HTTP Error:\s*(401|403)\b/.test(value)
   ) return 'blocked';

@@ -15,7 +15,9 @@ import {
   probeSyncTarget as probeSyncTargetWithCreds,
   type SyncTargetProbe,
 } from '../../features/sync/services/legacyImportService.ts';
-import { syncToWebDAV as syncToWebDAVWithCreds } from '../../features/sync/services/syncService.ts';
+import { runDesktopSyncCoordinator } from './database.ts';
+import { runDesktopCoordinatorHandoff } from '../../features/sync/services/desktopCoordinatorService.ts';
+import { syncLegacyS1Cycle } from '../../features/sync/services/syncService.ts';
 import type { SyncResult } from '../../features/sync/services/syncContracts.ts';
 import type { SyncConflictV3 } from './syncMerge';
 
@@ -32,8 +34,11 @@ export async function probeSyncTarget(creds: WebDAVCreds): Promise<SyncTargetPro
 export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<SyncResult> {
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
-  return syncToWebDAVWithCreds(creds, _ignoredRecords, {
-    confirm: message => window.confirm(message),
+  return runDesktopCoordinatorHandoff({
+    runCoordinator: completedLegacyRoute => runDesktopSyncCoordinator(completedLegacyRoute),
+    runLegacyS1Cycle: ticket => syncLegacyS1Cycle(creds, ticket, _ignoredRecords, {
+      confirm: message => window.confirm(message),
+    }),
   });
 }
 
@@ -46,7 +51,10 @@ export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: WatchRecor
 export async function importLegacyChangesToConflictCenter(): Promise<SyncResult> {
   const creds = await getCreds();
   if (!creds) return { ok: false, error: '未配置凭据' };
-  return importLegacyWithCreds(creds);
+  return runDesktopCoordinatorHandoff({
+    runCoordinator: completedLegacyRoute => runDesktopSyncCoordinator(completedLegacyRoute),
+    runLegacyS1Cycle: ticket => importLegacyWithCreds(creds, ticket),
+  });
 }
 
 export async function getSyncConflicts(): Promise<SyncConflictV3[]> {

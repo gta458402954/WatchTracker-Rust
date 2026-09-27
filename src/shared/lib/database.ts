@@ -232,6 +232,25 @@ export interface RemoteUnchangedInput {
   v2SourceFingerprint: string | null;
 }
 
+/** Opaque Rust lifecycle handoff. TypeScript may carry it, never interpret it. */
+export interface LegacyRouteTicketV1 {
+  targetId: string;
+  targetEpoch: number;
+  physicalRootId: string;
+  rootSafetyGeneration: number;
+}
+
+export type DesktopSyncCoordinatorResultV1 =
+  | { kind: 'legacyS1Required'; ticket: LegacyRouteTicketV1 }
+  | { kind: 'success' }
+  | { kind: 'pending' }
+  | { kind: 'remoteIndeterminate' }
+  | { kind: 'remoteAuthOrCapabilityBlocked' }
+  | { kind: 'conflicts' }
+  | { kind: 'targetChanged' }
+  | { kind: 'readOnlyFrozen' }
+  | { kind: 'internalFailure' };
+
 export async function getSyncSnapshot(): Promise<SyncSnapshot> {
   return invoke('get_sync_snapshot');
 }
@@ -248,12 +267,12 @@ export async function recordSyncFailure(code: string, nextAttemptAt: string | nu
   return invoke('record_sync_failure', { code, nextAttemptAt, targetId, targetEpoch });
 }
 
-export async function recordSyncRemoteUnchanged(input: RemoteUnchangedInput): Promise<SyncRuntimeState> {
-  return invoke('record_sync_remote_unchanged', { input });
+export async function recordSyncRemoteUnchanged(input: RemoteUnchangedInput, legacyRouteTicket: LegacyRouteTicketV1): Promise<SyncRuntimeState> {
+  return invoke('record_sync_remote_unchanged', { input, legacyRouteTicket });
 }
 
-export async function commitSyncResult(input: SyncCommitInput): Promise<SyncCommitResult> {
-  return invoke('commit_sync_result', { input });
+export async function commitSyncResult(input: SyncCommitInput, legacyRouteTicket: LegacyRouteTicketV1): Promise<SyncCommitResult> {
+  return invoke('commit_sync_result', { input, legacyRouteTicket });
 }
 
 export async function prepareSyncPublishIntent(input: {
@@ -263,9 +282,12 @@ export async function prepareSyncPublishIntent(input: {
   previousCommitId: string | null;
   expectedGeneration: number;
   payloadFingerprint: string;
-}): Promise<SyncPublishIntent> {
-  return invoke('prepare_sync_publish_intent', { input });
+}, legacyRouteTicket: LegacyRouteTicketV1): Promise<SyncPublishIntent> {
+  return invoke('prepare_sync_publish_intent', { input, legacyRouteTicket });
 }
+
+export const runDesktopSyncCoordinator = (completedLegacyRoute: LegacyRouteTicketV1 | null = null): Promise<DesktopSyncCoordinatorResultV1> =>
+  invoke('run_desktop_sync_coordinator', { completedLegacyRoute });
 
 export type SyncConflictResolution = 'local' | 'remote' | 'keep' | 'delete';
 

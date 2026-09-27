@@ -29,6 +29,9 @@ function safeFailureCode(error?: string): string {
     'conditional_validator_rejected',
     'unsupported_remote_schema', 'legacy_remote_changed',
     'episode_sync_upgrade_required', 'episode_completion_conflict',
+    's2_pending', 's2_remote_indeterminate',
+    's2_remote_auth_or_capability_blocked', 's2_target_changed',
+    's2_read_only_frozen', 's2_internal_failure', 's2_legacy_s1_required',
   ].find(code => value.includes(code));
   if (known) return known;
   const http = value.match(/HTTP Error:\s*(\d{3})/);
@@ -83,10 +86,24 @@ export function useSyncCoordinator(
     syncInFlightRef.current = task;
     try {
       const result = await task;
-      if (result.ok) {
+      if (result.ok || result.reloadRecords) {
         lastNotifiedErrorRef.current = null;
         await reloadRecords();
         const runtime = await refreshSyncRuntime();
+        if (!result.ok) {
+          const disposition = classifySyncFailure(result.error);
+          const nextAttemptAt = disposition === 'stale-local'
+            ? null
+            : disposition === 'retry'
+              ? nextRetryAt(runtime.scheduler.consecutiveFailures + 1, Date.now(), Math.random() * 0.4 - 0.2)
+              : null;
+          const updated = await recordSyncFailure(safeFailureCode(result.error), nextAttemptAt, runtime.targetId, runtime.targetEpoch);
+          updateRuntime(updated);
+          if (!manual) notifyBackgroundFailure(result.error);
+          if (disposition === 'stale-local') queueAutomaticRef.current('retry', 250);
+          if (nextAttemptAt) queueAutomaticRef.current('retry', Math.max(0, Date.parse(nextAttemptAt) - Date.now()));
+          return result;
+        }
         if (result.conflictCount && !manual) {
           onBackgroundError?.(`云端核对完成，有 ${result.conflictCount} 项冲突需要在设置中选择。`);
         }

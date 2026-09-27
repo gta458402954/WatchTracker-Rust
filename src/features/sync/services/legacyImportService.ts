@@ -3,6 +3,7 @@ import {
   commitSyncResult,
   getSettingAsync,
   getSyncSnapshot,
+  type LegacyRouteTicketV1,
 } from '../../../shared/lib/database.ts';
 import { parseSyncPayloadV3, syncValuesEqual, type SyncConflictV3 } from '../../../shared/lib/syncMerge.ts';
 import { legacyPayload } from '../domain/syncPayload.ts';
@@ -56,7 +57,8 @@ export function createLegacyImportService(dependencies: Partial<LegacyImportDepe
   return {
     probeSyncTarget: (creds: WebDAVCreds) => probeWithDependencies(creds, deps),
     loadFromWebDAV: (creds: WebDAVCreds) => loadWithDependencies(creds, deps),
-    importLegacyChangesToConflictCenter: (creds: WebDAVCreds) => importWithDependencies(creds, deps),
+    importLegacyChangesToConflictCenter: (creds: WebDAVCreds, legacyRouteTicket: LegacyRouteTicketV1) =>
+      importWithDependencies(creds, legacyRouteTicket, deps),
     getSyncConflicts: async () => (await deps.database.getSyncSnapshot()).conflicts,
     clearResolvedSyncConflicts: async (_records: WatchRecord[]) => {
       void _records;
@@ -77,7 +79,11 @@ async function loadWithDependencies(creds: WebDAVCreds, deps: LegacyImportDepend
   } catch (error) { return { ok: false, error: String(error) }; }
 }
 
-async function importWithDependencies(creds: WebDAVCreds, deps: LegacyImportDependencies): Promise<SyncResult> {
+async function importWithDependencies(
+  creds: WebDAVCreds,
+  legacyRouteTicket: LegacyRouteTicketV1,
+  deps: LegacyImportDependencies,
+): Promise<SyncResult> {
   const proxy = await deps.database.getSettingAsync('network_proxy');
   try {
     const snapshot = await deps.database.getSyncSnapshot();
@@ -147,7 +153,7 @@ async function importWithDependencies(creds: WebDAVCreds, deps: LegacyImportDepe
       lastCommit: { revision: v3.revision, commitId: v3.commitId, committedAt: v3.committedAt },
       v2SourceFingerprint: fingerprint,
       acknowledgeOutbox: false,
-    });
+    }, legacyRouteTicket);
     return { ok: true, records: snapshot.records, conflicts, conflictCount: imported.length };
   } catch (error) { return syncError(error); }
 }
@@ -160,6 +166,10 @@ export async function loadFromWebDAV(creds: WebDAVCreds, dependencies?: Partial<
   return loadWithDependencies(creds, { ...defaultDependencies, ...dependencies });
 }
 
-export async function importLegacyChangesToConflictCenter(creds: WebDAVCreds, dependencies?: Partial<LegacyImportDependencies>) {
-  return importWithDependencies(creds, { ...defaultDependencies, ...dependencies });
+export async function importLegacyChangesToConflictCenter(
+  creds: WebDAVCreds,
+  legacyRouteTicket: LegacyRouteTicketV1,
+  dependencies?: Partial<LegacyImportDependencies>,
+) {
+  return importWithDependencies(creds, legacyRouteTicket, { ...defaultDependencies, ...dependencies });
 }

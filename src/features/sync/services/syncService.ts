@@ -7,6 +7,7 @@ import {
   recordSyncRemoteUnchanged,
   setSettingAsync,
   type SyncSnapshot,
+  type LegacyRouteTicketV1,
 } from '../../../shared/lib/database.ts';
 import {
   emptySyncPayload,
@@ -102,6 +103,7 @@ async function finishRemoteUnchanged(
   creds: WebDAVCreds,
   proxy: string | null,
   storedConditionalEtag: string,
+  legacyRouteTicket: LegacyRouteTicketV1,
 ): Promise<SyncResult> {
   const legacyFingerprint = await checkLegacyRemote(
     deps, creds, proxy, snapshot.v2SourceFingerprint,
@@ -112,7 +114,7 @@ async function finishRemoteUnchanged(
     expectedGeneration: snapshot.recordsGeneration,
     expectedRemoteEtag: storedConditionalEtag,
     v2SourceFingerprint: legacyFingerprint,
-  });
+  }, legacyRouteTicket);
   return {
     ok: true,
     records: snapshot.records,
@@ -126,6 +128,7 @@ async function syncWithDependencies(
   creds: WebDAVCreds,
   _ignoredRecords: WatchRecord[] | undefined,
   deps: SyncServiceDependencies,
+  legacyRouteTicket: LegacyRouteTicketV1,
 ): Promise<SyncResult> {
   void _ignoredRecords;
   const proxy = await deps.database.getSettingAsync('network_proxy');
@@ -154,7 +157,7 @@ async function syncWithDependencies(
         );
         if (davEtag === storedConditionalEtag) {
           console.info('[sync] clean preflight: PROPFIND same validator');
-          return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag);
+          return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag, legacyRouteTicket);
         }
         if (davEtag) {
           console.info('[sync] clean preflight: PROPFIND changed');
@@ -169,7 +172,7 @@ async function syncWithDependencies(
           const rangeEtag = rangeProbeEtag(rangeResponse);
           if (rangeEtag === storedConditionalEtag) {
             console.info('[sync] clean preflight: RANGE same validator');
-            return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag);
+            return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag, legacyRouteTicket);
           }
           if (rangeEtag) {
             console.info('[sync] clean preflight: RANGE changed');
@@ -198,7 +201,7 @@ async function syncWithDependencies(
       if (v3Response.status === 304) {
         if (!storedConditionalEtag || !useConditionalGetFallback) throw new Error('HTTP Error: 304');
         console.info('[sync] clean preflight: HTTP conditional fallback 304');
-        return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag);
+        return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag, legacyRouteTicket);
       } else if (v3Response.status === 200) {
         try {
           validator = await conditionalValidatorForResource(v3Response, creds, proxy, V3_RESOURCE, deps.transport);
@@ -209,7 +212,7 @@ async function syncWithDependencies(
         }
         if (storedConditionalEtag && validator?.etag === storedConditionalEtag) {
           console.info('[sync] clean preflight: HTTP 200 same validator');
-          return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag);
+          return await finishRemoteUnchanged(snapshot, deps, creds, proxy, storedConditionalEtag, legacyRouteTicket);
         }
         remotePayload = parseSyncPayloadV3(v3Response.body);
         remoteSide = sideOfPayload(remotePayload);
@@ -323,7 +326,7 @@ async function syncWithDependencies(
           targetId: snapshot.targetId, targetEpoch: snapshot.targetEpoch, commitId: nextPayload.commitId,
           previousCommitId: remotePayload.commitId || null, expectedGeneration: snapshot.recordsGeneration,
           payloadFingerprint: await contentFingerprint(nextPayload),
-        });
+        }, legacyRouteTicket);
         const put = await deps.transport.request(
           'PUT', creds, proxy, V3_RESOURCE, JSON.stringify(nextPayload),
           !creating && validator?.header === 'if-match' ? validator.etag : null,
@@ -356,7 +359,7 @@ async function syncWithDependencies(
         baseline: confirmedPayload, conflicts: merged.conflicts, remoteEtag: confirmedEtag,
         lastCommit: { revision: confirmedPayload.revision, commitId: confirmedPayload.commitId, committedAt: confirmedPayload.committedAt },
         v2SourceFingerprint: legacyFingerprint, acknowledgeOutbox: true,
-      });
+      }, legacyRouteTicket);
       return { ok: true, records: merged.local.records, conflicts: merged.conflicts, conflictCount: merged.conflicts.length, legacyImported };
     }
     if (rejectedValidatorFingerprints.length === MAX_PRECONDITION_RETRIES && new Set(rejectedValidatorFingerprints).size === 1) {
@@ -371,14 +374,16 @@ async function syncWithDependencies(
 export function createSyncService(dependencies: Partial<SyncServiceDependencies> = {}) {
   const deps = { ...defaultDependencies, ...dependencies };
   return {
-    syncToWebDAV: (creds: WebDAVCreds, ignoredRecords?: WatchRecord[]) => syncWithDependencies(creds, ignoredRecords, deps),
+    syncLegacyS1Cycle: (creds: WebDAVCreds, legacyRouteTicket: LegacyRouteTicketV1, ignoredRecords?: WatchRecord[]) =>
+      syncWithDependencies(creds, ignoredRecords, deps, legacyRouteTicket),
   };
 }
 
-export async function syncToWebDAV(
+export async function syncLegacyS1Cycle(
   creds: WebDAVCreds,
+  legacyRouteTicket: LegacyRouteTicketV1,
   ignoredRecords?: WatchRecord[],
   dependencies?: Partial<SyncServiceDependencies>,
 ) {
-  return createSyncService(dependencies).syncToWebDAV(creds, ignoredRecords);
+  return createSyncService(dependencies).syncLegacyS1Cycle(creds, legacyRouteTicket, ignoredRecords);
 }

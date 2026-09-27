@@ -28,6 +28,16 @@ export function syncFailureMessage(error?: string): string | null {
       return '逐集历史尚未获准升级云端同步格式；本地数据已保留。';
     case 'episode_completion_conflict':
       return '两端为同一集记录了不同完成时间，已停止上传以避免覆盖。';
+    case 's2_target_changed':
+      return '同步目标已切换；本次旧目标同步已停止，将按新目标重新核对。';
+    case 's2_read_only_frozen':
+      return '同步根目录已被冻结为只读保护状态；未执行新的上传。';
+    case 's2_remote_auth_or_capability_blocked':
+      return '远端认证或能力检查未通过；未执行新的上传。';
+    case 's2_remote_indeterminate':
+      return '远端结果暂时无法确认；未创建新的同步提交。';
+    case 's2_pending':
+      return '同步正在等待可恢复的远端步骤完成。';
     case 'collections_sync_upgrade_required':
       return '收藏集尚未获准升级云端同步格式；本地数据已保留。';
     default:

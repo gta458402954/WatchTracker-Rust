@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createWebDavTransport } from '../../../features/sync/infrastructure/webdavTransport.ts';
-import { syncToWebDAV } from '../../../features/sync/services/syncService.ts';
+import { syncLegacyS1Cycle } from '../../../features/sync/services/syncService.ts';
+import { runDesktopCoordinatorHandoff } from '../../../features/sync/services/desktopCoordinatorService.ts';
 
 const now = new Date('2026-08-22T00:00:00.000Z');
 
@@ -39,6 +40,7 @@ test('sync service accepts injected transport/database and preserves create CAS 
   const requests = [];
   const intents = [];
   const commits = [];
+  const guardedTickets = [];
   const database = {
     getSettingAsync: async () => null,
     getSyncSnapshot: async () => ({
@@ -47,9 +49,13 @@ test('sync service accepts injected transport/database and preserves create CAS 
       recordsGeneration: 7, baseline: null, deviceId: 'device-a', conflicts: [], remoteEtag: null,
       lastCommit: null, v2SourceFingerprint: null, outbox: {}, scheduler: {}, staging: {}, publishIntent: null,
     }),
-    prepareSyncPublishIntent: async input => { intents.push(input); return input; },
+    prepareSyncPublishIntent: async (input, legacyRouteTicket) => {
+      intents.push(input); guardedTickets.push(legacyRouteTicket); return input;
+    },
     setSettingAsync: async () => true,
-    commitSyncResult: async input => { commits.push(input); return { recordsGeneration: 8, recordCount: 0 }; },
+    commitSyncResult: async (input, legacyRouteTicket) => {
+      commits.push(input); guardedTickets.push(legacyRouteTicket); return { recordsGeneration: 8, recordCount: 0 };
+    },
   };
   const transport = {
     request: async (method, _creds, _proxy, resource, body, ifMatch, ifNoneMatch) => {
@@ -62,8 +68,10 @@ test('sync service accepts injected transport/database and preserves create CAS 
     },
   };
 
-  const result = await syncToWebDAV(
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  const result = await syncLegacyS1Cycle(
     { username: 'u', password: 'p', url: 'https://example.test/dav/' },
+    ticket,
     undefined,
     { transport, database, now: () => now, uuid: () => 'commit-fixed', confirm: () => true },
   );
@@ -75,4 +83,106 @@ test('sync service accepts injected transport/database and preserves create CAS 
   assert.equal(intents[0].commitId, 'commit-fixed');
   assert.equal(commits[0].remoteEtag, '"created"');
   assert.equal(commits[0].lastCommit.commitId, 'commit-fixed');
+  assert.deepEqual(guardedTickets, [ticket, ticket]);
+});
+
+test('desktop coordinator carries one opaque legacy ticket through S1 then reroutes', async () => {
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  const coordinatorCalls = [];
+  const legacyTickets = [];
+  const result = await runDesktopCoordinatorHandoff({
+    runCoordinator: async completed => {
+      coordinatorCalls.push(completed);
+      return completed === null ? { kind: 'legacyS1Required', ticket } : { kind: 'success' };
+    },
+    runLegacyS1Cycle: async received => {
+      legacyTickets.push(received);
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(legacyTickets, [ticket]);
+  assert.deepEqual(coordinatorCalls, [null, ticket]);
+  assert.equal(result.ok, true);
+  assert.equal(result.coordinatorOutcome, 'success');
+  assert.equal(result.reloadRecords, true);
+});
+
+test('desktop coordinator preserves Rust terminals and never invokes S1 without LegacyS1Required', async () => {
+  for (const [kind, expected] of [
+    ['pending', 'pending'],
+    ['remoteIndeterminate', 'remote-indeterminate'],
+    ['remoteAuthOrCapabilityBlocked', 'remote-auth-or-capability-blocked'],
+    ['conflicts', 'conflicts'],
+    ['targetChanged', 'target-changed'],
+    ['readOnlyFrozen', 'read-only-frozen'],
+    ['internalFailure', 'internal-failure'],
+  ]) {
+    let legacyCalls = 0;
+    const result = await runDesktopCoordinatorHandoff({
+      runCoordinator: async () => ({ kind }),
+      runLegacyS1Cycle: async () => { legacyCalls += 1; return { ok: true }; },
+    });
+    assert.equal(result.coordinatorOutcome, expected, kind);
+    assert.equal(legacyCalls, 0, kind);
+  }
+});
+
+test('stale guarded legacy completion follows Rust TargetChanged without a frontend retry', async () => {
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  let legacyCalls = 0;
+  const result = await runDesktopCoordinatorHandoff({
+    runCoordinator: async completed => completed === null
+      ? { kind: 'legacyS1Required', ticket }
+      : { kind: 'targetChanged' },
+    runLegacyS1Cycle: async received => {
+      legacyCalls += 1;
+      assert.equal(received, ticket);
+      return { ok: true };
+    },
+  });
+  assert.equal(legacyCalls, 1);
+  assert.equal(result.coordinatorOutcome, 'target-changed');
+  assert.equal(result.reloadRecords, true);
+});
+
+test('guarded legacy completion rejection is classified by Rust without a frontend legacy retry', async () => {
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  let coordinatorCalls = 0;
+  const result = await runDesktopCoordinatorHandoff({
+    runCoordinator: async completed => {
+      coordinatorCalls += 1;
+      return completed === null ? { kind: 'legacyS1Required', ticket } : { kind: 'readOnlyFrozen' };
+    },
+    runLegacyS1Cycle: async () => ({ ok: false, error: 's2_legacy_route_root_frozen' }),
+  });
+  assert.equal(coordinatorCalls, 2);
+  assert.equal(result.coordinatorOutcome, 'read-only-frozen');
+});
+
+test('activation during a guarded S1 cycle reroutes once without reusing its ticket', async () => {
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  let legacyCalls = 0;
+  const result = await runDesktopCoordinatorHandoff({
+    runCoordinator: async completed => completed === null
+      ? { kind: 'legacyS1Required', ticket }
+      : { kind: 'pending' },
+    runLegacyS1Cycle: async () => {
+      legacyCalls += 1;
+      return { ok: false, error: 's2_legacy_route_not_admitted' };
+    },
+  });
+  assert.equal(legacyCalls, 1);
+  assert.equal(result.coordinatorOutcome, 'pending');
+});
+
+test('a fresh LegacyS1Required result is deferred to a later invocation', async () => {
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  let legacyCalls = 0;
+  const result = await runDesktopCoordinatorHandoff({
+    runCoordinator: async () => ({ kind: 'legacyS1Required', ticket }),
+    runLegacyS1Cycle: async () => { legacyCalls += 1; return { ok: true }; },
+  });
+  assert.equal(legacyCalls, 1);
+  assert.equal(result.coordinatorOutcome, 'legacy-s1-required');
 });
