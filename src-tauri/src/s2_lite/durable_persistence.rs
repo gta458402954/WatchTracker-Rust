@@ -134,6 +134,14 @@ pub enum LegacyRouteTicketValidationV1 {
     NoLongerLegacy,
 }
 
+/// Transaction-local migration admission outcome for a completed legacy route.
+/// A non-valid ticket is a legal concurrent authority advance, not corruption.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LegacyTicketMigrationAdmissionV1 {
+    Admitted(Box<MigrationAdmissionResultV1>),
+    TicketInvalid(LegacyRouteTicketValidationV1),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LegacyS1PublicationRejectionV1 {
     RootFrozen,
@@ -2166,7 +2174,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         legacy_ticket: Option<&LegacyRouteTicketV1>,
         capture: F,
         create_input: G,
-    ) -> Result<MigrationAdmissionResultV1>
+    ) -> Result<LegacyTicketMigrationAdmissionV1>
     where
         F: FnOnce(&Connection) -> Result<(i64, CapturedLegacySnapshotV1)>,
         G: FnOnce() -> MigrationAdmissionInputV1,
@@ -2178,10 +2186,12 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
         database(install_migration_source_guard_triggers(&transaction))?;
         if let Some(ticket) = legacy_ticket {
-            if validate_legacy_route_ticket_v1(&transaction, ticket)?
-                != LegacyRouteTicketValidationV1::Valid
-            {
-                return Err(STORE_FAILURE);
+            let ticket_outcome = validate_legacy_route_ticket_v1(&transaction, ticket)?;
+            if ticket_outcome != LegacyRouteTicketValidationV1::Valid {
+                database(transaction.commit())?;
+                return Ok(LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                    ticket_outcome,
+                ));
             }
         }
         if let Some(owner) = load_migration_source_owner(&transaction)? {
@@ -2206,11 +2216,13 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 return Err(STORE_CORRUPTION);
             }
             database(transaction.commit())?;
-            return Ok(MigrationAdmissionResultV1 {
-                execution_binding: execution,
-                state,
-                attached_existing: true,
-            });
+            return Ok(LegacyTicketMigrationAdmissionV1::Admitted(Box::new(
+                MigrationAdmissionResultV1 {
+                    execution_binding: execution,
+                    state,
+                    attached_existing: true,
+                },
+            )));
         }
 
         validate_active_migration_binding(&transaction, target_binding, self.root_id)?;
@@ -2289,11 +2301,13 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
             params![self.root_id, execution_binding.migration_id],
         ))?;
         database(transaction.commit())?;
-        Ok(MigrationAdmissionResultV1 {
-            execution_binding,
-            state,
-            attached_existing: false,
-        })
+        Ok(LegacyTicketMigrationAdmissionV1::Admitted(Box::new(
+            MigrationAdmissionResultV1 {
+                execution_binding,
+                state,
+                attached_existing: false,
+            },
+        )))
     }
 
     pub fn migration_source_protected_v1(&self) -> Result<bool> {

@@ -23,8 +23,9 @@ use super::desktop_lifecycle::{
 };
 use super::durable_persistence::{
     capture_legacy_route_ticket_v1, validate_legacy_route_ticket_v1, LegacyRouteTicketV1,
-    LegacyRouteTicketValidationV1, MigrationAdmissionInputV1, MigrationAdmissionResultV1,
-    MigrationExecutionBindingV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
+    LegacyRouteTicketValidationV1, LegacyTicketMigrationAdmissionV1, MigrationAdmissionInputV1,
+    MigrationAdmissionResultV1, MigrationExecutionBindingV1, SqliteS2LiteStoreV1,
+    TargetRootBindingV1,
 };
 use super::migration_admission::capture_production_legacy_snapshot_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
@@ -330,7 +331,7 @@ pub fn admit_migration_from_production_coordinator_v1(
     let (target_id, target_epoch) = active_target_v1(conn)?;
     let binding = resolve_active_target_root_binding_v1(conn, &target_id, target_epoch)?.binding;
     let mut store = SqliteS2LiteStoreV1::open(conn, &binding.physical_root_id)?;
-    store.admit_and_capture_migration_with_input_factory_v1(
+    match store.admit_and_capture_migration_with_input_factory_v1(
         &binding,
         None,
         capture_production_legacy_snapshot_v1,
@@ -340,13 +341,16 @@ pub fn admit_migration_from_production_coordinator_v1(
             migration_writer_id: uuid::Uuid::new_v4().to_string(),
             created_at: diagnostic_now_v1(),
         },
-    )
+    )? {
+        LegacyTicketMigrationAdmissionV1::Admitted(admission) => Ok(*admission),
+        LegacyTicketMigrationAdmissionV1::TicketInvalid(_) => Err(COORDINATOR_FAILURE),
+    }
 }
 
 fn admit_migration_from_completed_legacy_route_v1(
     conn: &Mutex<Connection>,
     ticket: &LegacyRouteTicketV1,
-) -> Result<MigrationAdmissionResultV1> {
+) -> Result<LegacyTicketMigrationAdmissionV1> {
     let binding =
         load_historical_target_root_binding_v1(conn, &ticket.target_id, ticket.target_epoch)?
             .ok_or(COORDINATOR_FAILURE)?;
@@ -878,8 +882,33 @@ pub fn run_desktop_sync_coordinator_with_legacy_route_v1(
                 LegacyRouteTicketValidationV1::Valid => {
                     // The store repeats this validation inside the BEGIN IMMEDIATE
                     // admission transaction before it captures any migration state.
-                    admit_migration_from_completed_legacy_route_v1(conn, ticket)?;
-                    run_production_sync_coordinator_step_v1(conn, paths, coordinator, budgets)?
+                    match admit_migration_from_completed_legacy_route_v1(conn, ticket)? {
+                        LegacyTicketMigrationAdmissionV1::Admitted(_) => {
+                            run_production_sync_coordinator_step_v1(
+                                conn,
+                                paths,
+                                coordinator,
+                                budgets,
+                            )?
+                        }
+                        LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                            LegacyRouteTicketValidationV1::TargetChanged,
+                        ) => ProductionCoordinatorResultV1::TargetChanged,
+                        LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                            LegacyRouteTicketValidationV1::ReadOnlyFrozen,
+                        ) => ProductionCoordinatorResultV1::ReadOnlyFrozen,
+                        LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                            LegacyRouteTicketValidationV1::NoLongerLegacy,
+                        ) => run_production_sync_coordinator_step_v1(
+                            conn,
+                            paths,
+                            coordinator,
+                            budgets,
+                        )?,
+                        LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                            LegacyRouteTicketValidationV1::Valid,
+                        ) => return Err(COORDINATOR_FAILURE),
+                    }
                 }
                 LegacyRouteTicketValidationV1::TargetChanged => {
                     ProductionCoordinatorResultV1::TargetChanged
@@ -936,7 +965,7 @@ mod tests {
         MaterializedProjectionStateV1, MaterializedProjectionStatusV1,
     };
     use crate::s2_lite::migration_admission::admit_and_capture_migration_v1;
-    use crate::s2_lite::migration_orchestration::MigrationStateStoreV1;
+    use crate::s2_lite::migration_orchestration::{MigrationRootFatalV1, MigrationStateStoreV1};
     use crate::s2_lite::outbound_publish::HistoricalWebDavCredentialsV1;
     use crate::s2_lite::remote_discovery::{
         create_discovery_state_v1, DirectoryListResultV1, DiscoveryExactGetResultV1,
@@ -1808,9 +1837,37 @@ mod tests {
                 .is_some()
         );
 
+        // A second caller may have prevalidated this ticket before the first
+        // caller won admission.  Exercise the inner BEGIN IMMEDIATE admission
+        // directly: its transaction-time NoLongerLegacy result remains typed
+        // instead of being collapsed into STORE_FAILURE.
+        assert!(matches!(
+            admit_migration_from_completed_legacy_route_v1(&conn, &ticket).unwrap(),
+            LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                LegacyRouteTicketValidationV1::NoLongerLegacy
+            )
+        ));
+
+        // The Tauri entrypoint converts that invalidated ticket into a fresh
+        // durable reroute, never a generic coordinator failure.
+        assert!(run_desktop_sync_coordinator_with_legacy_route_v1(
+            &conn,
+            &paths,
+            &coordinator,
+            &DiscoveryBudgetsV1::default(),
+            Some(ticket.clone()),
+        )
+        .is_ok());
+
         // A ticket from A cannot be reused after a durable active-target epoch
         // change and therefore cannot create another migration authority.
         set_active(&conn, &target_b, vec![target_a, target_b.clone()], 2);
+        assert!(matches!(
+            admit_migration_from_completed_legacy_route_v1(&conn, &ticket).unwrap(),
+            LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                LegacyRouteTicketValidationV1::TargetChanged
+            )
+        ));
         assert_eq!(
             run_desktop_sync_coordinator_with_legacy_route_v1(
                 &conn,
@@ -1821,6 +1878,57 @@ mod tests {
             )
             .unwrap(),
             DesktopSyncCoordinatorCommandResultV1::TargetChanged
+        );
+    }
+
+    #[test]
+    fn transactionally_invalidated_legacy_ticket_preserves_frozen_terminal() {
+        let conn = connection();
+        let active = target("https://dav.example.test/legacy-ticket-fatal/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let paths = normal_paths();
+        let coordinator = RootExecutionCoordinatorV1::default();
+        let issued = run_desktop_sync_coordinator_with_legacy_route_v1(
+            &conn,
+            &paths,
+            &coordinator,
+            &DiscoveryBudgetsV1::default(),
+            None,
+        )
+        .unwrap();
+        let DesktopSyncCoordinatorCommandResultV1::LegacyS1Required { ticket } = issued else {
+            panic!("expected a legacy route ticket");
+        };
+
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &ticket.physical_root_id).unwrap();
+        let mut safety =
+            MigrationStateStoreV1::load_root_safety(&mut store, &ticket.physical_root_id).unwrap();
+        safety.generation += 1;
+        safety.root_fatal_signals.push(MigrationRootFatalV1 {
+            code: "TEST_TICKET_FATAL".to_string(),
+        });
+        assert!(store
+            .compare_and_swap_root_safety(ticket.root_safety_generation, &safety)
+            .unwrap());
+
+        // The admission transaction rechecks root safety and preserves its
+        // typed frozen terminal instead of reporting a generic store error.
+        assert!(matches!(
+            admit_migration_from_completed_legacy_route_v1(&conn, &ticket).unwrap(),
+            LegacyTicketMigrationAdmissionV1::TicketInvalid(
+                LegacyRouteTicketValidationV1::ReadOnlyFrozen
+            )
+        ));
+        assert_eq!(
+            run_desktop_sync_coordinator_with_legacy_route_v1(
+                &conn,
+                &paths,
+                &coordinator,
+                &DiscoveryBudgetsV1::default(),
+                Some(ticket),
+            )
+            .unwrap(),
+            DesktopSyncCoordinatorCommandResultV1::ReadOnlyFrozen
         );
     }
 
