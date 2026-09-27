@@ -111,6 +111,29 @@ pub enum LegacyS1PublishAdmissionV1<T> {
     RejectedMigrationSourceProtected,
 }
 
+/// A one-cycle, non-authoritative handoff from the Rust lifecycle router to the
+/// legacy S1 caller.  It intentionally contains only durable identities that
+/// must be re-read under the later S1 write transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LegacyRouteTicketV1 {
+    pub target_id: String,
+    pub target_epoch: u64,
+    pub physical_root_id: String,
+    pub root_safety_generation: u64,
+}
+
+/// A ticket is never authority on its own.  This result describes what a fresh
+/// SQLite validation observed, so the coordinator can preserve its public
+/// result taxonomy without treating a stale ticket as permission to mutate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LegacyRouteTicketValidationV1 {
+    Valid,
+    TargetChanged,
+    ReadOnlyFrozen,
+    NoLongerLegacy,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LegacyS1PublicationRejectionV1 {
     RootFrozen,
@@ -1239,6 +1262,83 @@ fn load_root_safety_from(
     Ok(Some(state))
 }
 
+fn validate_legacy_route_ticket_shape_v1(ticket: &LegacyRouteTicketV1) -> Result<()> {
+    if ticket.target_id.is_empty() || ticket.physical_root_id.is_empty() {
+        return Err(STORE_CORRUPTION);
+    }
+    Ok(())
+}
+
+/// Re-reads every authority fact represented by a legacy handoff ticket.  The
+/// caller owns the surrounding SQLite write transaction; in particular, every
+/// S1 mutation calls this after `BEGIN IMMEDIATE` and before its first write.
+pub fn validate_legacy_route_ticket_v1(
+    conn: &Connection,
+    ticket: &LegacyRouteTicketV1,
+) -> Result<LegacyRouteTicketValidationV1> {
+    validate_legacy_route_ticket_shape_v1(ticket)?;
+    let active = crate::sync_targets::active_target(conn).map_err(|_| STORE_FAILURE)?;
+    if !matches!(
+        active,
+        Some((target_id, target_epoch)) if target_id == ticket.target_id && target_epoch == ticket.target_epoch
+    ) {
+        return Ok(LegacyRouteTicketValidationV1::TargetChanged);
+    }
+    let binding = load_target_root_binding_from(conn, &ticket.target_id, ticket.target_epoch)?
+        .ok_or(STORE_CORRUPTION)?;
+    if binding.physical_root_id != ticket.physical_root_id {
+        return Ok(LegacyRouteTicketValidationV1::TargetChanged);
+    }
+    let safety = load_root_safety_from(conn, &ticket.physical_root_id)?.ok_or(STORE_CORRUPTION)?;
+    if !safety.root_fatal_signals.is_empty() {
+        return Ok(LegacyRouteTicketValidationV1::ReadOnlyFrozen);
+    }
+    if safety.generation != ticket.root_safety_generation {
+        return Ok(LegacyRouteTicketValidationV1::NoLongerLegacy);
+    }
+    if load_migration_source_owner(conn)?.is_some() {
+        return Ok(LegacyRouteTicketValidationV1::NoLongerLegacy);
+    }
+    let discovery = load_discovery_state_from(conn, &ticket.physical_root_id)?
+        .map(|value| value.state)
+        .unwrap_or_else(create_discovery_state_v1);
+    if decide_legacy_put_v1(&recover_activation_cutover_v1(
+        &discovery,
+        Some(&safety.cutover_state),
+    )) != LegacyPutDecisionV1::AllowedS2NotActivated
+    {
+        return Ok(LegacyRouteTicketValidationV1::NoLongerLegacy);
+    }
+    Ok(LegacyRouteTicketValidationV1::Valid)
+}
+
+/// Captures a ticket only from a still-current, still-legacy authority state.
+/// It holds `BEGIN IMMEDIATE` while checking the binding and root safety so the
+/// resulting ticket corresponds to one coherent durable snapshot.
+pub fn capture_legacy_route_ticket_v1(
+    conn: &Mutex<Connection>,
+    binding: &TargetRootBindingV1,
+) -> Result<LegacyRouteTicketV1> {
+    validate_target_root_binding(binding)?;
+    let mut guard = conn.lock().map_err(|_| STORE_FAILURE)?;
+    let transaction = database(guard.transaction_with_behavior(TransactionBehavior::Immediate))?;
+    let safety =
+        load_root_safety_from(&transaction, &binding.physical_root_id)?.ok_or(STORE_CORRUPTION)?;
+    let ticket = LegacyRouteTicketV1 {
+        target_id: binding.target_id.clone(),
+        target_epoch: binding.target_epoch,
+        physical_root_id: binding.physical_root_id.clone(),
+        root_safety_generation: safety.generation,
+    };
+    if validate_legacy_route_ticket_v1(&transaction, &ticket)?
+        != LegacyRouteTicketValidationV1::Valid
+    {
+        return Err(STORE_FAILURE);
+    }
+    database(transaction.commit())?;
+    Ok(ticket)
+}
+
 fn strictly_sorted_unique<'a>(values: impl Iterator<Item = &'a str>) -> bool {
     let mut prior: Option<&str> = None;
     for value in values {
@@ -2063,6 +2163,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
     pub fn admit_and_capture_migration_with_input_factory_v1<F, G>(
         &mut self,
         target_binding: &TargetRootBindingV1,
+        legacy_ticket: Option<&LegacyRouteTicketV1>,
         capture: F,
         create_input: G,
     ) -> Result<MigrationAdmissionResultV1>
@@ -2076,6 +2177,13 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         let mut conn = self.connection()?;
         let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
         database(install_migration_source_guard_triggers(&transaction))?;
+        if let Some(ticket) = legacy_ticket {
+            if validate_legacy_route_ticket_v1(&transaction, ticket)?
+                != LegacyRouteTicketValidationV1::Valid
+            {
+                return Err(STORE_FAILURE);
+            }
+        }
         if let Some(owner) = load_migration_source_owner(&transaction)? {
             if owner.root_id != self.root_id {
                 return Err(ROOT_MISMATCH);

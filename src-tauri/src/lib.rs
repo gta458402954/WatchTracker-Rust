@@ -167,6 +167,7 @@ pub fn run() {
             commands::record_sync_remote_unchanged,
             commands::commit_sync_result,
             commands::prepare_sync_publish_intent,
+            commands::run_desktop_sync_coordinator,
             commands::resolve_sync_conflict,
             commands::create_recovery_point,
             commands::list_recovery_points,

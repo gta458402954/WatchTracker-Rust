@@ -11,11 +11,15 @@ use crate::record_validation::prepare_import_batch;
 use crate::recovery_points;
 use crate::sync_staging::{SyncPublishIntent, SyncStaging};
 use chrono::Utc;
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
+
+use crate::s2_lite::durable_persistence::{
+    validate_legacy_route_ticket_v1, LegacyRouteTicketV1, LegacyRouteTicketValidationV1,
+};
 
 const DEVICE_ID_KEY: &str = "sync_device_id_v1";
 const BASELINE_KEY: &str = "sync_v3_baseline";
@@ -27,6 +31,26 @@ const SCHEDULER_KEY: &str = "sync_scheduler_v1";
 
 fn scoped_key(conn: &Connection, legacy: &str, suffix: &str) -> Result<String, AppError> {
     crate::sync_targets::active_key(conn, legacy, suffix)
+}
+
+fn require_legacy_route_ticket(
+    conn: &Connection,
+    ticket: &LegacyRouteTicketV1,
+) -> Result<(), AppError> {
+    match validate_legacy_route_ticket_v1(conn, ticket)
+        .map_err(|_| AppError::General("s2_legacy_route_authority_invalid".into()))?
+    {
+        LegacyRouteTicketValidationV1::Valid => Ok(()),
+        LegacyRouteTicketValidationV1::TargetChanged => {
+            Err(AppError::General("s2_legacy_route_target_changed".into()))
+        }
+        LegacyRouteTicketValidationV1::ReadOnlyFrozen => {
+            Err(AppError::General("s2_legacy_route_root_frozen".into()))
+        }
+        LegacyRouteTicketValidationV1::NoLongerLegacy => {
+            Err(AppError::General("s2_legacy_route_not_admitted".into()))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -430,6 +454,7 @@ pub fn runtime_state(conn: &Connection) -> Result<SyncRuntimeState, AppError> {
     })
 }
 
+#[allow(dead_code)]
 pub fn prepare_publish_intent(
     conn: &Connection,
     input: crate::sync_staging::PreparePublishIntentInput,
@@ -437,6 +462,26 @@ pub fn prepare_publish_intent(
     crate::sync_targets::verify_context(conn, input.target_id.as_deref(), input.target_epoch)?;
     let generation = get_records_generation(conn)?;
     crate::sync_staging::prepare_publish_intent(conn, generation, input)
+}
+
+/// S1 Tauri boundary: the ticket is validated after BEGIN IMMEDIATE and before
+/// the publish-intent row is written.
+pub fn prepare_publish_intent_with_legacy_route_ticket(
+    conn: &mut Connection,
+    input: crate::sync_staging::PreparePublishIntentInput,
+    ticket: &LegacyRouteTicketV1,
+) -> Result<SyncPublishIntent, AppError> {
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    require_legacy_route_ticket(&transaction, ticket)?;
+    crate::sync_targets::verify_context(
+        &transaction,
+        input.target_id.as_deref(),
+        input.target_epoch,
+    )?;
+    let generation = get_records_generation(&transaction)?;
+    let intent = crate::sync_staging::prepare_publish_intent(&transaction, generation, input)?;
+    transaction.commit()?;
+    Ok(intent)
 }
 
 pub fn set_paused(
@@ -477,9 +522,26 @@ pub fn record_failure(
     runtime_state(conn)
 }
 
+#[allow(dead_code)]
 pub fn record_remote_unchanged(
     conn: &mut Connection,
     input: RemoteUnchangedInput,
+) -> Result<SyncRuntimeState, AppError> {
+    record_remote_unchanged_inner(conn, input, None)
+}
+
+pub fn record_remote_unchanged_with_legacy_route_ticket(
+    conn: &mut Connection,
+    input: RemoteUnchangedInput,
+    ticket: &LegacyRouteTicketV1,
+) -> Result<SyncRuntimeState, AppError> {
+    record_remote_unchanged_inner(conn, input, Some(ticket))
+}
+
+fn record_remote_unchanged_inner(
+    conn: &mut Connection,
+    input: RemoteUnchangedInput,
+    ticket: Option<&LegacyRouteTicketV1>,
 ) -> Result<SyncRuntimeState, AppError> {
     crate::sync_targets::verify_context(conn, input.target_id.as_deref(), input.target_epoch)?;
     if input.expected_generation < 0
@@ -488,7 +550,10 @@ pub fn record_remote_unchanged(
         return Err(AppError::General("Invalid remote ETag".to_string()));
     }
 
-    let transaction = conn.transaction()?;
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(ticket) = ticket {
+        require_legacy_route_ticket(&transaction, ticket)?;
+    }
     crate::sync_targets::verify_context(
         &transaction,
         input.target_id.as_deref(),
@@ -564,11 +629,38 @@ fn validate_commit_validator_state(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn commit(
     conn: &mut Connection,
     paths: &AppPaths,
     input: SyncCommitInput,
 ) -> Result<SyncCommitResult, AppError> {
+    commit_inner(conn, paths, input, None)
+}
+
+/// S1 Tauri boundary for a legacy sync result.  Authority is checked again
+/// inside the transaction that applies the local snapshot.
+pub fn commit_with_legacy_route_ticket(
+    conn: &mut Connection,
+    paths: &AppPaths,
+    input: SyncCommitInput,
+    ticket: &LegacyRouteTicketV1,
+) -> Result<SyncCommitResult, AppError> {
+    commit_inner(conn, paths, input, Some(ticket))
+}
+
+fn commit_inner(
+    conn: &mut Connection,
+    paths: &AppPaths,
+    input: SyncCommitInput,
+    ticket: Option<&LegacyRouteTicketV1>,
+) -> Result<SyncCommitResult, AppError> {
+    if let Some(ticket) = ticket {
+        // Avoid even creating a recovery-point side effect for a ticket that is
+        // already stale. The authoritative check is repeated below after the
+        // immediate write transaction begins.
+        require_legacy_route_ticket(conn, ticket)?;
+    }
     crate::sync_targets::verify_context(conn, input.target_id.as_deref(), input.target_epoch)?;
     if input.expected_generation < 0 || get_records_generation(conn)? != input.expected_generation {
         return Err(AppError::General("stale_local_snapshot".to_string()));
@@ -666,7 +758,10 @@ pub fn commit(
     if business_state_changed {
         recovery_points::create(conn, paths, "sync")?;
     }
-    let transaction = conn.transaction()?;
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some(ticket) = ticket {
+        require_legacy_route_ticket(&transaction, ticket)?;
+    }
     crate::sync_targets::verify_context(
         &transaction,
         input.target_id.as_deref(),
@@ -871,10 +966,16 @@ mod tests {
     use crate::db;
     use crate::db_atomic_crud::insert_record_atomic;
     use crate::db_atomic_helpers::set_setting_tx;
+    use crate::s2_lite::durable_persistence::{
+        capture_legacy_route_ticket_v1, LegacyRouteTicketV1,
+    };
+    use crate::s2_lite::target_root_binding::resolve_active_target_root_binding_v1;
     use crate::sync_staging::{get_publish_intent, get_staging, PreparePublishIntentInput};
+    use crate::sync_targets::{self, SyncTarget, SyncTargetRegistry, REGISTRY_KEY};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -957,6 +1058,109 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    fn legacy_ticket(test: &TestDatabase) -> (LegacyRouteTicketV1, SyncTarget) {
+        let normalized_url =
+            sync_targets::normalize_url("https://dav.example.test/legacy-ticket/").unwrap();
+        let target = SyncTarget {
+            id: sync_targets::target_id(&normalized_url, "alice"),
+            normalized_url,
+            username: "alice".into(),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+            last_activated_at: "2026-01-01T00:00:00.000Z".into(),
+        };
+        set_setting_tx(
+            &test.conn,
+            REGISTRY_KEY,
+            &serde_json::to_string(&SyncTargetRegistry {
+                version: 1,
+                active_target_id: Some(target.id.clone()),
+                target_epoch: 1,
+                targets: vec![target.clone()],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let authority = Mutex::new(Connection::open(test.paths.database()).unwrap());
+        let binding = resolve_active_target_root_binding_v1(&authority, &target.id, 1)
+            .unwrap()
+            .binding;
+        (
+            capture_legacy_route_ticket_v1(&authority, &binding).unwrap(),
+            target,
+        )
+    }
+
+    fn switch_target_epoch(test: &TestDatabase, target: &SyncTarget) {
+        set_setting_tx(
+            &test.conn,
+            REGISTRY_KEY,
+            &serde_json::to_string(&SyncTargetRegistry {
+                version: 1,
+                active_target_id: Some(target.id.clone()),
+                target_epoch: 2,
+                targets: vec![target.clone()],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn legacy_ticket_is_checked_inside_every_s1_local_write_transaction() {
+        let mut test = TestDatabase::new("legacy-ticket-guard");
+        let (ticket, target) = legacy_ticket(&test);
+        let mut input = test.input(0);
+        input.target_id = Some(target.id.clone());
+        input.target_epoch = Some(1);
+        let committed =
+            commit_with_legacy_route_ticket(&mut test.conn, &test.paths, input, &ticket).unwrap();
+        assert_eq!(committed.records_generation, 1);
+
+        let intent = prepare_publish_intent_with_legacy_route_ticket(
+            &mut test.conn,
+            PreparePublishIntentInput {
+                target_id: Some(target.id.clone()),
+                target_epoch: Some(1),
+                expected_generation: 1,
+                commit_id: "legacy-ticket-intent".into(),
+                previous_commit_id: None,
+                payload_fingerprint: "f".repeat(64),
+            },
+            &ticket,
+        )
+        .unwrap();
+        assert_eq!(intent.commit_id, "legacy-ticket-intent");
+
+        switch_target_epoch(&test, &target);
+        let before = snapshot(&test.conn).unwrap();
+        let mut stale = test.input(before.records_generation);
+        stale.target_id = Some(target.id.clone());
+        stale.target_epoch = Some(2);
+        assert!(
+            commit_with_legacy_route_ticket(&mut test.conn, &test.paths, stale, &ticket).is_err()
+        );
+        assert_eq!(
+            snapshot(&test.conn).unwrap().records_generation,
+            before.records_generation
+        );
+        assert!(record_remote_unchanged_with_legacy_route_ticket(
+            &mut test.conn,
+            RemoteUnchangedInput {
+                target_id: Some(target.id),
+                target_epoch: Some(2),
+                expected_generation: before.records_generation,
+                expected_remote_etag: "\"etag-1\"".into(),
+                v2_source_fingerprint: None,
+            },
+            &ticket,
+        )
+        .is_err());
+        assert_eq!(
+            snapshot(&test.conn).unwrap().records_generation,
+            before.records_generation
+        );
     }
 
     #[test]

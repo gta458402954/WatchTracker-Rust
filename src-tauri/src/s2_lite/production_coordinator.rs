@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
 use rusqlite::Connection;
+use serde::Serialize;
 
 use super::bootstrap_execution::{
     execute_production_activation_with_webdav_for_execution_v1,
@@ -21,8 +22,9 @@ use super::desktop_lifecycle::{
     DesktopS2RootBindingV1, DesktopSyncRouteV1,
 };
 use super::durable_persistence::{
-    MigrationAdmissionInputV1, MigrationAdmissionResultV1, MigrationExecutionBindingV1,
-    SqliteS2LiteStoreV1, TargetRootBindingV1,
+    capture_legacy_route_ticket_v1, validate_legacy_route_ticket_v1, LegacyRouteTicketV1,
+    LegacyRouteTicketValidationV1, MigrationAdmissionInputV1, MigrationAdmissionResultV1,
+    MigrationExecutionBindingV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
 };
 use super::migration_admission::capture_production_legacy_snapshot_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
@@ -60,6 +62,22 @@ pub struct BoundCoordinatorRouteV1 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProductionCoordinatorResultV1 {
     LegacyS1Required,
+    Success,
+    Pending,
+    RemoteIndeterminate,
+    RemoteAuthOrCapabilityBlocked,
+    Conflicts,
+    TargetChanged,
+    ReadOnlyFrozen,
+    InternalFailure,
+}
+
+/// Tauri-facing coordinator surface.  The ticket is an opaque handoff
+/// expectation, never a grant of routing, writer, or publication authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DesktopSyncCoordinatorCommandResultV1 {
+    LegacyS1Required { ticket: LegacyRouteTicketV1 },
     Success,
     Pending,
     RemoteIndeterminate,
@@ -314,6 +332,31 @@ pub fn admit_migration_from_production_coordinator_v1(
     let mut store = SqliteS2LiteStoreV1::open(conn, &binding.physical_root_id)?;
     store.admit_and_capture_migration_with_input_factory_v1(
         &binding,
+        None,
+        capture_production_legacy_snapshot_v1,
+        || MigrationAdmissionInputV1 {
+            target_binding: binding.clone(),
+            migration_id: uuid::Uuid::new_v4().to_string(),
+            migration_writer_id: uuid::Uuid::new_v4().to_string(),
+            created_at: diagnostic_now_v1(),
+        },
+    )
+}
+
+fn admit_migration_from_completed_legacy_route_v1(
+    conn: &Mutex<Connection>,
+    ticket: &LegacyRouteTicketV1,
+) -> Result<MigrationAdmissionResultV1> {
+    let binding =
+        load_historical_target_root_binding_v1(conn, &ticket.target_id, ticket.target_epoch)?
+            .ok_or(COORDINATOR_FAILURE)?;
+    if binding.physical_root_id != ticket.physical_root_id {
+        return Err(COORDINATOR_FAILURE);
+    }
+    let mut store = SqliteS2LiteStoreV1::open(conn, &binding.physical_root_id)?;
+    store.admit_and_capture_migration_with_input_factory_v1(
+        &binding,
+        Some(ticket),
         capture_production_legacy_snapshot_v1,
         || MigrationAdmissionInputV1 {
             target_binding: binding.clone(),
@@ -780,6 +823,89 @@ pub fn run_production_sync_coordinator_step_v1(
         budgets,
         DEFAULT_PHASE_STEP_BUDGET,
     )
+}
+
+fn command_result_from_production_v1(
+    result: ProductionCoordinatorResultV1,
+    ticket: Option<LegacyRouteTicketV1>,
+) -> Result<DesktopSyncCoordinatorCommandResultV1> {
+    Ok(match result {
+        ProductionCoordinatorResultV1::LegacyS1Required => {
+            DesktopSyncCoordinatorCommandResultV1::LegacyS1Required {
+                ticket: ticket.ok_or(COORDINATOR_FAILURE)?,
+            }
+        }
+        ProductionCoordinatorResultV1::Success => DesktopSyncCoordinatorCommandResultV1::Success,
+        ProductionCoordinatorResultV1::Pending => DesktopSyncCoordinatorCommandResultV1::Pending,
+        ProductionCoordinatorResultV1::RemoteIndeterminate => {
+            DesktopSyncCoordinatorCommandResultV1::RemoteIndeterminate
+        }
+        ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked => {
+            DesktopSyncCoordinatorCommandResultV1::RemoteAuthOrCapabilityBlocked
+        }
+        ProductionCoordinatorResultV1::Conflicts => {
+            DesktopSyncCoordinatorCommandResultV1::Conflicts
+        }
+        ProductionCoordinatorResultV1::TargetChanged => {
+            DesktopSyncCoordinatorCommandResultV1::TargetChanged
+        }
+        ProductionCoordinatorResultV1::ReadOnlyFrozen => {
+            DesktopSyncCoordinatorCommandResultV1::ReadOnlyFrozen
+        }
+        ProductionCoordinatorResultV1::InternalFailure => {
+            DesktopSyncCoordinatorCommandResultV1::InternalFailure
+        }
+    })
+}
+
+/// Tauri boundary for one deterministic coordinator invocation.  A supplied
+/// legacy ticket is revalidated before it can create a migration; all other
+/// routing remains a fresh read of SQLite authority.
+pub fn run_desktop_sync_coordinator_with_legacy_route_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    budgets: &DiscoveryBudgetsV1,
+    completed_legacy_route: Option<LegacyRouteTicketV1>,
+) -> Result<DesktopSyncCoordinatorCommandResultV1> {
+    let production = match completed_legacy_route.as_ref() {
+        Some(ticket) => {
+            let validation = {
+                let guard = conn.lock().map_err(|_| COORDINATOR_FAILURE)?;
+                validate_legacy_route_ticket_v1(&guard, ticket)?
+            };
+            match validation {
+                LegacyRouteTicketValidationV1::Valid => {
+                    // The store repeats this validation inside the BEGIN IMMEDIATE
+                    // admission transaction before it captures any migration state.
+                    admit_migration_from_completed_legacy_route_v1(conn, ticket)?;
+                    run_production_sync_coordinator_step_v1(conn, paths, coordinator, budgets)?
+                }
+                LegacyRouteTicketValidationV1::TargetChanged => {
+                    ProductionCoordinatorResultV1::TargetChanged
+                }
+                LegacyRouteTicketValidationV1::ReadOnlyFrozen => {
+                    ProductionCoordinatorResultV1::ReadOnlyFrozen
+                }
+                LegacyRouteTicketValidationV1::NoLongerLegacy => {
+                    // The ticket has no authority to start anything. A normal
+                    // re-route may still observe already-authoritative work.
+                    run_production_sync_coordinator_step_v1(conn, paths, coordinator, budgets)?
+                }
+            }
+        }
+        None => run_production_sync_coordinator_step_v1(conn, paths, coordinator, budgets)?,
+    };
+    let ticket = if production == ProductionCoordinatorResultV1::LegacyS1Required {
+        let bound = load_bound_coordinator_route_v1(conn)?;
+        if bound.route != DesktopSyncRouteV1::ContinueLegacyS1 || bound.historical_migration {
+            return Err(COORDINATOR_FAILURE);
+        }
+        Some(capture_legacy_route_ticket_v1(conn, &bound.binding)?)
+    } else {
+        None
+    };
+    command_result_from_production_v1(production, ticket)
 }
 
 #[cfg(test)]
@@ -1635,6 +1761,66 @@ mod tests {
                 .unwrap()
                 .next_writer_sequence,
             old.writer_sequence + 1
+        );
+    }
+
+    #[test]
+    fn tauri_legacy_ticket_is_coherent_and_stale_authority_cannot_admit() {
+        let conn = connection();
+        let target_a = target("https://dav.example.test/legacy-ticket-a/", "alice");
+        let target_b = target("https://dav.example.test/legacy-ticket-b/", "bob");
+        set_active(
+            &conn,
+            &target_a,
+            vec![target_a.clone(), target_b.clone()],
+            1,
+        );
+        let paths = normal_paths();
+        let coordinator = RootExecutionCoordinatorV1::default();
+        let issued = run_desktop_sync_coordinator_with_legacy_route_v1(
+            &conn,
+            &paths,
+            &coordinator,
+            &DiscoveryBudgetsV1::default(),
+            None,
+        )
+        .unwrap();
+        let DesktopSyncCoordinatorCommandResultV1::LegacyS1Required { ticket } = issued else {
+            panic!("expected a legacy route ticket");
+        };
+        assert_eq!(ticket.target_id, target_a.id);
+        assert_eq!(ticket.target_epoch, 1);
+        assert!(!ticket.physical_root_id.is_empty());
+
+        // A valid completion ticket creates the one immutable migration
+        // authority before any bootstrap work can be resumed.
+        let progressed = run_desktop_sync_coordinator_with_legacy_route_v1(
+            &conn,
+            &paths,
+            &coordinator,
+            &DiscoveryBudgetsV1::default(),
+            Some(ticket.clone()),
+        );
+        assert!(progressed.is_ok());
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_some()
+        );
+
+        // A ticket from A cannot be reused after a durable active-target epoch
+        // change and therefore cannot create another migration authority.
+        set_active(&conn, &target_b, vec![target_a, target_b.clone()], 2);
+        assert_eq!(
+            run_desktop_sync_coordinator_with_legacy_route_v1(
+                &conn,
+                &paths,
+                &coordinator,
+                &DiscoveryBudgetsV1::default(),
+                Some(ticket),
+            )
+            .unwrap(),
+            DesktopSyncCoordinatorCommandResultV1::TargetChanged
         );
     }
 

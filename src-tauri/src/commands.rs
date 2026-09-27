@@ -7,7 +7,13 @@ use crate::sync_state;
 use serde_json::Value;
 use tauri::State;
 
-use crate::s2_lite::durable_persistence::{LegacyS1PublishAdmissionV1, SqliteS2LiteStoreV1};
+use crate::s2_lite::durable_persistence::{
+    LegacyRouteTicketV1, LegacyS1PublishAdmissionV1, SqliteS2LiteStoreV1,
+};
+use crate::s2_lite::production_coordinator::{
+    run_desktop_sync_coordinator_with_legacy_route_v1, DesktopSyncCoordinatorCommandResultV1,
+};
+use crate::s2_lite::remote_discovery::DiscoveryBudgetsV1;
 use crate::s2_lite::root_coordinator::RootExecutionCoordinatorV1;
 use crate::s2_lite::webdav_adapter::webdav_root_v1;
 
@@ -486,9 +492,14 @@ pub fn record_sync_failure(
 pub fn record_sync_remote_unchanged(
     state: State<DbState>,
     input: sync_state::RemoteUnchangedInput,
+    legacy_route_ticket: LegacyRouteTicketV1,
 ) -> Result<sync_state::SyncRuntimeState, crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
-    sync_state::record_remote_unchanged(&mut conn, input)
+    sync_state::record_remote_unchanged_with_legacy_route_ticket(
+        &mut conn,
+        input,
+        &legacy_route_ticket,
+    )
 }
 
 #[tauri::command]
@@ -496,18 +507,46 @@ pub fn commit_sync_result(
     state: State<DbState>,
     paths: State<AppPaths>,
     input: sync_state::SyncCommitInput,
+    legacy_route_ticket: LegacyRouteTicketV1,
 ) -> Result<sync_state::SyncCommitResult, crate::error::AppError> {
     let mut conn = lock_database(state.inner())?;
-    sync_state::commit(&mut conn, paths.inner(), input)
+    sync_state::commit_with_legacy_route_ticket(
+        &mut conn,
+        paths.inner(),
+        input,
+        &legacy_route_ticket,
+    )
 }
 
 #[tauri::command]
 pub fn prepare_sync_publish_intent(
     state: State<DbState>,
     input: crate::sync_staging::PreparePublishIntentInput,
+    legacy_route_ticket: LegacyRouteTicketV1,
 ) -> Result<crate::sync_staging::SyncPublishIntent, crate::error::AppError> {
-    let conn = lock_database(state.inner())?;
-    sync_state::prepare_publish_intent(&conn, input)
+    let mut conn = lock_database(state.inner())?;
+    sync_state::prepare_publish_intent_with_legacy_route_ticket(
+        &mut conn,
+        input,
+        &legacy_route_ticket,
+    )
+}
+
+#[tauri::command]
+pub fn run_desktop_sync_coordinator(
+    state: State<DbState>,
+    paths: State<AppPaths>,
+    root_coordinator: State<RootExecutionCoordinatorV1>,
+    completed_legacy_route: Option<LegacyRouteTicketV1>,
+) -> Result<DesktopSyncCoordinatorCommandResultV1, crate::error::AppError> {
+    run_desktop_sync_coordinator_with_legacy_route_v1(
+        &state.inner().conn,
+        paths.inner(),
+        root_coordinator.inner(),
+        &DiscoveryBudgetsV1::default(),
+        completed_legacy_route,
+    )
+    .map_err(|error| crate::error::AppError::General(error.0.to_string()))
 }
 
 #[tauri::command]
