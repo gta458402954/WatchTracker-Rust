@@ -1805,14 +1805,9 @@ mod tests {
             .load_published_receipt(&old_intent.remote_path)
             .unwrap()
             .is_some());
-        assert_eq!(
-            store
-                .load_desktop_root_state()
-                .unwrap()
-                .unwrap()
-                .next_writer_sequence,
-            old_batch.writer_sequence + 2
-        );
+        let post_c1 = store.load_desktop_root_state().unwrap().unwrap();
+        assert_eq!(post_c1.writer_head, successor.previous_writer_ref);
+        assert_eq!(post_c1.next_writer_sequence, old_batch.writer_sequence + 2);
         assert_eq!(remote.lock().unwrap().put_calls, 1);
         assert_eq!(
             store.complete_verified_outbound_batch().unwrap(),
@@ -1822,6 +1817,27 @@ mod tests {
             route_desktop_sync_v1(&conn).unwrap(),
             DesktopSyncRouteV1::EnterNormalS2
         );
+        let post_c2 = store.load_desktop_root_state().unwrap().unwrap();
+        assert_eq!(post_c2.writer_head, Some(successor.commit_ref.clone()));
+        assert_eq!(post_c2.next_writer_sequence, successor.writer_sequence + 1);
+
+        // C1's receipt is deliberately retained, but C2 is the durable latest
+        // completed batch. Restoring only C1's formerly-valid root state must
+        // fail before normal routing could dispatch, freeze, or publish.
+        store.persist_desktop_root_state(&post_c1).unwrap();
+        assert!(route_desktop_sync_v1(&conn).is_err());
+        let blocked = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+        assert!(run_production_sync_coordinator_step_with_dispatch_v1(
+            &conn,
+            &normal_paths(),
+            &RootExecutionCoordinatorV1::default(),
+            &DiscoveryBudgetsV1::default(),
+            1,
+            &blocked,
+        )
+        .is_err());
+        assert_eq!(blocked.normal_calls(), 0);
+        assert_eq!(remote.lock().unwrap().put_calls, 1);
     }
 
     #[test]

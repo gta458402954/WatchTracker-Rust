@@ -1600,10 +1600,11 @@ fn load_continued_completed_migration_writer_from(
         return Ok(state);
     }
 
-    // A reservation is the only legal pre-receipt continuation. It retains
-    // the prior head and advances the next sequence exactly once for the
-    // durable unfinished batch it created.
-    let unfinished = database(
+    // There is exactly one durable outbound row per root. It is the latest
+    // writer authority, whether its bookkeeping is still pending or has
+    // completed. Retained historical receipts cannot replace this ordering
+    // evidence.
+    let latest = database(
         conn.query_row(
             "SELECT state_json FROM s2_lite_outbound_batch_v1 WHERE root_id=?1",
             [root_id],
@@ -1617,7 +1618,13 @@ fn load_continued_completed_migration_writer_from(
         Ok(batch)
     })
     .transpose()?;
-    if let Some(batch) = unfinished.filter(|batch| !batch.bookkeeping_completed) {
+
+    let Some(batch) = latest else {
+        return Err(STORE_CORRUPTION);
+    };
+    if !batch.bookkeeping_completed {
+        // A reservation is the only legal pre-receipt continuation. It
+        // retains its exact predecessor head and advances the sequence once.
         let predecessor_is_verified = match batch.previous_writer_ref.as_ref() {
             None => initial_writer_head.is_none(),
             Some(head) => {
@@ -1632,11 +1639,12 @@ fn load_continued_completed_migration_writer_from(
         {
             return Ok(state);
         }
+        return Err(STORE_CORRUPTION);
     }
 
-    // Once completion advances the head, the matching root-bound verified
-    // receipt is the durable proof that this is a lawful continuation rather
-    // than a stale whole-object write or arbitrary writer mutation.
+    // A completed latest batch must remain the exact current head. A receipt
+    // proves publication of this batch, not merely that some older head was
+    // once published.
     let Some(head) = state.writer_head.as_ref() else {
         return Err(STORE_CORRUPTION);
     };
@@ -1644,16 +1652,23 @@ fn load_continued_completed_migration_writer_from(
         .writer_seq
         .parse::<u64>()
         .map_err(|_| STORE_CORRUPTION)?;
-    if head.writer_id != writer_id
+    if batch.commit_ref != *head
+        || batch.writer_id != writer_id
+        || batch.writer_sequence != head_sequence
+        || head.writer_id != writer_id
         || head_sequence.checked_add(1) != Some(state.next_writer_sequence)
     {
         return Err(STORE_CORRUPTION);
     }
-    if has_root_bound_commit_receipt_from(conn, root_id, head)? {
-        Ok(state)
-    } else {
-        Err(STORE_CORRUPTION)
+    let receipt = load_commit_receipt_from(conn, root_id, &batch.prepared_intent_path)?
+        .ok_or(STORE_CORRUPTION)?;
+    if receipt.commit_ref != batch.commit_ref
+        || receipt.remote_path != batch.prepared_intent_path
+        || receipt.prepared_intent_fingerprint != batch.prepared_intent_fingerprint
+    {
+        return Err(STORE_CORRUPTION);
     }
+    Ok(state)
 }
 
 fn load_frozen_migration_execution_from(
