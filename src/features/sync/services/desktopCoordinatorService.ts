@@ -58,7 +58,15 @@ export async function runDesktopCoordinatorHandoff(
     return terminalResult(rerouted.kind);
   }
 
-  const afterLegacy = await dependencies.runCoordinator(initial.ticket);
+  let afterLegacy: DesktopSyncCoordinatorResultV1;
+  try {
+    afterLegacy = await dependencies.runCoordinator(initial.ticket);
+  } catch {
+    return {
+      ...terminalResult('internalFailure'),
+      reloadRecords: true,
+    };
+  }
   if (afterLegacy.kind === 'legacyS1Required') {
     return {
       ok: false,

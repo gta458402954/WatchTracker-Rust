@@ -108,6 +108,31 @@ test('desktop coordinator carries one opaque legacy ticket through S1 then rerou
   assert.equal(result.reloadRecords, true);
 });
 
+test('desktop coordinator reloads after a successful legacy commit when post-commit classification rejects', async () => {
+  const ticket = { targetId: 'target-a', targetEpoch: 7, physicalRootId: 'root-a', rootSafetyGeneration: 3 };
+  let coordinatorCalls = 0;
+  let legacyCalls = 0;
+  const result = await runDesktopCoordinatorHandoff({
+    runCoordinator: async completed => {
+      coordinatorCalls += 1;
+      if (completed === null) return { kind: 'legacyS1Required', ticket };
+      throw new Error('durable coordinator failure');
+    },
+    runLegacyS1Cycle: async received => {
+      legacyCalls += 1;
+      assert.equal(received, ticket);
+      return { ok: true };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.coordinatorOutcome, 'internal-failure');
+  assert.equal(result.error, 's2_internal_failure');
+  assert.equal(result.reloadRecords, true);
+  assert.equal(legacyCalls, 1);
+  assert.equal(coordinatorCalls, 2);
+});
+
 test('desktop coordinator preserves Rust terminals and never invokes S1 without LegacyS1Required', async () => {
   for (const [kind, expected] of [
     ['pending', 'pending'],
