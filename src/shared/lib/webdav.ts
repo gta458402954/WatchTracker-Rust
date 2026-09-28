@@ -32,13 +32,15 @@ export async function probeSyncTarget(creds: WebDAVCreds): Promise<SyncTargetPro
 
 /** Keeps the old ignored-records argument while the service reads its snapshot from Rust. */
 export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<SyncResult> {
-  const creds = await getCreds();
-  if (!creds) return { ok: false, error: '未配置凭据' };
   return runDesktopCoordinatorHandoff({
     runCoordinator: completedLegacyRoute => runDesktopSyncCoordinator(completedLegacyRoute),
-    runLegacyS1Cycle: ticket => syncLegacyS1Cycle(creds, ticket, _ignoredRecords, {
-      confirm: message => window.confirm(message),
-    }),
+    runLegacyS1Cycle: async ticket => {
+      const creds = await getCreds();
+      if (!creds) return { ok: false, error: '未配置凭据' };
+      return syncLegacyS1Cycle(creds, ticket, _ignoredRecords, {
+        confirm: message => window.confirm(message),
+      });
+    },
   });
 }
 
@@ -49,11 +51,13 @@ export async function loadFromWebDAV(): Promise<{ ok: boolean; data?: WatchRecor
 }
 
 export async function importLegacyChangesToConflictCenter(): Promise<SyncResult> {
-  const creds = await getCreds();
-  if (!creds) return { ok: false, error: '未配置凭据' };
   return runDesktopCoordinatorHandoff({
     runCoordinator: completedLegacyRoute => runDesktopSyncCoordinator(completedLegacyRoute),
-    runLegacyS1Cycle: ticket => importLegacyWithCreds(creds, ticket),
+    runLegacyS1Cycle: async ticket => {
+      const creds = await getCreds();
+      if (!creds) return { ok: false, error: '未配置凭据' };
+      return importLegacyWithCreds(creds, ticket);
+    },
   });
 }
 

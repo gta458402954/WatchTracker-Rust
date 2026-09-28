@@ -802,6 +802,35 @@ test('@expected-sync-v3 explicitly imports changed legacy data into the conflict
   expect(JSON.parse(snapshot.settings.sync_v3_conflicts || '[]')).toHaveLength(1);
 });
 
+test('@expected-sync-v3 legacy import refreshes durable state before a rerouted pending terminal', async ({ page }) => {
+  const current = record('legacy-reload', { chineseName: '当前 v3 版本' });
+  const legacy = record('legacy-reload', { chineseName: '旧版设备修改' });
+  await setupMockIpc(page, {
+    records: [current],
+    settings: {
+      webdav_creds: 'encrypted:fixture-user:fixture-password',
+      webdav_url: 'https://mock.invalid/dav/',
+      sync_v3_baseline: JSON.stringify(v3Payload([current])),
+      sync_v2_source_fingerprint: '"legacy-older"',
+    },
+    webdavRemote: [legacy],
+    webdavV3Remote: v3Payload([current]),
+    coordinatorAfterLegacyResult: 'pending',
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: /检查并导入旧版/ }).click();
+
+  await expect(page.getByText(/云端：旧版设备修改/)).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  const committedAt = snapshot.calls.findIndex(call => call.command === 'commit_sync_result');
+  expect(committedAt).toBeGreaterThanOrEqual(0);
+  expect(snapshot.calls.findIndex((call, index) => index > committedAt && call.command === 'get_all_records')).toBeGreaterThan(committedAt);
+  expect(snapshot.calls.findIndex((call, index) => index > committedAt && call.command === 'get_sync_snapshot')).toBeGreaterThan(committedAt);
+});
+
 test('@conditional-watchlist-boundary local export and import preserve region fields', async ({ page }) => {
   const original = record('本地往返', {
     originCountry: 'GB, XX, CN',

@@ -6,7 +6,6 @@ import {
   type SyncRuntimeState,
 } from '../../../shared/lib/database';
 import {
-  hasCreds,
   syncFailureMessage,
   syncToWebDAV,
   type SyncResult,
@@ -147,7 +146,7 @@ export function useSyncCoordinator(
   const runAutomatic = useCallback(async (trigger: AutomaticTrigger) => {
     try {
       const runtime = await refreshSyncRuntime();
-      if (runtime.scheduler.paused || !await hasCreds()) return;
+      if (runtime.scheduler.paused) return;
       const retryFixedConditionalWriteOnStartup = trigger === 'startup'
         && ['conditional_write_unsupported', 'conditional_validator_rejected']
           .includes(runtime.scheduler.lastErrorCode ?? '');
@@ -221,7 +220,7 @@ export function useSyncCoordinator(
     if (startedRef.current) return;
     startedRef.current = true;
     const runtime = await refreshSyncRuntime();
-    if (!runtime.scheduler.paused && await hasCreds()) {
+    if (!runtime.scheduler.paused) {
       queueAutomatic('startup', runtime.outbox.pending ? 0 : 3000);
     }
     periodicTimerRef.current = setInterval(() => void checkPeriodicPull(), 30_000);
@@ -263,7 +262,7 @@ export function useSyncCoordinator(
 
   const notifySyncConfigurationChanged = useCallback(async () => {
     const runtime = await refreshSyncRuntime();
-    if (!runtime.scheduler.paused && await hasCreds()) queueAutomatic('resume', 0, true);
+    if (!runtime.scheduler.paused) queueAutomatic('resume', 0, true);
   }, [queueAutomatic, refreshSyncRuntime]);
 
   return {

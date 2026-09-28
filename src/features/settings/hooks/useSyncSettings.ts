@@ -66,7 +66,16 @@ export function useSyncSettings(options: Options) {
   async function handleImportLegacyChanges() {
     if (!confirm('此操作只会把旧版 records.json 的差异加入冲突中心，不会直接覆盖本机或 v3 云端数据。继续吗？')) return;
     setSyncStatus('正在读取旧版云端数据...');
-    try { const result = await importLegacyChangesToConflictCenter(); if (!result.ok) { showFailure('Settings.ImportLegacySync', '读取旧版云端数据', result.error, setSyncStatus); return; } setSyncConflicts(await clearResolvedSyncConflicts([])); setSyncStatus(result.conflictCount ? `⚠️ 已加入 ${result.conflictCount} 项旧版差异，请在冲突中心选择。` : '✅ 旧版云端数据与 v3 无差异。'); }
+    try {
+      const result = await importLegacyChangesToConflictCenter();
+      if (result.reloadRecords) {
+        await onDatabaseRestored();
+        setSyncConflicts(await clearResolvedSyncConflicts([]));
+      }
+      if (!result.ok) { showFailure('Settings.ImportLegacySync', '读取旧版云端数据', result.error, setSyncStatus); return; }
+      setSyncConflicts(await clearResolvedSyncConflicts([]));
+      setSyncStatus(result.conflictCount ? `⚠️ 已加入 ${result.conflictCount} 项旧版差异，请在冲突中心选择。` : '✅ 旧版云端数据与 v3 无差异。');
+    }
     catch (error) { showFailure('Settings.ImportLegacySync', '读取旧版云端数据', error, setSyncStatus); }
   }
   async function handleImport() {

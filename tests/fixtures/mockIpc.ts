@@ -50,6 +50,8 @@ export interface MockIpcOptions {
   exportBackupResult?: string | null;
   failExportBackup?: boolean;
   exportBackupDelayMs?: number;
+  coordinatorInitialResult?: 'success' | 'pending' | 'remoteIndeterminate' | 'remoteAuthOrCapabilityBlocked' | 'conflicts' | 'targetChanged' | 'readOnlyFrozen' | 'internalFailure';
+  coordinatorAfterLegacyResult?: 'success' | 'pending' | 'remoteIndeterminate' | 'remoteAuthOrCapabilityBlocked' | 'conflicts' | 'targetChanged' | 'readOnlyFrozen' | 'internalFailure';
 }
 
 export interface MockSnapshot {
@@ -76,7 +78,7 @@ declare global {
 
 export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
   await page.addInitScript(
-    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbDetailErrors, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavGetEtag, webdavPropfindEtag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavConditionalGet, webdavPropfindStatus, webdavRangeStatus, webdavRangeEtag, webdavRangeContentRange, webdavRangeBodyLength, omitConditionalGetEtag, mutateLocalDuringConditionalGet, mutateLocalDuringPropfind, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites, exportBackupResult, failExportBackup, exportBackupDelayMs }) => {
+    ({ records, episodeCompletions: initialEpisodeCompletions, collections: initialCollections, collectionMembers: initialCollectionMembers, failRecordLoads, settings, tmdbSearchResults, tmdbDetail, tmdbDetails, tmdbDetailErrors, tmdbSeasonDetails, tmdbDelayMs, updateFailureCounts, webdavRemote, webdavV3Remote, webdavV3Etag, webdavGetEtag, webdavPropfindEtag, webdavPreconditionFailures, rotateEtagOnPreconditionFailure, mutateLocalDuringPut, omitPutEtag, omitGetEtag, webdavConditionalGet, webdavPropfindStatus, webdavRangeStatus, webdavRangeEtag, webdavRangeContentRange, webdavRangeBodyLength, omitConditionalGetEtag, mutateLocalDuringConditionalGet, mutateLocalDuringPropfind, webdavFailureStatus, webdavFailureCount, databaseCompatibilityIssue, recoveryPoints, failSettingWrites, exportBackupResult, failExportBackup, exportBackupDelayMs, coordinatorInitialResult, coordinatorAfterLegacyResult }) => {
       const controlledRecords = sessionStorage.getItem('__WATCHTRACKER_CONTROLLED_RECORDS__');
       const controlledRuntime = sessionStorage.getItem('__WATCHTRACKER_SYNC_RUNTIME__');
       const restoredRuntime = controlledRuntime ? JSON.parse(controlledRuntime) as {
@@ -810,6 +812,12 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             }
             case 'run_desktop_sync_coordinator': {
               requireKeys(command, args, ['completedLegacyRoute']);
+              if (args.completedLegacyRoute === null && coordinatorInitialResult) {
+                return { kind: coordinatorInitialResult };
+              }
+              if (args.completedLegacyRoute !== null && coordinatorAfterLegacyResult) {
+                return { kind: coordinatorAfterLegacyResult };
+              }
               if (args.completedLegacyRoute === null) {
                 return { kind: 'legacyS1Required', ticket: structuredClone(legacyRouteTicket) };
               }
@@ -1078,6 +1086,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       exportBackupResult: options.exportBackupResult === undefined ? 'C:\\Users\\tester\\Documents\\影视追踪_2026-08-30_003523.json' : options.exportBackupResult,
       failExportBackup: options.failExportBackup ?? false,
       exportBackupDelayMs: options.exportBackupDelayMs ?? 0,
+      coordinatorInitialResult: options.coordinatorInitialResult,
+      coordinatorAfterLegacyResult: options.coordinatorAfterLegacyResult,
     },
   );
 }
