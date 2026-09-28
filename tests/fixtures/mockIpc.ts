@@ -100,6 +100,12 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
       let recordsGeneration = restoredRuntime?.recordsGeneration ?? 0;
       let activeTargetId: string | null = snapshot.settings.webdav_creds ? 'a'.repeat(64) : null;
       let targetEpoch = activeTargetId ? 1 : 0;
+      const legacyRouteTicket = {
+        targetId: 'a'.repeat(64),
+        targetEpoch: 1,
+        physicalRootId: 'mock-webdav-root-v1',
+        rootSafetyGeneration: 0,
+      };
       const outbox: SyncOutboxState = (() => {
         if (restoredRuntime) return structuredClone(restoredRuntime.outbox);
         try { return JSON.parse(snapshot.settings.sync_outbox_v1 || 'null') || {
@@ -201,6 +207,12 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
         const expected = [...required].sort();
         if (JSON.stringify(actual) !== JSON.stringify(expected)) {
           throw new Error(`${command} argument keys ${actual.join(',')} != ${expected.join(',')}`);
+        }
+      };
+
+      const requireLegacyRouteTicket = (args: Record<string, unknown>) => {
+        if (JSON.stringify(args.legacyRouteTicket) !== JSON.stringify(legacyRouteTicket)) {
+          throw new Error('invalid mock legacy route ticket');
         }
       };
 
@@ -668,7 +680,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
                 publishPending: Boolean(snapshot.settings.sync_publish_intent_v1),
               };
             case 'record_sync_remote_unchanged': {
-              requireKeys(command, args, ['input']);
+              requireKeys(command, args, ['input', 'legacyRouteTicket']);
+              requireLegacyRouteTicket(args);
               const input = args.input as {
                 targetId: string | null; targetEpoch: number | null; expectedGeneration: number;
                 expectedRemoteEtag: string; v2SourceFingerprint: string | null;
@@ -698,7 +711,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               };
             }
             case 'prepare_sync_publish_intent': {
-              requireKeys(command, args, ['input']);
+              requireKeys(command, args, ['input', 'legacyRouteTicket']);
+              requireLegacyRouteTicket(args);
               const input = args.input as {
                 targetId: string | null; targetEpoch: number | null;
                 commitId: string; previousCommitId: string | null;
@@ -720,7 +734,8 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return structuredClone(intent);
             }
             case 'commit_sync_result': {
-              requireKeys(command, args, ['input']);
+              requireKeys(command, args, ['input', 'legacyRouteTicket']);
+              requireLegacyRouteTicket(args);
               const input = args.input as {
                 targetId: string | null;
                 targetEpoch: number | null;
@@ -792,6 +807,16 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               }
               persistRuntime();
               return { recordsGeneration, recordCount: snapshot.records.length };
+            }
+            case 'run_desktop_sync_coordinator': {
+              requireKeys(command, args, ['completedLegacyRoute']);
+              if (args.completedLegacyRoute === null) {
+                return { kind: 'legacyS1Required', ticket: structuredClone(legacyRouteTicket) };
+              }
+              if (JSON.stringify(args.completedLegacyRoute) !== JSON.stringify(legacyRouteTicket)) {
+                throw new Error('invalid completed mock legacy route ticket');
+              }
+              return { kind: 'success' };
             }
             case 'resolve_sync_conflict': {
               requireKeys(command, args, ['id', 'resolution', 'targetEpoch', 'targetId']);
