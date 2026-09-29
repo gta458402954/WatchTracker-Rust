@@ -208,6 +208,301 @@ fn valid_discovery_directory(path: &str) -> bool {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CollectionProvisionResultV1 {
+    Ready,
+    AuthOrCapabilityFailure,
+    Indeterminate,
+}
+
+fn collection_href_matches(root: &WebDavRootV1, path: &str, href: &str) -> bool {
+    let Ok(root_url) = Url::parse(&root.canonical_url) else {
+        return false;
+    };
+    let Ok(expected) = child_url(root, path) else {
+        return false;
+    };
+    let Ok(observed) = root_url.join(href) else {
+        return false;
+    };
+    observed.origin() == root_url.origin()
+        && observed.query().is_none()
+        && observed.fragment().is_none()
+        && observed.path().trim_end_matches('/') == expected.path().trim_end_matches('/')
+}
+
+/// Verifies the one DAV fact needed after a concurrent MKCOL: the response
+/// for this exact resource describes it as a DAV collection.  The parser is
+/// intentionally narrower than discovery parsing: no listing data is trusted
+/// from this response.
+fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &[u8]) -> bool {
+    #[derive(Clone)]
+    struct Element {
+        local: Vec<u8>,
+        is_dav: bool,
+    }
+    #[derive(Default)]
+    struct Propstat {
+        has_collection: bool,
+        status_success: Option<bool>,
+    }
+    #[derive(Default)]
+    struct Response {
+        href: Option<String>,
+        collection: bool,
+    }
+    enum Capture {
+        Href(String),
+        ResponseStatus(String),
+        PropstatStatus(String),
+    }
+
+    let mut reader = NsReader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut stack = Vec::<Element>::new();
+    let mut response = None::<Response>;
+    let mut propstat = None::<Propstat>;
+    let mut capture = None::<Capture>;
+    let mut matched = false;
+    let mut root_closed = false;
+
+    let start = |namespace: ResolveResult<'_>, local: Vec<u8>, stack: &mut Vec<Element>| {
+        let is_dav = matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
+        stack.push(Element { local, is_dav });
+    };
+
+    loop {
+        match reader.read_resolved_event() {
+            Ok((namespace, Event::Start(event))) => {
+                if root_closed {
+                    return false;
+                }
+                let local = event.local_name().as_ref().to_vec();
+                let depth = stack.len();
+                let is_dav =
+                    matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
+                if depth == 0 && (!is_dav || local != b"multistatus") {
+                    return false;
+                }
+                if depth == 1 {
+                    if !is_dav || local != b"response" || response.is_some() {
+                        return false;
+                    }
+                    response = Some(Response::default());
+                } else if response.is_some() {
+                    match (depth, local.as_slice()) {
+                        (2, b"href") if is_dav && capture.is_none() => {
+                            capture = Some(Capture::Href(String::new()));
+                        }
+                        (2, b"status") if is_dav && capture.is_none() => {
+                            capture = Some(Capture::ResponseStatus(String::new()));
+                        }
+                        (2, b"propstat") if is_dav && propstat.is_none() => {
+                            propstat = Some(Propstat::default());
+                        }
+                        (3, b"status")
+                            if is_dav
+                                && stack.last().is_some_and(|parent| {
+                                    parent.is_dav && parent.local == b"propstat"
+                                })
+                                && capture.is_none() =>
+                        {
+                            capture = Some(Capture::PropstatStatus(String::new()));
+                        }
+                        (5, b"collection")
+                            if is_dav
+                                && matches!(
+                                    stack.as_slice(),
+                                    [
+                                        Element { local, is_dav: true },
+                                        Element { local: response, is_dav: true },
+                                        Element { local: propstat, is_dav: true },
+                                        Element { local: prop, is_dav: true },
+                                        Element { local: resource_type, is_dav: true },
+                                    ] if local == b"multistatus"
+                                        && response == b"response"
+                                        && propstat == b"propstat"
+                                        && prop == b"prop"
+                                        && resource_type == b"resourcetype"
+                                ) =>
+                        {
+                            let Some(current) = propstat.as_mut() else {
+                                return false;
+                            };
+                            current.has_collection = true;
+                        }
+                        _ => {}
+                    }
+                }
+                start(namespace, local, &mut stack);
+            }
+            Ok((namespace, Event::Empty(event))) => {
+                if root_closed {
+                    return false;
+                }
+                let local = event.local_name().as_ref().to_vec();
+                let depth = stack.len();
+                let is_dav =
+                    matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
+                if depth == 0 && (!is_dav || local != b"multistatus") {
+                    return false;
+                }
+                if depth == 1 {
+                    return false;
+                }
+                if depth == 5
+                    && local == b"collection"
+                    && is_dav
+                    && matches!(
+                        stack.as_slice(),
+                        [
+                            Element { local, is_dav: true },
+                            Element { local: response, is_dav: true },
+                            Element { local: propstat, is_dav: true },
+                            Element { local: prop, is_dav: true },
+                            Element { local: resource_type, is_dav: true },
+                        ] if local == b"multistatus"
+                            && response == b"response"
+                            && propstat == b"propstat"
+                            && prop == b"prop"
+                            && resource_type == b"resourcetype"
+                    )
+                {
+                    let Some(current) = propstat.as_mut() else {
+                        return false;
+                    };
+                    current.has_collection = true;
+                }
+                start(namespace, local.clone(), &mut stack);
+                let Some(closed) = stack.pop() else {
+                    return false;
+                };
+                if closed.local != local || closed.is_dav != is_dav {
+                    return false;
+                }
+                if local == b"multistatus" {
+                    root_closed = true;
+                }
+            }
+            Ok((_, Event::Text(event))) => {
+                if let Some(value) = capture.as_mut() {
+                    let Ok(text) = event.unescape() else {
+                        return false;
+                    };
+                    match value {
+                        Capture::Href(text_out)
+                        | Capture::ResponseStatus(text_out)
+                        | Capture::PropstatStatus(text_out) => text_out.push_str(&text),
+                    }
+                } else if stack.is_empty() {
+                    let raw: &[u8] = event.as_ref();
+                    if !raw.iter().all(|byte| is_xml_s(*byte)) {
+                        return false;
+                    }
+                }
+            }
+            Ok((_, Event::CData(event))) => {
+                let Ok(text) = std::str::from_utf8(event.as_ref()) else {
+                    return false;
+                };
+                let Some(value) = capture.as_mut() else {
+                    return false;
+                };
+                match value {
+                    Capture::Href(text_out)
+                    | Capture::ResponseStatus(text_out)
+                    | Capture::PropstatStatus(text_out) => text_out.push_str(text),
+                }
+            }
+            Ok((namespace, Event::End(event))) => {
+                let local = event.local_name().as_ref().to_vec();
+                let is_dav =
+                    matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
+                let Some(closed) = stack.pop() else {
+                    return false;
+                };
+                if closed.local != local || closed.is_dav != is_dav {
+                    return false;
+                }
+                match local.as_slice() {
+                    b"href" => {
+                        let Some(Capture::Href(value)) = capture.take() else {
+                            return false;
+                        };
+                        let Some(current) = response.as_mut() else {
+                            return false;
+                        };
+                        if value.is_empty() || current.href.replace(value).is_some() {
+                            return false;
+                        }
+                    }
+                    b"status" => match capture.take() {
+                        Some(Capture::ResponseStatus(value)) => {
+                            if !value.starts_with("HTTP/") || !value.contains(" 2") {
+                                return false;
+                            }
+                        }
+                        Some(Capture::PropstatStatus(value)) => {
+                            let Some(current) = propstat.as_mut() else {
+                                return false;
+                            };
+                            if current
+                                .status_success
+                                .replace(value.starts_with("HTTP/") && value.contains(" 2"))
+                                .is_some()
+                            {
+                                return false;
+                            }
+                        }
+                        _ => return false,
+                    },
+                    b"propstat" => {
+                        let Some(current_propstat) = propstat.take() else {
+                            return false;
+                        };
+                        if current_propstat.has_collection
+                            && current_propstat.status_success == Some(true)
+                        {
+                            let Some(current_response) = response.as_mut() else {
+                                return false;
+                            };
+                            current_response.collection = true;
+                        }
+                    }
+                    b"response" => {
+                        let Some(current) = response.take() else {
+                            return false;
+                        };
+                        let Some(href) = current.href else {
+                            return false;
+                        };
+                        if collection_href_matches(root, path, &href) {
+                            if matched || !current.collection {
+                                return false;
+                            }
+                            matched = true;
+                        }
+                    }
+                    b"multistatus" => {
+                        if !stack.is_empty() || root_closed {
+                            return false;
+                        }
+                        root_closed = true;
+                    }
+                    _ => {}
+                }
+            }
+            Ok((_, Event::Comment(_) | Event::PI(_) | Event::Decl(_))) if stack.is_empty() => {}
+            Ok((_, Event::Comment(_) | Event::PI(_))) => {}
+            Ok((_, Event::Decl(_))) | Ok((_, Event::DocType(_))) => return false,
+            Ok((_, Event::Eof)) => {
+                return root_closed && stack.is_empty() && capture.is_none() && matched
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
 pub struct WebDavS2RemoteV1 {
     config: WebDavS2ConfigV1,
     client: Client,
@@ -238,21 +533,21 @@ impl WebDavS2RemoteV1 {
         method: Method,
         path: &str,
         body: Option<&[u8]>,
-        depth_one: bool,
+        depth: Option<&str>,
     ) -> Result<(StatusCode, Vec<u8>), ()> {
         let url = child_url(&self.config.root, path).map_err(|_| ())?;
         let mut request = self
             .client
             .request(method, url)
             .basic_auth(&self.config.username, Some(&self.config.password));
-        if depth_one {
-            request = request.header("Depth", "1");
+        if let Some(depth) = depth {
+            request = request.header("Depth", depth);
         }
         if let Some(bytes) = body {
             request = request.header("If-None-Match", "*").body(bytes.to_vec());
         }
         let response = request.send().map_err(|_| ())?;
-        let limit = if depth_one {
+        let limit = if depth.is_some() {
             MAX_PROPFIND_BYTES
         } else {
             MAX_BODY_BYTES
@@ -280,7 +575,7 @@ impl WebDavS2RemoteV1 {
             valid_immutable_object_path(path),
             "invalid_s2_immutable_path"
         );
-        match self.request(Method::GET, path, None, false) {
+        match self.request(Method::GET, path, None, None) {
             Ok((status, bytes)) if status.is_success() => {
                 RemoteExactGetResultV1::DefinitelyPresent(bytes)
             }
@@ -528,6 +823,61 @@ impl WebDavS2RemoteV1 {
         entries.dedup();
         DirectoryListResultV1::Entries(entries)
     }
+
+    fn verify_collection(&self, path: &str) -> CollectionProvisionResultV1 {
+        let response = match self.request(
+            Method::from_bytes(b"PROPFIND").unwrap(),
+            path,
+            None,
+            Some("0"),
+        ) {
+            Ok(value) => value,
+            Err(()) => return CollectionProvisionResultV1::Indeterminate,
+        };
+        match response {
+            (StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN, _) => {
+                CollectionProvisionResultV1::AuthOrCapabilityFailure
+            }
+            (StatusCode::MULTI_STATUS, xml)
+                if depth_zero_response_is_dav_collection(&self.config.root, path, &xml) =>
+            {
+                CollectionProvisionResultV1::Ready
+            }
+            _ => CollectionProvisionResultV1::Indeterminate,
+        }
+    }
+
+    fn ensure_collection(&self, path: &str) -> CollectionProvisionResultV1 {
+        match self.request(Method::from_bytes(b"MKCOL").unwrap(), path, None, None) {
+            Ok((StatusCode::CREATED, _)) => CollectionProvisionResultV1::Ready,
+            Ok((StatusCode::METHOD_NOT_ALLOWED, _)) => self.verify_collection(path),
+            Ok((StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN, _)) => {
+                CollectionProvisionResultV1::AuthOrCapabilityFailure
+            }
+            _ => CollectionProvisionResultV1::Indeterminate,
+        }
+    }
+
+    fn ensure_immutable_parent_collections(&self, path: &str) -> CollectionProvisionResultV1 {
+        let parts = path.split('/').collect::<Vec<_>>();
+        let parents = match parts.as_slice() {
+            ["activations", _] => vec!["activations".to_string()],
+            ["writers", writer_id, "segments", segment_name, _] => vec![
+                "writers".to_string(),
+                format!("writers/{writer_id}"),
+                format!("writers/{writer_id}/segments"),
+                format!("writers/{writer_id}/segments/{segment_name}"),
+            ],
+            _ => return CollectionProvisionResultV1::Indeterminate,
+        };
+        for parent in parents {
+            match self.ensure_collection(&parent) {
+                CollectionProvisionResultV1::Ready => {}
+                result => return result,
+            }
+        }
+        CollectionProvisionResultV1::Ready
+    }
 }
 
 impl ImmutableObjectRemoteV1 for WebDavS2RemoteV1 {
@@ -550,7 +900,14 @@ impl ImmutableObjectRemoteV1 for WebDavS2RemoteV1 {
             valid_immutable_object_path(path),
             "invalid_s2_immutable_path"
         );
-        match self.request(Method::PUT, path, Some(bytes), false) {
+        match self.ensure_immutable_parent_collections(path) {
+            CollectionProvisionResultV1::Ready => {}
+            CollectionProvisionResultV1::AuthOrCapabilityFailure => {
+                return RemotePutResultV1::AuthOrCapabilityFailure;
+            }
+            CollectionProvisionResultV1::Indeterminate => return RemotePutResultV1::Indeterminate,
+        }
+        match self.request(Method::PUT, path, Some(bytes), None) {
             Ok((status, _)) if status.is_success() => RemotePutResultV1::Success,
             Ok((StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN, _)) => {
                 RemotePutResultV1::AuthOrCapabilityFailure
@@ -600,6 +957,7 @@ mod tests {
 
     const ACTIVATION_PATH: &str =
         "activations/123e4567-e89b-12d3-a456-426614174000--0000000000000000000000000000000000000000000000000000000000000000.json";
+    const WRITER_PATH: &str = "writers/123e4567-e89b-42d3-a456-426614174000/segments/00000000000000/00000000000000000001--123e4567-e89b-42d3-a456-426614174001--0000000000000000000000000000000000000000000000000000000000000000.json";
 
     fn server(responses: Vec<Option<Vec<u8>>>) -> (String, Arc<Mutex<Vec<Vec<u8>>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -663,6 +1021,20 @@ mod tests {
         format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
     }
 
+    fn depth_zero_collection(path: &str) -> Vec<u8> {
+        format!(
+            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>{path}/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+        )
+        .into_bytes()
+    }
+
+    fn depth_zero_non_collection(path: &str) -> Vec<u8> {
+        format!(
+            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>{path}/</d:href><d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+        )
+        .into_bytes()
+    }
+
     fn delayed_drop_server() -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -720,6 +1092,7 @@ mod tests {
         let binary = vec![0, 255, 128, b'{', 0, 13];
         let (url, received) = server(vec![
             Some(response("200 OK", &binary)),
+            Some(response("201 Created", b"")),
             None,
             Some(response("200 OK", &binary)),
         ]);
@@ -737,10 +1110,10 @@ mod tests {
             RemoteExactGetResultV1::DefinitelyPresent(binary.clone())
         );
         let requests = received.lock().unwrap();
-        assert!(requests[1]
+        assert!(requests[2]
             .windows(binary.len())
             .any(|window| window == binary));
-        assert!(String::from_utf8_lossy(&requests[1])
+        assert!(String::from_utf8_lossy(&requests[2])
             .to_ascii_lowercase()
             .contains("if-none-match: *"));
     }
@@ -750,6 +1123,7 @@ mod tests {
         let prepared = vec![0, 255, 7, 0];
         let overwritten = vec![9, 9, 9];
         let (url, received) = server(vec![
+            Some(response("201 Created", b"")),
             Some(response("204 No Content", b"")),
             Some(response("200 OK", &overwritten)),
         ]);
@@ -765,9 +1139,185 @@ mod tests {
             ImmutableObjectRemoteV1::get_exact(&mut webdav, ACTIVATION_PATH),
             RemoteExactGetResultV1::DefinitelyPresent(overwritten)
         );
-        assert!(String::from_utf8_lossy(&received.lock().unwrap()[0])
+        assert!(String::from_utf8_lossy(&received.lock().unwrap()[1])
             .to_ascii_lowercase()
             .contains("if-none-match: *"));
+    }
+
+    #[test]
+    fn fresh_activation_collections_precede_exact_file_put_without_file_headers() {
+        let bytes = [0, 255, 7, 10];
+        let (url, received) = server(vec![
+            Some(response("201 Created", b"")),
+            Some(response("201 Created", b"")),
+        ]);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, &bytes, true),
+            RemotePutResultV1::Success
+        );
+        let requests = received.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let collection = String::from_utf8_lossy(&requests[0]).to_ascii_lowercase();
+        assert!(collection.starts_with("mkcol /dav/activations http/1.1"));
+        assert!(!collection.contains("if-none-match"));
+        assert!(!collection.contains("content-length:"));
+        let file = String::from_utf8_lossy(&requests[1]).to_ascii_lowercase();
+        assert!(file.starts_with("put /dav/activations/"));
+        assert!(file.contains("if-none-match: *"));
+        assert!(requests[1].ends_with(&bytes));
+    }
+
+    #[test]
+    fn fresh_writer_collections_are_parent_first_before_exact_file_put() {
+        let bytes = [1, 2, 3];
+        let (url, received) = server(vec![
+            Some(response("201 Created", b"")),
+            Some(response("201 Created", b"")),
+            Some(response("201 Created", b"")),
+            Some(response("201 Created", b"")),
+            Some(response("204 No Content", b"")),
+        ]);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            webdav.put_exact(WRITER_PATH, &bytes, true),
+            RemotePutResultV1::Success
+        );
+        let requests = received.lock().unwrap();
+        let request_lines = requests
+            .iter()
+            .map(|raw| {
+                String::from_utf8_lossy(raw)
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            request_lines,
+            vec![
+                "MKCOL /dav/writers HTTP/1.1".to_string(),
+                "MKCOL /dav/writers/123e4567-e89b-42d3-a456-426614174000 HTTP/1.1"
+                    .to_string(),
+                "MKCOL /dav/writers/123e4567-e89b-42d3-a456-426614174000/segments HTTP/1.1"
+                    .to_string(),
+                "MKCOL /dav/writers/123e4567-e89b-42d3-a456-426614174000/segments/00000000000000 HTTP/1.1"
+                    .to_string(),
+                format!("PUT /dav/{WRITER_PATH} HTTP/1.1"),
+            ]
+        );
+        for raw in requests.iter().take(4) {
+            let text = String::from_utf8_lossy(raw).to_ascii_lowercase();
+            assert!(!text.contains("if-none-match"));
+            assert!(!text.contains("content-length:"));
+        }
+    }
+
+    #[test]
+    fn concurrent_existing_collection_is_verified_before_file_put() {
+        let bytes = [4, 5, 6];
+        let (url, received) = server(vec![
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response(
+                "207 Multi-Status",
+                &depth_zero_collection("activations"),
+            )),
+            Some(response("201 Created", b"")),
+        ]);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, &bytes, true),
+            RemotePutResultV1::Success
+        );
+        let requests = received.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(
+            String::from_utf8_lossy(&requests[1]).starts_with("PROPFIND /dav/activations HTTP/1.1")
+        );
+        assert!(String::from_utf8_lossy(&requests[1])
+            .to_ascii_lowercase()
+            .contains("depth: 0"));
+    }
+
+    #[test]
+    fn non_collection_or_provision_failure_never_reaches_file_put() {
+        let failures = vec![
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response(
+                "207 Multi-Status",
+                &depth_zero_non_collection("activations"),
+            )),
+            Some(response("401 Unauthorized", b"")),
+            Some(response("403 Forbidden", b"")),
+            Some(response("400 Bad Request", b"")),
+            Some(response("409 Conflict", b"")),
+            Some(response("500 Server Error", b"")),
+            Some(redirect("/dav/activations")),
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response("207 Multi-Status", b"<broken")),
+        ];
+        let (url, received) = server(failures);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, b"bytes", true),
+            RemotePutResultV1::Indeterminate
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                webdav.put_exact(ACTIVATION_PATH, b"bytes", true),
+                RemotePutResultV1::AuthOrCapabilityFailure
+            );
+        }
+        for _ in 0..5 {
+            assert_eq!(
+                webdav.put_exact(ACTIVATION_PATH, b"bytes", true),
+                RemotePutResultV1::Indeterminate
+            );
+        }
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, b"bytes", true),
+            RemotePutResultV1::Indeterminate
+        );
+        let requests = received.lock().unwrap();
+        assert_eq!(requests.len(), 10);
+        assert!(requests
+            .iter()
+            .all(|raw| !String::from_utf8_lossy(raw).starts_with("PUT ")));
+    }
+
+    #[test]
+    fn retry_after_existing_collection_keeps_exact_immutable_put_behavior() {
+        let first = [0, 255, 1];
+        let second = [2, 128, 3];
+        let (url, received) = server(vec![
+            Some(response("201 Created", b"")),
+            Some(response("201 Created", b"")),
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response(
+                "207 Multi-Status",
+                &depth_zero_collection("activations"),
+            )),
+            Some(response("204 No Content", b"")),
+        ]);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, &first, true),
+            RemotePutResultV1::Success
+        );
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, &second, true),
+            RemotePutResultV1::Success
+        );
+        let requests = received.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        for index in [1_usize, 4] {
+            let text = String::from_utf8_lossy(&requests[index]).to_ascii_lowercase();
+            assert!(text.starts_with("put /dav/activations/"));
+            assert!(text.contains("if-none-match: *"));
+        }
+        assert!(requests[1].ends_with(&first));
+        assert!(requests[4].ends_with(&second));
     }
 
     #[test]
