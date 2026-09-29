@@ -231,6 +231,20 @@ fn collection_href_matches(root: &WebDavRootV1, path: &str, href: &str) -> bool 
         && observed.path().trim_end_matches('/') == expected.path().trim_end_matches('/')
 }
 
+fn is_success_http_status_line(status: &str) -> bool {
+    let mut tokens = status.split_ascii_whitespace();
+    let Some(version) = tokens.next() else {
+        return false;
+    };
+    let Some(code) = tokens.next() else {
+        return false;
+    };
+    version.starts_with("HTTP/")
+        && code.len() == 3
+        && code.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(code.parse::<u16>(), Ok(200..=299))
+}
+
 /// Verifies the one DAV fact needed after a concurrent MKCOL: the response
 /// for this exact resource describes it as a DAV collection.  The parser is
 /// intentionally narrower than discovery parsing: no listing data is trusted
@@ -256,6 +270,12 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
         ResponseStatus(String),
         PropstatStatus(String),
     }
+    #[derive(Eq, PartialEq)]
+    enum DocumentPhase {
+        Before,
+        Inside,
+        After,
+    }
 
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -265,6 +285,9 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
     let mut capture = None::<Capture>;
     let mut matched = false;
     let mut root_closed = false;
+    let mut phase = DocumentPhase::Before;
+    let mut declaration_seen = false;
+    let mut prolog_consumed = false;
 
     let start = |namespace: ResolveResult<'_>, local: Vec<u8>, stack: &mut Vec<Element>| {
         let is_dav = matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
@@ -274,15 +297,18 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
     loop {
         match reader.read_resolved_event() {
             Ok((namespace, Event::Start(event))) => {
-                if root_closed {
+                if root_closed || phase == DocumentPhase::After {
                     return false;
                 }
                 let local = event.local_name().as_ref().to_vec();
                 let depth = stack.len();
                 let is_dav =
                     matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
-                if depth == 0 && (!is_dav || local != b"multistatus") {
-                    return false;
+                if depth == 0 {
+                    if phase != DocumentPhase::Before || !is_dav || local != b"multistatus" {
+                        return false;
+                    }
+                    phase = DocumentPhase::Inside;
                 }
                 if depth == 1 {
                     if !is_dav || local != b"response" || response.is_some() {
@@ -337,15 +363,18 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
                 start(namespace, local, &mut stack);
             }
             Ok((namespace, Event::Empty(event))) => {
-                if root_closed {
+                if root_closed || phase == DocumentPhase::After {
                     return false;
                 }
                 let local = event.local_name().as_ref().to_vec();
                 let depth = stack.len();
                 let is_dav =
                     matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == b"DAV:");
-                if depth == 0 && (!is_dav || local != b"multistatus") {
-                    return false;
+                if depth == 0 {
+                    if phase != DocumentPhase::Before || !is_dav || local != b"multistatus" {
+                        return false;
+                    }
+                    phase = DocumentPhase::Inside;
                 }
                 if depth == 1 {
                     return false;
@@ -382,6 +411,7 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
                 }
                 if local == b"multistatus" {
                     root_closed = true;
+                    phase = DocumentPhase::After;
                 }
             }
             Ok((_, Event::Text(event))) => {
@@ -398,6 +428,9 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
                     let raw: &[u8] = event.as_ref();
                     if !raw.iter().all(|byte| is_xml_s(*byte)) {
                         return false;
+                    }
+                    if phase == DocumentPhase::Before {
+                        prolog_consumed = true;
                     }
                 }
             }
@@ -438,7 +471,7 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
                     }
                     b"status" => match capture.take() {
                         Some(Capture::ResponseStatus(value)) => {
-                            if !value.starts_with("HTTP/") || !value.contains(" 2") {
+                            if !is_success_http_status_line(&value) {
                                 return false;
                             }
                         }
@@ -448,7 +481,7 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
                             };
                             if current
                                 .status_success
-                                .replace(value.starts_with("HTTP/") && value.contains(" 2"))
+                                .replace(is_success_http_status_line(&value))
                                 .is_some()
                             {
                                 return false;
@@ -488,15 +521,32 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
                             return false;
                         }
                         root_closed = true;
+                        phase = DocumentPhase::After;
                     }
                     _ => {}
                 }
             }
-            Ok((_, Event::Comment(_) | Event::PI(_) | Event::Decl(_))) if stack.is_empty() => {}
-            Ok((_, Event::Comment(_) | Event::PI(_))) => {}
-            Ok((_, Event::Decl(_))) | Ok((_, Event::DocType(_))) => return false,
+            Ok((_, Event::Comment(_) | Event::PI(_))) => {
+                if phase == DocumentPhase::Before {
+                    prolog_consumed = true;
+                }
+            }
+            Ok((_, Event::Decl(declaration))) => {
+                if phase != DocumentPhase::Before || declaration_seen || prolog_consumed {
+                    return false;
+                }
+                if !validate_xml_declaration(&declaration) {
+                    return false;
+                }
+                declaration_seen = true;
+            }
+            Ok((_, Event::DocType(_))) => return false,
             Ok((_, Event::Eof)) => {
-                return root_closed && stack.is_empty() && capture.is_none() && matched
+                return phase == DocumentPhase::After
+                    && root_closed
+                    && stack.is_empty()
+                    && capture.is_none()
+                    && matched
             }
             Err(_) => return false,
         }
@@ -943,8 +993,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        child_url, safe_relative_path, valid_discovery_directory, valid_immutable_object_path,
-        webdav_root_v1, WebDavS2ConfigV1, WebDavS2RemoteV1,
+        child_url, is_success_http_status_line, safe_relative_path, valid_discovery_directory,
+        valid_immutable_object_path, webdav_root_v1, WebDavS2ConfigV1, WebDavS2RemoteV1,
     };
     use crate::s2_lite::canonical::sha256_hex;
     use crate::s2_lite::immutable_publish::{
@@ -1021,11 +1071,15 @@ mod tests {
         format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
     }
 
-    fn depth_zero_collection(path: &str) -> Vec<u8> {
+    fn depth_zero_collection_with_status(path: &str, status: &str) -> Vec<u8> {
         format!(
-            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>{path}/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>{path}/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>{status}</d:status></d:propstat></d:response></d:multistatus>"
         )
         .into_bytes()
+    }
+
+    fn depth_zero_collection(path: &str) -> Vec<u8> {
+        depth_zero_collection_with_status(path, "HTTP/1.1 200 OK")
     }
 
     fn depth_zero_non_collection(path: &str) -> Vec<u8> {
@@ -1217,12 +1271,14 @@ mod tests {
     #[test]
     fn concurrent_existing_collection_is_verified_before_file_put() {
         let bytes = [4, 5, 6];
+        let declared_collection = [
+            b"<?xml version=\"1.0\"?>".as_slice(),
+            depth_zero_collection("activations").as_slice(),
+        ]
+        .concat();
         let (url, received) = server(vec![
             Some(response("405 Method Not Allowed", b"")),
-            Some(response(
-                "207 Multi-Status",
-                &depth_zero_collection("activations"),
-            )),
+            Some(response("207 Multi-Status", &declared_collection)),
             Some(response("201 Created", b"")),
         ]);
         let mut webdav = remote(&url);
@@ -1238,6 +1294,61 @@ mod tests {
         assert!(String::from_utf8_lossy(&requests[1])
             .to_ascii_lowercase()
             .contains("depth: 0"));
+    }
+
+    #[test]
+    fn collection_depth_zero_status_lines_require_exact_2xx_codes() {
+        for status in [
+            "HTTP/1.1 200 OK",
+            "HTTP/1.1 207 Multi-Status",
+            "HTTP/1.1 299 Anything",
+        ] {
+            assert!(is_success_http_status_line(status), "{status}");
+        }
+        for status in [
+            "HTTP/1.1 199 Nope",
+            "HTTP/1.1 300 Nope",
+            "HTTP/1.1 404 2 Nope",
+            "HTTP/1.1 20 OK",
+            "HTTP/1.1 2000 OK",
+            "HTTP/1.1 xyz Nope",
+        ] {
+            assert!(!is_success_http_status_line(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn malformed_depth_zero_status_or_document_never_reaches_file_put() {
+        let bad_status =
+            depth_zero_collection_with_status("activations", "HTTP/1.1 404 2 Not Found");
+        let valid = depth_zero_collection("activations");
+        let duplicate_declaration = [
+            b"<?xml version=\"1.0\"?><?xml version=\"1.0\"?>".as_slice(),
+            valid.as_slice(),
+        ]
+        .concat();
+        let trailing_declaration =
+            [valid.as_slice(), b"<?xml version=\"1.0\"?>".as_slice()].concat();
+        let (url, received) = server(vec![
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response("207 Multi-Status", &bad_status)),
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response("207 Multi-Status", &duplicate_declaration)),
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response("207 Multi-Status", &trailing_declaration)),
+        ]);
+        let mut webdav = remote(&url);
+        for _ in 0..3 {
+            assert_eq!(
+                webdav.put_exact(ACTIVATION_PATH, b"bytes", true),
+                RemotePutResultV1::Indeterminate
+            );
+        }
+        let requests = received.lock().unwrap();
+        assert_eq!(requests.len(), 6);
+        assert!(requests
+            .iter()
+            .all(|raw| !String::from_utf8_lossy(raw).starts_with("PUT ")));
     }
 
     #[test]
