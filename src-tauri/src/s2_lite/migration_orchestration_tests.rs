@@ -1100,7 +1100,10 @@ fn fatal_authority_and_interleaved_freeze_block_every_put() {
     let stopped = execute(&planned, &mut remote, &mut stores, timestamp);
     assert_eq!(stopped.status, MigrationStatusV1::RootFrozen);
     assert!(remote.put_counts.is_empty());
-    assert!(remote.trace.is_empty());
+    assert_eq!(
+        serde_json::to_value(&remote.trace).unwrap(),
+        failure("freeze-before-exclusive-publish")["expectedOperations"]
+    );
     assert_eq!(
         stores.migration.current.unwrap().status,
         MigrationStatusV1::RootFrozen

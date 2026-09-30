@@ -120,7 +120,7 @@
     { "name": "old-receipt-on-new-root", "expected": "LOCAL_MIGRATION_STATE_CORRUPTION", "expectedOperations": [] },
     { "name": "same-root-handoff", "expected": "invalid_frozen_root_handoff", "expectedOperations": [] },
     { "name": "known-fatal-blocks-publish", "expectedStatus": "ROOT_FROZEN", "expectedOperations": [] },
-    { "name": "freeze-before-exclusive-publish", "expectedStatus": "ROOT_FROZEN", "expectedOperations": ["GET"] },
+    { "name": "freeze-before-exclusive-publish", "expectedStatus": "ROOT_FROZEN", "expectedOperations": [] },
     { "name": "activation-cutover-crash", "expectedLegacyAllowed": false, "expectedFinalStatus": "MIGRATION_COMPLETE", "expectedOperations": ["GET", "PUT", "GET"] },
     { "name": "stale-complete", "expectedLegacyAllowed": false, "expectedFinalStatus": "MIGRATION_COMPLETE" },
     { "name": "duplicate-concurrent-start", "expectedAttemptCount": 1, "expectedOperations": [] },

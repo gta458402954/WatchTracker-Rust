@@ -28,8 +28,6 @@ import {
   prepareCommitIntentV1,
   publishAdmittedPersistedIntentV1,
   publishAdmittedPersistedActivationIntentV1,
-  restartDurableActivationPublishV1,
-  restartDurablePublishV1,
   validatePreparedActivationIntentV1,
   validatePreparedIntentV1,
   validatePublishedActivationReceiptV1,
@@ -760,8 +758,12 @@ export async function executeMigrationStepV1(
       await persist();
       return state;
     }
-    let result = await restartDurablePublishV1(task.intent, task.receipt, dependencies.remote, dependencies.verifiedAtDiagnostic);
-    if (result.outcome === 'RetryPublishExact') {
+    let result;
+    if (task.receipt !== null) {
+      await validatePreparedIntentV1(task.intent);
+      await validatePublishedReceiptV1(task.receipt, task.intent);
+      result = { outcome: 'AlreadyPublishedExact' as const, receipt: structuredClone(task.receipt) };
+    } else {
       const publishCapability = await persistPreparedIntentBeforePublishV1(task.intent, dependencies.intentStore);
       const guarded = await dependencies.migrationStore.runPublishExclusive(
         { rootId: state.rootId, migrationId: state.migrationId, expectedGeneration: state.generation },
@@ -791,10 +793,12 @@ export async function executeMigrationStepV1(
   }
 
   if (state.status === 'ACTIVATION_PUBLISHING') {
-    let result = await restartDurableActivationPublishV1(
-      state.activationIntent!, state.activationReceipt, dependencies.remote, dependencies.verifiedAtDiagnostic,
-    );
-    if (result.outcome === 'RetryPublishExact') {
+    let result;
+    if (state.activationReceipt !== null) {
+      await validatePreparedActivationIntentV1(state.activationIntent!);
+      await validatePublishedActivationReceiptV1(state.activationReceipt, state.activationIntent!);
+      result = { outcome: 'AlreadyPublishedExact' as const, receipt: structuredClone(state.activationReceipt) };
+    } else {
       const publishCapability = await persistPreparedActivationIntentBeforePublishV1(
         state.activationIntent!, dependencies.activationIntentStore,
       );

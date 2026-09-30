@@ -506,22 +506,10 @@ export async function publishAdmittedPersistedIntentV1(
   if (persisted.persistedFingerprint !== intent.intentFingerprint) {
     invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
   }
-  // The module-private snapshot was fully validated before the durable token
-  // was issued. Keep admission-to-PUT synchronous: no await may reopen a root
-  // fatal race after the orchestration gate has admitted this exact attempt.
-  validateCanonicalTimestamp(verifiedAtDiagnostic);
-  const putResult = await callRemotePutExactV1(
-    remote, intent.remotePath, Uint8Array.from(intent.exactBytes),
-  );
-  const verification = await classifyExactGetV1(
-    intent,
-    await callRemoteGetExactV1(remote, intent.remotePath),
-    verifiedAtDiagnostic,
-  );
-  if (verification.outcome === 'RetryPublishExact' && putResult.state === 'AuthOrCapabilityFailure') {
-    return { outcome: 'AuthOrCapabilityFailure' };
-  }
-  return verification;
+  // Admission authorizes the complete mutable remote decision, including its
+  // fresh exact preflight. Do not rely on an observation made before the root
+  // authority check.
+  return publishPreparedIntentV1(intent, remote, verifiedAtDiagnostic);
 }
 
 export async function restartDurablePublishV1(
@@ -749,31 +737,9 @@ export async function publishAdmittedPersistedActivationIntentV1(
     invalid('LOCAL_PREPARED_INTENT_CORRUPTION');
   }
   const intent = copyActivationIntent(owned);
-  // As above, the owned snapshot was validated before token issuance. The
-  // first asynchronous remote operation after admission must be the PUT.
-  validateCanonicalTimestamp(verifiedAtDiagnostic);
-  const put = await callRemotePutExactV1(remote, intent.remotePath, Uint8Array.from(intent.exactBytes));
-  const fetched = await callRemoteGetExactV1(remote, intent.remotePath);
-  if (fetched.state === 'DefinitelyAbsent' && put.state === 'AuthOrCapabilityFailure') {
-    return { outcome: 'AuthOrCapabilityFailure' };
-  }
-  if (fetched.state === 'Indeterminate' || fetched.state === 'DefinitelyAbsent') {
-    return { outcome: 'RemoteIndeterminate' };
-  }
-  if (fetched.state === 'AuthOrCapabilityFailure') return { outcome: 'AuthOrCapabilityFailure' };
-  if (!exactBytesEqual(fetched.bytes, intent.exactBytes)) {
-    return {
-      outcome: 'CorruptionMismatch',
-      safetyEvent: {
-        code: 'REMOTE_IMMUTABLE_PATH_CONTENT_MISMATCH',
-        freezeClass: 'SYNC_ROOT_FROZEN_CORRUPTION',
-        remotePath: intent.remotePath,
-        expectedContentHash: intent.contentHash,
-        observedContentHash: await sha256Hex(fetched.bytes),
-      },
-    };
-  }
-  return { outcome: 'AlreadyPublishedExact', receipt: activationReceipt(intent, verifiedAtDiagnostic) };
+  // Admission likewise owns activation's first exact GET, so a frozen or
+  // stale authority can reject before any remote publication activity.
+  return publishPreparedActivationIntentV1(intent, remote, verifiedAtDiagnostic);
 }
 
 export async function restartDurableActivationPublishV1(
