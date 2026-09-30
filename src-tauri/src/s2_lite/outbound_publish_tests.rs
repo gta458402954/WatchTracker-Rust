@@ -27,6 +27,8 @@ struct RemoteState {
     get_results: VecDeque<RemoteExactGetResultV1>,
     put_result: RemotePutResultV1,
     put_calls: usize,
+    preparation_calls: usize,
+    preparation_result: RemotePutResultV1,
     puts: Vec<(String, Vec<u8>)>,
 }
 
@@ -37,6 +39,8 @@ impl Default for RemoteState {
             get_results: VecDeque::new(),
             put_result: RemotePutResultV1::Success,
             put_calls: 0,
+            preparation_calls: 0,
+            preparation_result: RemotePutResultV1::Success,
             puts: vec![],
         }
     }
@@ -64,6 +68,12 @@ impl ImmutableObjectRemoteV1 for FakeRemote {
                 RemoteExactGetResultV1::DefinitelyPresent,
             )
         })
+    }
+
+    fn prepare_immutable_parent_collections(&mut self, _path: &str) -> RemotePutResultV1 {
+        let mut state = self.state.lock().unwrap();
+        state.preparation_calls += 1;
+        state.preparation_result
     }
 
     fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
@@ -238,7 +248,9 @@ fn existing_receipt_short_circuits_with_zero_put_and_unchanged_writer_head() {
         .load_desktop_root_state()
         .unwrap();
     assert_eq!(result, OutboundPublishResultV1::AlreadyPublished);
-    assert_eq!(state.lock().unwrap().put_calls, 0);
+    let state = state.lock().unwrap();
+    assert_eq!(state.put_calls, 0);
+    assert_eq!(state.preparation_calls, 0);
     assert_eq!(before, after);
 }
 
@@ -259,7 +271,9 @@ fn exact_existing_and_definitely_absent_both_persist_only_verified_receipts() {
         ),
         OutboundPublishResultV1::Published
     );
-    assert_eq!(exact_state.lock().unwrap().put_calls, 0);
+    let exact_remote = exact_state.lock().unwrap();
+    assert_eq!(exact_remote.put_calls, 0);
+    assert_eq!(exact_remote.preparation_calls, 1);
 
     let (absent_conn, absent_batch, absent_intent) = setup();
     let absent_state = Arc::new(Mutex::new(RemoteState::default()));
@@ -296,6 +310,7 @@ fn exact_existing_and_definitely_absent_both_persist_only_verified_receipts() {
     );
     let remote = absent_state.lock().unwrap();
     assert_eq!(remote.put_calls, 1);
+    assert_eq!(remote.preparation_calls, 1);
     assert_eq!(
         remote.puts,
         vec![(absent_intent.remote_path.clone(), absent_intent.exact_bytes)]
@@ -400,7 +415,30 @@ fn indeterminate_get_is_pending_while_mismatch_and_root_frozen_make_zero_put() {
         ),
         OutboundPublishResultV1::RootFrozen
     );
-    assert_eq!(frozen_state.lock().unwrap().put_calls, 0);
+    let frozen_remote = frozen_state.lock().unwrap();
+    assert_eq!(frozen_remote.put_calls, 0);
+    assert_eq!(frozen_remote.preparation_calls, 0);
+}
+
+#[test]
+fn ordinary_provisioning_failure_is_pending_without_an_immutable_put() {
+    let (conn, batch, _) = setup();
+    let state = Arc::new(Mutex::new(RemoteState {
+        preparation_result: RemotePutResultV1::Indeterminate,
+        ..Default::default()
+    }));
+    assert_eq!(
+        publish(
+            &conn,
+            &RootExecutionCoordinatorV1::default(),
+            &batch,
+            state.clone()
+        ),
+        OutboundPublishResultV1::Pending
+    );
+    let state = state.lock().unwrap();
+    assert_eq!(state.preparation_calls, 1);
+    assert_eq!(state.put_calls, 0);
 }
 
 #[test]

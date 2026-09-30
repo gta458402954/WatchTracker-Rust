@@ -1051,7 +1051,15 @@ pub fn execute_migration_step_v1<
             remote,
             verified_at_diagnostic,
         )?;
-        if result == RecoverPreparedIntentResultV1::RetryPublishExact {
+        // Read-only recovery is useful evidence, but a fresh root can report
+        // an unprovisioned child as indeterminate. Any unresolved attempt is
+        // therefore re-read only after the SQLite publication admission has
+        // authorized parent provisioning for this exact durable intent.
+        if !matches!(
+            result,
+            RecoverPreparedIntentResultV1::AlreadyPublishedExact(_)
+                | RecoverPreparedIntentResultV1::CorruptionMismatch(_)
+        ) {
             result = match migration_store.run_publish_exclusive(
                 &state.root_id,
                 &state.migration_id,
@@ -1131,7 +1139,13 @@ pub fn execute_migration_step_v1<
             remote,
             verified_at_diagnostic,
         )?;
-        if result == RecoverActivationIntentResultV1::RetryPublishExact {
+        // See the equivalent commit path above: only a durable receipt or an
+        // already-observed mismatch may bypass the admitted fresh preflight.
+        if !matches!(
+            result,
+            RecoverActivationIntentResultV1::AlreadyPublishedExact(_)
+                | RecoverActivationIntentResultV1::CorruptionMismatch(_)
+        ) {
             result = match migration_store.run_publish_exclusive(
                 &state.root_id,
                 &state.migration_id,

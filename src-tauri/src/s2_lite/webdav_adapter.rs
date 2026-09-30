@@ -4,6 +4,7 @@
 //! transports raw bytes and maps provider outcomes into the frozen remote
 //! interfaces; the frozen core still decides whether an object is verified.
 
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::time::Duration;
 
@@ -556,6 +557,7 @@ fn depth_zero_response_is_dav_collection(root: &WebDavRootV1, path: &str, xml: &
 pub struct WebDavS2RemoteV1 {
     config: WebDavS2ConfigV1,
     client: Client,
+    prepared_immutable_paths: BTreeSet<String>,
 }
 
 impl WebDavS2RemoteV1 {
@@ -575,6 +577,7 @@ impl WebDavS2RemoteV1 {
         Ok(Self {
             config,
             client: builder.build().map_err(|_| "webdav_client_failure")?,
+            prepared_immutable_paths: BTreeSet::new(),
         })
     }
 
@@ -940,6 +943,22 @@ impl ImmutableObjectRemoteV1 for WebDavS2RemoteV1 {
     fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
         self.get(path)
     }
+    fn prepare_immutable_parent_collections(&mut self, path: &str) -> RemotePutResultV1 {
+        assert!(
+            valid_immutable_object_path(path),
+            "invalid_s2_immutable_path"
+        );
+        match self.ensure_immutable_parent_collections(path) {
+            CollectionProvisionResultV1::Ready => {
+                self.prepared_immutable_paths.insert(path.to_string());
+                RemotePutResultV1::Success
+            }
+            CollectionProvisionResultV1::AuthOrCapabilityFailure => {
+                RemotePutResultV1::AuthOrCapabilityFailure
+            }
+            CollectionProvisionResultV1::Indeterminate => RemotePutResultV1::Indeterminate,
+        }
+    }
     fn put_exact(
         &mut self,
         path: &str,
@@ -950,12 +969,16 @@ impl ImmutableObjectRemoteV1 for WebDavS2RemoteV1 {
             valid_immutable_object_path(path),
             "invalid_s2_immutable_path"
         );
-        match self.ensure_immutable_parent_collections(path) {
-            CollectionProvisionResultV1::Ready => {}
-            CollectionProvisionResultV1::AuthOrCapabilityFailure => {
-                return RemotePutResultV1::AuthOrCapabilityFailure;
+        if !self.prepared_immutable_paths.remove(path) {
+            match self.ensure_immutable_parent_collections(path) {
+                CollectionProvisionResultV1::Ready => {}
+                CollectionProvisionResultV1::AuthOrCapabilityFailure => {
+                    return RemotePutResultV1::AuthOrCapabilityFailure;
+                }
+                CollectionProvisionResultV1::Indeterminate => {
+                    return RemotePutResultV1::Indeterminate
+                }
             }
-            CollectionProvisionResultV1::Indeterminate => return RemotePutResultV1::Indeterminate,
         }
         match self.request(Method::PUT, path, Some(bytes), None) {
             Ok((status, _)) if status.is_success() => RemotePutResultV1::Success,
@@ -1432,10 +1455,42 @@ mod tests {
     }
 
     #[test]
+    fn admitted_preparation_is_consumed_by_the_exact_file_put() {
+        let bytes = [0, 255, 7, 10];
+        let (url, received) = server(vec![
+            Some(response("201 Created", b"")),
+            Some(response("404 Not Found", b"")),
+            Some(response("201 Created", b"")),
+        ]);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            ImmutableObjectRemoteV1::prepare_immutable_parent_collections(
+                &mut webdav,
+                ACTIVATION_PATH,
+            ),
+            RemotePutResultV1::Success
+        );
+        assert_eq!(
+            ImmutableObjectRemoteV1::get_exact(&mut webdav, ACTIVATION_PATH),
+            RemoteExactGetResultV1::DefinitelyAbsent
+        );
+        assert_eq!(
+            webdav.put_exact(ACTIVATION_PATH, &bytes, true),
+            RemotePutResultV1::Success
+        );
+        let requests = received.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(String::from_utf8_lossy(&requests[0]).starts_with("MKCOL /dav/activations"));
+        assert!(String::from_utf8_lossy(&requests[1]).starts_with("GET /dav/activations/"));
+        assert!(String::from_utf8_lossy(&requests[2]).starts_with("PUT /dav/activations/"));
+    }
+
+    #[test]
     fn get_classifies_http_and_bounded_failures() {
         let huge = vec![b'x'; 8 * 1024 * 1024 + 1];
         let (url, _) = server(vec![
             Some(response("404 Not Found", b"")),
+            Some(response("400 Bad Request", b"")),
             Some(response("401 Unauthorized", b"")),
             Some(response("500 Server Error", b"")),
             Some(response("200 OK", &huge)),
@@ -1445,6 +1500,10 @@ mod tests {
         assert_eq!(
             ImmutableObjectRemoteV1::get_exact(&mut webdav, ACTIVATION_PATH),
             RemoteExactGetResultV1::DefinitelyAbsent
+        );
+        assert_eq!(
+            ImmutableObjectRemoteV1::get_exact(&mut webdav, ACTIVATION_PATH),
+            RemoteExactGetResultV1::Indeterminate
         );
         assert_eq!(
             ImmutableObjectRemoteV1::get_exact(&mut webdav, ACTIVATION_PATH),

@@ -75,11 +75,14 @@ struct AdversarialRemote {
     get_calls: Vec<String>,
     put_mode: &'static str,
     get_mode: &'static str,
+    prepare_mode: &'static str,
+    operations: Vec<&'static str>,
     delayed_reads: usize,
 }
 
 impl ImmutableObjectRemoteV1 for AdversarialRemote {
     fn get_exact(&mut self, remote_path: &str) -> RemoteExactGetResultV1 {
+        self.operations.push("GET");
         self.get_calls.push(remote_path.to_string());
         if self.get_mode == "indeterminate" {
             return RemoteExactGetResultV1::Indeterminate;
@@ -98,12 +101,22 @@ impl ImmutableObjectRemoteV1 for AdversarialRemote {
             })
     }
 
+    fn prepare_immutable_parent_collections(&mut self, _remote_path: &str) -> RemotePutResultV1 {
+        self.operations.push("PREPARE");
+        match self.prepare_mode {
+            "indeterminate" => RemotePutResultV1::Indeterminate,
+            "auth" => RemotePutResultV1::AuthOrCapabilityFailure,
+            _ => RemotePutResultV1::Success,
+        }
+    }
+
     fn put_exact(
         &mut self,
         remote_path: &str,
         exact_bytes: &[u8],
         if_none_match_star: bool,
     ) -> RemotePutResultV1 {
+        self.operations.push("PUT");
         self.put_calls.push((
             remote_path.to_string(),
             exact_bytes.to_vec(),
@@ -122,6 +135,47 @@ impl ImmutableObjectRemoteV1 for AdversarialRemote {
             "store-then-timeout" => RemotePutResultV1::Indeterminate,
             _ => RemotePutResultV1::Success,
         }
+    }
+}
+
+#[test]
+fn publication_prepares_before_fresh_exact_preflight_and_fails_closed() {
+    let fixture = fixture();
+    let intent = prepared(&fixture);
+
+    let mut fresh = AdversarialRemote::default();
+    assert_eq!(
+        outcome_name(&publish_persisted(&intent, &mut fresh)),
+        "AlreadyPublishedExact"
+    );
+    assert_eq!(fresh.operations, ["PREPARE", "GET", "PUT", "GET"]);
+    assert_eq!(fresh.put_calls.len(), 1);
+
+    let mut exact = AdversarialRemote::default();
+    exact
+        .objects
+        .insert(intent.remote_path.clone(), intent.exact_bytes.clone());
+    assert_eq!(
+        outcome_name(&publish_persisted(&intent, &mut exact)),
+        "AlreadyPublishedExact"
+    );
+    assert_eq!(exact.operations, ["PREPARE", "GET"]);
+    assert!(exact.put_calls.is_empty());
+
+    for (mode, outcome) in [
+        ("indeterminate", "RemoteIndeterminate"),
+        ("auth", "AuthOrCapabilityFailure"),
+    ] {
+        let mut blocked = AdversarialRemote {
+            prepare_mode: mode,
+            ..Default::default()
+        };
+        assert_eq!(
+            outcome_name(&publish_persisted(&intent, &mut blocked)),
+            outcome
+        );
+        assert_eq!(blocked.operations, ["PREPARE"]);
+        assert!(blocked.put_calls.is_empty());
     }
 }
 

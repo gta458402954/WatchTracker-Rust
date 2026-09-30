@@ -93,6 +93,15 @@ pub trait ImmutableObjectRemoteV1 {
         None
     }
 
+    /// Publication-only infrastructure admission for one already-validated
+    /// immutable object path. Read-only recovery and discovery must never use
+    /// this hook. The default keeps deterministic non-WebDAV remotes side
+    /// effect free while the production adapter provisions the canonical DAV
+    /// parent chain.
+    fn prepare_immutable_parent_collections(&mut self, _remote_path: &str) -> RemotePutResultV1 {
+        RemotePutResultV1::Success
+    }
+
     fn get_exact(&mut self, remote_path: &str) -> RemoteExactGetResultV1;
     fn put_exact(
         &mut self,
@@ -393,6 +402,15 @@ fn publish_prepared_intent_v1<R: ImmutableObjectRemoteV1>(
     remote: &mut R,
     verified_at_diagnostic: &str,
 ) -> Result<RecoverPreparedIntentResultV1> {
+    match remote.prepare_immutable_parent_collections(&intent.remote_path) {
+        RemotePutResultV1::Success => {}
+        RemotePutResultV1::Indeterminate => {
+            return Ok(RecoverPreparedIntentResultV1::RemoteIndeterminate)
+        }
+        RemotePutResultV1::AuthOrCapabilityFailure => {
+            return Ok(RecoverPreparedIntentResultV1::AuthOrCapabilityFailure)
+        }
+    }
     let preflight = recover_prepared_intent_v1(intent, remote, verified_at_diagnostic)?;
     if !matches!(preflight, RecoverPreparedIntentResultV1::RetryPublishExact) {
         return Ok(preflight);
@@ -447,24 +465,7 @@ pub fn publish_admitted_persisted_intent_v1<R: ImmutableObjectRemoteV1>(
     if persisted.persisted_fingerprint != persisted.intent.intent_fingerprint {
         return Err(ProtocolError("LOCAL_PREPARED_INTENT_CORRUPTION"));
     }
-    let put_result = remote.put_exact(
-        &persisted.intent.remote_path,
-        &persisted.intent.exact_bytes,
-        true,
-    );
-    let verification = classify_exact_get_v1(
-        &persisted.intent,
-        remote.get_exact(&persisted.intent.remote_path),
-        verified_at_diagnostic,
-    )?;
-    if matches!(
-        verification,
-        RecoverPreparedIntentResultV1::RetryPublishExact
-    ) && put_result == RemotePutResultV1::AuthOrCapabilityFailure
-    {
-        return Ok(RecoverPreparedIntentResultV1::AuthOrCapabilityFailure);
-    }
-    Ok(verification)
+    publish_prepared_intent_v1(&persisted.intent, remote, verified_at_diagnostic)
 }
 
 pub fn restart_durable_publish_v1<R: ImmutableObjectRemoteV1>(
@@ -578,6 +579,15 @@ fn publish_prepared_activation_intent_v1<R: ImmutableObjectRemoteV1>(
 ) -> Result<PublishActivationResultV1> {
     validate_prepared_activation_intent_v1(intent)?;
     validate_timestamp(verified_at_diagnostic)?;
+    match remote.prepare_immutable_parent_collections(&intent.remote_path) {
+        RemotePutResultV1::Success => {}
+        RemotePutResultV1::Indeterminate => {
+            return Ok(PublishActivationResultV1::RemoteIndeterminate)
+        }
+        RemotePutResultV1::AuthOrCapabilityFailure => {
+            return Ok(PublishActivationResultV1::AuthOrCapabilityFailure)
+        }
+    }
     let mut fetched = remote.get_exact(&intent.remote_path);
     if fetched == RemoteExactGetResultV1::DefinitelyAbsent {
         let put = remote.put_exact(&intent.remote_path, &intent.exact_bytes, true);
@@ -653,49 +663,7 @@ pub fn publish_admitted_persisted_activation_intent_v1<R: ImmutableObjectRemoteV
     if persisted.persisted_fingerprint != persisted.intent.intent_fingerprint {
         return Err(ProtocolError("LOCAL_PREPARED_INTENT_CORRUPTION"));
     }
-    let put = remote.put_exact(
-        &persisted.intent.remote_path,
-        &persisted.intent.exact_bytes,
-        true,
-    );
-    let fetched = remote.get_exact(&persisted.intent.remote_path);
-    if fetched == RemoteExactGetResultV1::DefinitelyAbsent
-        && put == RemotePutResultV1::AuthOrCapabilityFailure
-    {
-        return Ok(PublishActivationResultV1::AuthOrCapabilityFailure);
-    }
-    match fetched {
-        RemoteExactGetResultV1::Indeterminate | RemoteExactGetResultV1::DefinitelyAbsent => {
-            Ok(PublishActivationResultV1::RemoteIndeterminate)
-        }
-        RemoteExactGetResultV1::AuthOrCapabilityFailure => {
-            Ok(PublishActivationResultV1::AuthOrCapabilityFailure)
-        }
-        RemoteExactGetResultV1::DefinitelyPresent(bytes)
-            if bytes == persisted.intent.exact_bytes =>
-        {
-            Ok(PublishActivationResultV1::AlreadyPublishedExact(
-                PublishedActivationReceiptV1 {
-                    receipt_version: 1,
-                    remote_path: persisted.intent.remote_path.clone(),
-                    content_hash: persisted.intent.content_hash.clone(),
-                    activation_id: persisted.intent.activation_id.clone(),
-                    prepared_intent_fingerprint: persisted.intent.intent_fingerprint.clone(),
-                    verified_exact_bytes_hash: persisted.intent.content_hash.clone(),
-                    verified_at_diagnostic: verified_at_diagnostic.to_string(),
-                },
-            ))
-        }
-        RemoteExactGetResultV1::DefinitelyPresent(bytes) => Ok(
-            PublishActivationResultV1::CorruptionMismatch(ImmutablePathMismatchEventV1 {
-                code: "REMOTE_IMMUTABLE_PATH_CONTENT_MISMATCH",
-                freeze_class: "SYNC_ROOT_FROZEN_CORRUPTION",
-                remote_path: persisted.intent.remote_path.clone(),
-                expected_content_hash: persisted.intent.content_hash.clone(),
-                observed_content_hash: sha256_hex(&bytes),
-            }),
-        ),
-    }
+    publish_prepared_activation_intent_v1(&persisted.intent, remote, verified_at_diagnostic)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

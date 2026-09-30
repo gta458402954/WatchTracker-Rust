@@ -119,6 +119,12 @@ impl<R: ImmutableObjectRemoteV1> ImmutableObjectRemoteV1 for ClassifiedImmutable
         result
     }
 
+    fn prepare_immutable_parent_collections(&mut self, remote_path: &str) -> RemotePutResultV1 {
+        let result = self.inner.prepare_immutable_parent_collections(remote_path);
+        self.observe_put(result);
+        result
+    }
+
     fn put_exact(
         &mut self,
         remote_path: &str,
@@ -897,6 +903,7 @@ mod tests {
         scripted_gets: VecDeque<RemoteExactGetResultV1>,
         get_calls: usize,
         put_calls: usize,
+        preparation_calls: usize,
     }
 
     #[derive(Clone)]
@@ -923,6 +930,11 @@ mod tests {
                     RemoteExactGetResultV1::DefinitelyPresent,
                 )
             })
+        }
+
+        fn prepare_immutable_parent_collections(&mut self, _path: &str) -> RemotePutResultV1 {
+            self.state.lock().unwrap().preparation_calls += 1;
+            RemotePutResultV1::Success
         }
 
         fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
@@ -1383,6 +1395,12 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(fixture), BootstrapExecutionResultV1::Progressed);
         let task = task(fixture);
         assert!(task.receipt.is_none());
@@ -1499,11 +1517,21 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 0);
+        assert_eq!(fixture.remote_state.lock().unwrap().preparation_calls, 1);
 
         let task = task(&fixture);
         let mut state = fixture.remote_state.lock().unwrap();
+        state
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
         state
             .scripted_gets
             .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
@@ -1597,6 +1625,12 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         let task = task(&fixture);
         fixture
@@ -1634,9 +1668,18 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         let before = task(&fixture);
         let mut remote = fixture.remote_state.lock().unwrap();
+        remote
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         remote
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
@@ -1731,6 +1774,9 @@ mod tests {
             .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
         remote
             .scripted_gets
+            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
+        remote
+            .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
         drop(remote);
         assert_eq!(
@@ -1775,6 +1821,12 @@ mod tests {
             run_activation(&fixture),
             ActivationExecutionResultV1::Progressed
         );
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         fixture
             .remote_state
             .lock()
@@ -2087,6 +2139,12 @@ mod tests {
             run_activation(&fixture),
             ActivationExecutionResultV1::Progressed
         );
+        fixture
+            .remote_state
+            .lock()
+            .unwrap()
+            .scripted_gets
+            .push_back(RemoteExactGetResultV1::Indeterminate);
         fixture
             .remote_state
             .lock()

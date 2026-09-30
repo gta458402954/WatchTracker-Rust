@@ -234,6 +234,9 @@ struct FakeRemote {
     detailed_trace: Vec<Value>,
     response_lost: bool,
     scripted_gets: VecDeque<RemoteExactGetResultV1>,
+    preparation_result: RemotePutResultV1,
+    preparation_calls: usize,
+    record_preparation: bool,
     fatal_signal: Option<Arc<AtomicBool>>,
     signal_fatal_on_get: bool,
     signal_fatal_on_put: bool,
@@ -250,6 +253,9 @@ impl Default for FakeRemote {
             detailed_trace: Vec::new(),
             response_lost: false,
             scripted_gets: VecDeque::new(),
+            preparation_result: RemotePutResultV1::Success,
+            preparation_calls: 0,
+            record_preparation: false,
             fatal_signal: None,
             signal_fatal_on_get: false,
             signal_fatal_on_put: false,
@@ -283,6 +289,16 @@ impl ImmutableObjectRemoteV1 for FakeRemote {
             }
         }
         result
+    }
+
+    fn prepare_immutable_parent_collections(&mut self, path: &str) -> RemotePutResultV1 {
+        self.preparation_calls += 1;
+        if self.record_preparation {
+            self.trace.push("PREPARE".to_string());
+            self.detailed_trace
+                .push(json!({ "operation": "PREPARE", "path": path }));
+        }
+        self.preparation_result
     }
 
     fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
@@ -742,6 +758,90 @@ fn shared_execution_scenarios_restart_and_finish_through_cutover() {
             );
         }
     }
+}
+
+#[test]
+fn admitted_bootstrap_and_activation_preflight_after_collection_preparation() {
+    let fixture = fixture();
+    let timestamp = fixture["identity"]["createdAt"].as_str().unwrap();
+
+    // A side-effect-free recovery can be indeterminate on a fresh provider
+    // root. The only mutation-capable retry enters the SQLite admission first,
+    // then prepares the canonical parents and repeats exact GET before PUT.
+    let mut bootstrap = planned_for(&fixture, &fixture["planningScenarios"][1]);
+    bootstrap.status = MigrationStatusV1::StageAPublishing;
+    let mut bootstrap_remote = FakeRemote {
+        root_id: bootstrap.root_id.clone(),
+        scripted_gets: VecDeque::from([
+            RemoteExactGetResultV1::Indeterminate,
+            RemoteExactGetResultV1::DefinitelyAbsent,
+        ]),
+        record_preparation: true,
+        ..FakeRemote::default()
+    };
+    let mut bootstrap_stores = FakeStores::default();
+    bootstrap_stores.migration.current = Some(bootstrap.clone());
+    let bootstrap_next = execute(
+        &bootstrap,
+        &mut bootstrap_remote,
+        &mut bootstrap_stores,
+        timestamp,
+    );
+    assert_eq!(bootstrap_next.status, MigrationStatusV1::StageAComplete);
+    assert_eq!(bootstrap_remote.preparation_calls, 1);
+    assert_eq!(
+        bootstrap_remote.trace,
+        ["GET", "PREPARE", "GET", "PUT", "GET"]
+    );
+
+    let mut activation = planned_for(&fixture, &fixture["planningScenarios"][2]);
+    let mut setup_remote = FakeRemote::default();
+    let mut activation_stores = FakeStores::default();
+    while activation.status != MigrationStatusV1::ActivationPublishing {
+        activation = execute(
+            &activation,
+            &mut setup_remote,
+            &mut activation_stores,
+            timestamp,
+        );
+    }
+    let mut activation_remote = FakeRemote {
+        root_id: activation.root_id.clone(),
+        scripted_gets: VecDeque::from([
+            RemoteExactGetResultV1::Indeterminate,
+            RemoteExactGetResultV1::DefinitelyAbsent,
+        ]),
+        record_preparation: true,
+        ..FakeRemote::default()
+    };
+    let activation_next = execute(
+        &activation,
+        &mut activation_remote,
+        &mut activation_stores,
+        timestamp,
+    );
+    assert_eq!(
+        activation_next.status,
+        MigrationStatusV1::ActivationVerified
+    );
+    assert_eq!(activation_remote.preparation_calls, 1);
+    assert_eq!(
+        activation_remote.trace,
+        ["GET", "PREPARE", "GET", "PUT", "GET"]
+    );
+
+    let mut frozen = planned_for(&fixture, &fixture["planningScenarios"][1]);
+    frozen.status = MigrationStatusV1::StageAPublishing;
+    let mut frozen_remote = FakeRemote::default();
+    let mut frozen_stores = FakeStores::default();
+    frozen_stores.migration.current = Some(frozen.clone());
+    frozen_stores.migration.freeze_before_publish = true;
+    assert_eq!(
+        execute(&frozen, &mut frozen_remote, &mut frozen_stores, timestamp).status,
+        MigrationStatusV1::RootFrozen
+    );
+    assert_eq!(frozen_remote.preparation_calls, 0);
+    assert!(frozen_remote.put_counts.is_empty());
 }
 
 #[test]
