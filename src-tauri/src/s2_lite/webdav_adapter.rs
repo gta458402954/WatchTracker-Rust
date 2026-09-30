@@ -691,7 +691,10 @@ impl WebDavS2RemoteV1 {
         let mut hrefs = Vec::new();
         let mut depth = 0_usize;
         let mut response_href = None;
-        let mut response_status = None;
+        let mut response_status_seen = false;
+        let mut propstat_seen = false;
+        let mut in_propstat = false;
+        let mut propstat_status_seen = false;
         let mut in_href = false;
         let mut in_status = false;
         let mut text = String::new();
@@ -719,7 +722,17 @@ impl WebDavS2RemoteV1 {
                         return DirectoryListResultV1::Indeterminate;
                     }
                     response_href = None;
-                    response_status = None;
+                    response_status_seen = false;
+                    propstat_seen = false;
+                    in_propstat = false;
+                    propstat_status_seen = false;
+                } else if $local == b"propstat" {
+                    if !$is_dav || depth != 2 || in_propstat || response_status_seen {
+                        return DirectoryListResultV1::Indeterminate;
+                    }
+                    propstat_seen = true;
+                    in_propstat = true;
+                    propstat_status_seen = false;
                 } else if $local == b"href" {
                     if !$is_dav || depth != 2 || in_href {
                         return DirectoryListResultV1::Indeterminate;
@@ -728,6 +741,19 @@ impl WebDavS2RemoteV1 {
                     text.clear();
                 } else if $local == b"status" {
                     if !$is_dav || in_status {
+                        return DirectoryListResultV1::Indeterminate;
+                    }
+                    if depth == 2 {
+                        if response_status_seen || propstat_seen {
+                            return DirectoryListResultV1::Indeterminate;
+                        }
+                        response_status_seen = true;
+                    } else if depth == 3 && in_propstat {
+                        if propstat_status_seen {
+                            return DirectoryListResultV1::Indeterminate;
+                        }
+                        propstat_status_seen = true;
+                    } else {
                         return DirectoryListResultV1::Indeterminate;
                     }
                     in_status = true;
@@ -748,18 +774,18 @@ impl WebDavS2RemoteV1 {
                     response_href = Some(text.clone());
                     in_href = false;
                 } else if $local == b"status" {
-                    if !$is_dav || !in_status {
+                    if !$is_dav || !in_status || !is_success_http_status_line(&text) {
                         return DirectoryListResultV1::Indeterminate;
                     }
-                    response_status = Some(text.clone());
                     in_status = false;
+                } else if $local == b"propstat" {
+                    if !$is_dav || depth != 3 || !in_propstat || !propstat_status_seen || in_status
+                    {
+                        return DirectoryListResultV1::Indeterminate;
+                    }
+                    in_propstat = false;
                 } else if $local == b"response" {
-                    if depth != 2
-                        || !$is_dav
-                        || response_href.is_none()
-                        || response_status.as_deref().is_some_and(|status| {
-                            !status.starts_with("HTTP/") || !status.contains(" 2")
-                        })
+                    if depth != 2 || !$is_dav || response_href.is_none() || in_propstat || in_status
                     {
                         return DirectoryListResultV1::Indeterminate;
                     }
@@ -849,6 +875,7 @@ impl WebDavS2RemoteV1 {
         let root_base = root.path();
         let directory_base = format!("{}{}", root_base, directory);
         let directory_base = format!("{}/", directory_base.trim_end_matches('/'));
+        let directory_self = directory_base.trim_end_matches('/');
         let mut entries = Vec::new();
         for href in hrefs {
             let Ok(url) = directory_url.join(&href) else {
@@ -856,16 +883,22 @@ impl WebDavS2RemoteV1 {
             };
             if url.origin() != root.origin()
                 || !url.path().starts_with(root_base)
-                || !url.path().starts_with(&directory_base)
                 || url.query().is_some()
                 || url.fragment().is_some()
             {
                 return DirectoryListResultV1::Indeterminate;
             }
-            let relative = &url.path()[directory_base.len()..];
-            let relative = relative.trim_end_matches('/');
-            if relative.is_empty() {
+            let path = url.path();
+            if path == directory_self || path == directory_base {
                 continue;
+            }
+            if !path.starts_with(&directory_base) {
+                return DirectoryListResultV1::Indeterminate;
+            }
+            let relative = &path[directory_base.len()..];
+            let relative = relative.strip_suffix('/').unwrap_or(relative);
+            if relative.is_empty() {
+                return DirectoryListResultV1::Indeterminate;
             }
             if safe_relative_path(relative).is_err() || relative.contains('/') {
                 return DirectoryListResultV1::Indeterminate;
@@ -1566,6 +1599,193 @@ mod tests {
                 DirectoryListResultV1::Indeterminate
             );
         }
+    }
+
+    #[test]
+    fn depth_one_collection_self_href_is_exactly_delimited() {
+        // Jianguoyun emits the collection self href without the trailing slash
+        // while retaining the slash on direct children.
+        let response_for = |hrefs: &[&str], status: &str| {
+            let responses = hrefs
+                .iter()
+                .map(|href| {
+                    format!(
+                        "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>{status}</d:status></d:propstat></d:response>"
+                    )
+                })
+                .collect::<String>();
+            format!("<d:multistatus xmlns:d=\"DAV:\">{responses}</d:multistatus>").into_bytes()
+        };
+        let no_trailing_self = response_for(
+            &["/dav/activations", "/dav/activations/immutable.json"],
+            "HTTP/1.1 200 OK",
+        );
+        let trailing_self = response_for(
+            &["/dav/activations/", "/dav/activations/immutable.json"],
+            "HTTP/1.1 200 OK",
+        );
+        let no_trailing_self_only = response_for(&["/dav/activations"], "HTTP/1.1 200 OK");
+        let trailing_self_only = response_for(&["/dav/activations/"], "HTTP/1.1 200 OK");
+        let double_trailing_self = response_for(&["/dav/activations//"], "HTTP/1.1 200 OK");
+        let triple_trailing_self = response_for(&["/dav/activations///"], "HTTP/1.1 200 OK");
+        let trailing_child = response_for(&["/dav/activations/immutable.json/"], "HTTP/1.1 200 OK");
+        let double_trailing_child =
+            response_for(&["/dav/activations/immutable.json//"], "HTTP/1.1 200 OK");
+        let triple_trailing_child =
+            response_for(&["/dav/activations/immutable.json///"], "HTTP/1.1 200 OK");
+        let sibling_prefix = response_for(&["/dav/activations-evil"], "HTTP/1.1 200 OK");
+        let nested_child = response_for(
+            &["/dav/activations/immutable.json/nested.json"],
+            "HTTP/1.1 200 OK",
+        );
+        let foreign_origin = response_for(
+            &["https://evil.example/dav/activations/immutable.json"],
+            "HTTP/1.1 200 OK",
+        );
+        let outside_root = response_for(&["/other/immutable.json"], "HTTP/1.1 200 OK");
+        let query = response_for(
+            &["/dav/activations/immutable.json?unexpected=1"],
+            "HTTP/1.1 200 OK",
+        );
+        let fragment = response_for(
+            &["/dav/activations/immutable.json#unexpected"],
+            "HTTP/1.1 200 OK",
+        );
+        let duplicate_child = response_for(
+            &[
+                "/dav/activations",
+                "/dav/activations/immutable.json",
+                "/dav/activations/immutable.json",
+            ],
+            "HTTP/1.1 200 OK",
+        );
+        let malformed_success = response_for(
+            &["/dav/activations/immutable.json"],
+            "HTTP/1.1 404 2 Not Found",
+        );
+        let (url, _) = server(vec![
+            Some(response("207 Multi-Status", &no_trailing_self)),
+            Some(response("207 Multi-Status", &trailing_self)),
+            Some(response("207 Multi-Status", &no_trailing_self_only)),
+            Some(response("207 Multi-Status", &trailing_self_only)),
+            Some(response("207 Multi-Status", &double_trailing_self)),
+            Some(response("207 Multi-Status", &triple_trailing_self)),
+            Some(response("207 Multi-Status", &trailing_child)),
+            Some(response("207 Multi-Status", &double_trailing_child)),
+            Some(response("207 Multi-Status", &triple_trailing_child)),
+            Some(response("207 Multi-Status", &sibling_prefix)),
+            Some(response("207 Multi-Status", &nested_child)),
+            Some(response("207 Multi-Status", &foreign_origin)),
+            Some(response("207 Multi-Status", &outside_root)),
+            Some(response("207 Multi-Status", &query)),
+            Some(response("207 Multi-Status", &fragment)),
+            Some(response("207 Multi-Status", &duplicate_child)),
+            Some(response("207 Multi-Status", &malformed_success)),
+        ]);
+        let mut remote = remote(&url);
+        let child = DirectoryListResultV1::Entries(vec!["activations/immutable.json".into()]);
+        assert_eq!(remote.list_directory("activations"), child);
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec!["activations/immutable.json".into()])
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec![])
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec![])
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Indeterminate
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Indeterminate
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec!["activations/immutable.json".into()])
+        );
+        for _ in 0..8 {
+            assert_eq!(
+                remote.list_directory("activations"),
+                DirectoryListResultV1::Indeterminate
+            );
+        }
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec!["activations/immutable.json".into()])
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Indeterminate
+        );
+    }
+
+    #[test]
+    fn depth_one_dav_status_families_are_strict_and_non_mixing() {
+        let response_for = |status_body: &str| {
+            format!(
+                "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>/dav/activations/immutable.json</d:href>{status_body}</d:response></d:multistatus>"
+            )
+            .into_bytes()
+        };
+        let propstat = |status: &str| {
+            format!(
+                "<d:propstat><d:prop><d:resourcetype/></d:prop><d:status>{status}</d:status></d:propstat>"
+            )
+        };
+        let response_404_then_propstat_200 = response_for(&format!(
+            "<d:status>HTTP/1.1 404 Not Found</d:status>{}",
+            propstat("HTTP/1.1 200 OK")
+        ));
+        let response_200_then_propstat_200 = response_for(&format!(
+            "<d:status>HTTP/1.1 200 OK</d:status>{}",
+            propstat("HTTP/1.1 200 OK")
+        ));
+        let duplicate_response_status = response_for(
+            "<d:status>HTTP/1.1 200 OK</d:status><d:status>HTTP/1.1 200 OK</d:status>",
+        );
+        let duplicate_propstat_status = response_for(
+            "<d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status><d:status>HTTP/1.1 200 OK</d:status></d:propstat>",
+        );
+        let missing_propstat_status =
+            response_for("<d:propstat><d:prop><d:resourcetype/></d:prop></d:propstat>");
+        let jianguoyun_propstat_200 = response_for(&propstat("HTTP/1.1 200 OK"));
+        let fake_success = response_for(&propstat("HTTP/1.1 404 2 Not Found"));
+        let (url, _) = server(vec![
+            Some(response(
+                "207 Multi-Status",
+                &response_404_then_propstat_200,
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_200_then_propstat_200,
+            )),
+            Some(response("207 Multi-Status", &duplicate_response_status)),
+            Some(response("207 Multi-Status", &duplicate_propstat_status)),
+            Some(response("207 Multi-Status", &missing_propstat_status)),
+            Some(response("207 Multi-Status", &jianguoyun_propstat_200)),
+            Some(response("207 Multi-Status", &fake_success)),
+        ]);
+        let mut remote = remote(&url);
+        for _ in 0..5 {
+            assert_eq!(
+                remote.list_directory("activations"),
+                DirectoryListResultV1::Indeterminate
+            );
+        }
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec!["activations/immutable.json".into()])
+        );
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Indeterminate
+        );
     }
 
     #[test]
