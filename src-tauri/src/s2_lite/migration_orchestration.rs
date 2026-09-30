@@ -15,7 +15,7 @@ use super::immutable_publish::{
     persist_prepared_intent_before_publish_v1, persist_verified_activation_receipt_v1,
     persist_verified_receipt_v1, prepare_activation_intent_v1, prepare_commit_intent_v1,
     publish_admitted_persisted_activation_intent_v1, publish_admitted_persisted_intent_v1,
-    restart_durable_activation_publish_v1, restart_durable_publish_v1,
+    reuse_durable_published_activation_receipt_v1, reuse_durable_published_receipt_v1,
     validate_prepared_activation_intent_v1, validate_prepared_intent_v1,
     validate_published_activation_receipt_v1, validate_published_receipt_v1,
     ImmutableObjectRemoteV1, PreparedActivationIntentStoreV1, PreparedActivationIntentV1,
@@ -1045,22 +1045,10 @@ pub fn execute_migration_step_v1<
                 return Err(ProtocolError("LOCAL_PUBLISHED_RECEIPT_CORRUPTION"));
             }
         }
-        let mut result = restart_durable_publish_v1(
-            &task.intent,
-            task.receipt.as_ref().or(durable_receipt.as_ref()),
-            remote,
-            verified_at_diagnostic,
-        )?;
-        // Read-only recovery is useful evidence, but a fresh root can report
-        // an unprovisioned child as indeterminate. Any unresolved attempt is
-        // therefore re-read only after the SQLite publication admission has
-        // authorized parent provisioning for this exact durable intent.
-        if !matches!(
-            result,
-            RecoverPreparedIntentResultV1::AlreadyPublishedExact(_)
-                | RecoverPreparedIntentResultV1::CorruptionMismatch(_)
-        ) {
-            result = match migration_store.run_publish_exclusive(
+        let result = if let Some(receipt) = task.receipt.as_ref().or(durable_receipt.as_ref()) {
+            reuse_durable_published_receipt_v1(&task.intent, receipt)?
+        } else {
+            match migration_store.run_publish_exclusive(
                 &state.root_id,
                 &state.migration_id,
                 state.generation,
@@ -1071,8 +1059,8 @@ pub fn execute_migration_step_v1<
                 PublishExclusiveResultV1::Rejected(current) => {
                     return reconcile_migration_state_v1(&current)
                 }
-            };
-        }
+            }
+        };
         match result {
             RecoverPreparedIntentResultV1::CorruptionMismatch(event) => {
                 let frozen = migration_store
@@ -1130,23 +1118,14 @@ pub fn execute_migration_step_v1<
                 ));
             }
         }
-        let mut result = restart_durable_activation_publish_v1(
-            &intent,
-            state
-                .activation_receipt
-                .as_ref()
-                .or(durable_receipt.as_ref()),
-            remote,
-            verified_at_diagnostic,
-        )?;
-        // See the equivalent commit path above: only a durable receipt or an
-        // already-observed mismatch may bypass the admitted fresh preflight.
-        if !matches!(
-            result,
-            RecoverActivationIntentResultV1::AlreadyPublishedExact(_)
-                | RecoverActivationIntentResultV1::CorruptionMismatch(_)
-        ) {
-            result = match migration_store.run_publish_exclusive(
+        let result = if let Some(receipt) = state
+            .activation_receipt
+            .as_ref()
+            .or(durable_receipt.as_ref())
+        {
+            reuse_durable_published_activation_receipt_v1(&intent, receipt)?
+        } else {
+            match migration_store.run_publish_exclusive(
                 &state.root_id,
                 &state.migration_id,
                 state.generation,
@@ -1176,8 +1155,8 @@ pub fn execute_migration_step_v1<
                 PublishExclusiveResultV1::Rejected(current) => {
                     return reconcile_migration_state_v1(&current)
                 }
-            };
-        }
+            }
+        };
         match result {
             RecoverActivationIntentResultV1::CorruptionMismatch(event) => {
                 let frozen = migration_store

@@ -121,7 +121,7 @@
     { "name": "same-root-handoff", "expected": "invalid_frozen_root_handoff", "expectedOperations": [] },
     { "name": "known-fatal-blocks-publish", "expectedStatus": "ROOT_FROZEN", "expectedOperations": [] },
     { "name": "freeze-before-exclusive-publish", "expectedStatus": "ROOT_FROZEN", "expectedOperations": ["GET"] },
-    { "name": "activation-cutover-crash", "expectedLegacyAllowed": false, "expectedFinalStatus": "MIGRATION_COMPLETE", "expectedOperations": ["GET", "GET", "PUT", "GET"] },
+    { "name": "activation-cutover-crash", "expectedLegacyAllowed": false, "expectedFinalStatus": "MIGRATION_COMPLETE", "expectedOperations": ["GET", "PUT", "GET"] },
     { "name": "stale-complete", "expectedLegacyAllowed": false, "expectedFinalStatus": "MIGRATION_COMPLETE" },
     { "name": "duplicate-concurrent-start", "expectedAttemptCount": 1, "expectedOperations": [] },
     { "name": "stage-b-partial-crash", "expectedNoStageARepublish": true },
@@ -275,7 +275,6 @@
       "expectedOperations": [
         { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
         { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
-        { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
         { "operation": "PUT", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
         { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" }
       ],
@@ -293,7 +292,6 @@
       "name": "fatal-after-admitted-put-blocks-next",
       "expectedActualRoot": "root://legacy",
       "expectedOperations": [
-        { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
         { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
         { "operation": "GET", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },
         { "operation": "PUT", "path": "writers/61000000-0000-4000-8000-000000000001/segments/00000000000000/00000000000000000001--7fc73f29-b172-4e99-91d5-e459198ef94e--db8bda91727512bc0db2f660a6fe1c5b1400900d02972bef0b81d7d9592e791b.json" },

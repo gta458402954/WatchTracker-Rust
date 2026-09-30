@@ -484,6 +484,20 @@ pub fn restart_durable_publish_v1<R: ImmutableObjectRemoteV1>(
     recover_prepared_intent_v1(durable_intent, remote, verified_at_diagnostic)
 }
 
+/// Validates and reuses an already durable receipt without making any remote
+/// observation. Mutating production paths use this before admission; absent
+/// receipts must enter admission before their first publication-decision GET.
+pub fn reuse_durable_published_receipt_v1(
+    intent: &PreparedIntentV1,
+    receipt: &RemotePublishedReceiptV1,
+) -> Result<RecoverPreparedIntentResultV1> {
+    validate_prepared_intent_v1(intent)?;
+    validate_published_receipt_v1(receipt, intent)?;
+    Ok(RecoverPreparedIntentResultV1::AlreadyPublishedExact(
+        receipt.clone(),
+    ))
+}
+
 pub fn persist_verified_receipt_v1<S: PublishedReceiptStoreV1>(
     result: &RecoverPreparedIntentResultV1,
     intent: &PreparedIntentV1,
@@ -722,6 +736,18 @@ pub fn restart_durable_activation_publish_v1<R: ImmutableObjectRemoteV1>(
             }),
         ),
     }
+}
+
+/// Activation equivalent of `reuse_durable_published_receipt_v1`.
+pub fn reuse_durable_published_activation_receipt_v1(
+    intent: &PreparedActivationIntentV1,
+    receipt: &PublishedActivationReceiptV1,
+) -> Result<RecoverActivationIntentResultV1> {
+    validate_prepared_activation_intent_v1(intent)?;
+    validate_published_activation_receipt_v1(receipt, intent)?;
+    Ok(RecoverActivationIntentResultV1::AlreadyPublishedExact(
+        receipt.clone(),
+    ))
 }
 
 pub fn persist_verified_activation_receipt_v1<S: PublishedActivationReceiptStoreV1>(

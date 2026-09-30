@@ -1395,12 +1395,6 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
-        fixture
-            .remote_state
-            .lock()
-            .unwrap()
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(fixture), BootstrapExecutionResultV1::Progressed);
         let task = task(fixture);
         assert!(task.receipt.is_none());
@@ -1517,21 +1511,12 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
-        fixture
-            .remote_state
-            .lock()
-            .unwrap()
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 0);
         assert_eq!(fixture.remote_state.lock().unwrap().preparation_calls, 1);
 
         let task = task(&fixture);
         let mut state = fixture.remote_state.lock().unwrap();
-        state
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
         state
             .scripted_gets
             .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
@@ -1625,12 +1610,6 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
-        fixture
-            .remote_state
-            .lock()
-            .unwrap()
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         let task = task(&fixture);
         fixture
@@ -1668,18 +1647,9 @@ mod tests {
             .unwrap()
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
-        fixture
-            .remote_state
-            .lock()
-            .unwrap()
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         assert_eq!(run(&fixture), BootstrapExecutionResultV1::Progressed);
         let before = task(&fixture);
         let mut remote = fixture.remote_state.lock().unwrap();
-        remote
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         remote
             .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
@@ -1774,9 +1744,6 @@ mod tests {
             .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
         remote
             .scripted_gets
-            .push_back(RemoteExactGetResultV1::DefinitelyAbsent);
-        remote
-            .scripted_gets
             .push_back(RemoteExactGetResultV1::Indeterminate);
         drop(remote);
         assert_eq!(
@@ -1821,12 +1788,6 @@ mod tests {
             run_activation(&fixture),
             ActivationExecutionResultV1::Progressed
         );
-        fixture
-            .remote_state
-            .lock()
-            .unwrap()
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         fixture
             .remote_state
             .lock()
@@ -2139,12 +2100,6 @@ mod tests {
             run_activation(&fixture),
             ActivationExecutionResultV1::Progressed
         );
-        fixture
-            .remote_state
-            .lock()
-            .unwrap()
-            .scripted_gets
-            .push_back(RemoteExactGetResultV1::Indeterminate);
         fixture
             .remote_state
             .lock()

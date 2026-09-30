@@ -30,6 +30,7 @@ struct RemoteState {
     preparation_calls: usize,
     preparation_result: RemotePutResultV1,
     puts: Vec<(String, Vec<u8>)>,
+    operations: Vec<&'static str>,
 }
 
 impl Default for RemoteState {
@@ -42,6 +43,7 @@ impl Default for RemoteState {
             preparation_calls: 0,
             preparation_result: RemotePutResultV1::Success,
             puts: vec![],
+            operations: vec![],
         }
     }
 }
@@ -62,6 +64,7 @@ impl ImmutableObjectRemoteV1 for FakeRemote {
 
     fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
         let mut state = self.state.lock().unwrap();
+        state.operations.push("GET");
         state.get_results.pop_front().unwrap_or_else(|| {
             state.objects.get(path).cloned().map_or(
                 RemoteExactGetResultV1::DefinitelyAbsent,
@@ -72,12 +75,14 @@ impl ImmutableObjectRemoteV1 for FakeRemote {
 
     fn prepare_immutable_parent_collections(&mut self, _path: &str) -> RemotePutResultV1 {
         let mut state = self.state.lock().unwrap();
+        state.operations.push("PREPARE");
         state.preparation_calls += 1;
         state.preparation_result
     }
 
     fn put_exact(&mut self, path: &str, bytes: &[u8], _: bool) -> RemotePutResultV1 {
         let mut state = self.state.lock().unwrap();
+        state.operations.push("PUT");
         state.put_calls += 1;
         state.puts.push((path.to_string(), bytes.to_vec()));
         state.objects.insert(path.to_string(), bytes.to_vec());
@@ -311,6 +316,10 @@ fn exact_existing_and_definitely_absent_both_persist_only_verified_receipts() {
     let remote = absent_state.lock().unwrap();
     assert_eq!(remote.put_calls, 1);
     assert_eq!(remote.preparation_calls, 1);
+    assert_eq!(
+        remote.operations,
+        vec!["PREPARE", "GET", "PUT", "GET", "GET"]
+    );
     assert_eq!(
         remote.puts,
         vec![(absent_intent.remote_path.clone(), absent_intent.exact_bytes)]
