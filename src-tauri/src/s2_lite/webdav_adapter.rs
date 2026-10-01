@@ -175,6 +175,202 @@ fn safe_relative_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+fn decode_url_path_segment_v1(segment: &str) -> Option<String> {
+    fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return None;
+        }
+        decoded.push((hex(bytes[index + 1])? << 4) | hex(bytes[index + 2])?);
+        index += 3;
+    }
+    let decoded = String::from_utf8(decoded).ok()?;
+    if decoded.is_empty() || matches!(decoded.as_str(), "." | "..") || decoded.contains(['/', '\\'])
+    {
+        return None;
+    }
+    Some(decoded)
+}
+
+/// Validates the provider's href path lexically before URL resolution has an
+/// opportunity to remove dot segments.  The URL parse/join below still owns
+/// origin, query, fragment, and resolved-root checks.
+fn raw_dav_href_path_is_safe_v1(href: &str) -> bool {
+    if href.contains('\\') {
+        return false;
+    }
+    let path_end = href.find(['?', '#']).unwrap_or(href.len());
+    let before_query_or_fragment = &href[..path_end];
+    let path = if before_query_or_fragment.starts_with('/') {
+        before_query_or_fragment
+    } else {
+        let Some(colon) = before_query_or_fragment.find(':') else {
+            return raw_dav_href_path_segments_are_safe_v1(before_query_or_fragment, false);
+        };
+        let scheme = &before_query_or_fragment[..colon];
+        let remainder = &before_query_or_fragment[colon + 1..];
+        if scheme.is_empty()
+            || !scheme.bytes().enumerate().all(|(index, byte)| {
+                if index == 0 {
+                    byte.is_ascii_alphabetic()
+                } else {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.')
+                }
+            })
+            || !remainder.starts_with("//")
+        {
+            return raw_dav_href_path_segments_are_safe_v1(before_query_or_fragment, false);
+        }
+        let authority_and_path = &remainder[2..];
+        match authority_and_path.find('/') {
+            Some(index) => &authority_and_path[index..],
+            None => "",
+        }
+    };
+    raw_dav_href_path_segments_are_safe_v1(path, path.starts_with('/'))
+}
+
+fn raw_dav_href_path_segments_are_safe_v1(path: &str, absolute: bool) -> bool {
+    let path = if absolute {
+        let Some(path) = path.strip_prefix('/') else {
+            return false;
+        };
+        if path.starts_with('/') {
+            return false;
+        }
+        path
+    } else {
+        path
+    };
+    if path.is_empty() {
+        return true;
+    }
+    let mut segments = path.split('/').collect::<Vec<_>>();
+    let trailing_slashes = segments
+        .iter()
+        .rev()
+        .take_while(|segment| segment.is_empty())
+        .count();
+    if trailing_slashes > 1 {
+        return false;
+    }
+    segments.truncate(segments.len().saturating_sub(trailing_slashes));
+    !segments.is_empty()
+        && segments
+            .iter()
+            .all(|segment| !segment.is_empty() && decode_url_path_segment_v1(segment).is_some())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct DecodedUrlPathV1 {
+    segments: Vec<String>,
+    trailing_slashes: usize,
+}
+
+/// Decodes an already-parsed URL path without allowing a percent-encoded
+/// separator (or dot segment) to become structural.  URL path boundaries are
+/// established before decoding, so equality is insensitive to percent-escape
+/// spelling but never broadens containment by decoding an entire path first.
+fn decoded_url_path_v1(url: &Url) -> Option<DecodedUrlPathV1> {
+    let path = url.path();
+    let remainder = path.strip_prefix('/')?;
+    let mut raw_segments = remainder.split('/').collect::<Vec<_>>();
+    let trailing_slashes = raw_segments
+        .iter()
+        .rev()
+        .take_while(|segment| segment.is_empty())
+        .count();
+    raw_segments.truncate(raw_segments.len().saturating_sub(trailing_slashes));
+    if raw_segments.iter().any(|segment| segment.is_empty()) {
+        return None;
+    }
+    let segments = raw_segments
+        .into_iter()
+        .map(decode_url_path_segment_v1)
+        .collect::<Option<Vec<_>>>()?;
+    Some(DecodedUrlPathV1 {
+        segments,
+        trailing_slashes,
+    })
+}
+
+fn observed_path_under_root_v1(root: &Url, observed: &Url) -> Option<DecodedUrlPathV1> {
+    let root = decoded_url_path_v1(root)?;
+    // webdav_root_v1 always serializes one trailing slash.  Treat any other
+    // shape as corrupt instead of weakening the configured root boundary.
+    if root.trailing_slashes != 1 {
+        return None;
+    }
+    let observed = decoded_url_path_v1(observed)?;
+    if !observed.segments.starts_with(&root.segments) {
+        return None;
+    }
+    Some(observed)
+}
+
+fn directory_child_from_observed_href_v1(
+    root: &Url,
+    directory: &str,
+    observed: &Url,
+) -> Option<Option<String>> {
+    let observed = observed_path_under_root_v1(root, observed)?;
+    if observed.trailing_slashes > 1 {
+        return None;
+    }
+    let root = decoded_url_path_v1(root)?;
+    let directory_segments = directory.split('/').map(str::to_owned).collect::<Vec<_>>();
+    let expected_len = root.segments.len() + directory_segments.len();
+    if observed.segments.len() < expected_len
+        || observed.segments[..root.segments.len()] != root.segments
+        || observed.segments[root.segments.len()..expected_len] != directory_segments
+    {
+        return None;
+    }
+    match observed.segments.len() - expected_len {
+        0 => Some(None),
+        1 => {
+            let child = observed.segments.last()?.clone();
+            if safe_relative_path(&child).is_err() {
+                return None;
+            }
+            Some(Some(child))
+        }
+        _ => None,
+    }
+}
+
+fn semantic_path_matches_with_optional_trailing_slash_v1(
+    root: &Url,
+    expected: &Url,
+    observed: &Url,
+) -> bool {
+    let Some(expected) = observed_path_under_root_v1(root, expected) else {
+        return false;
+    };
+    let Some(observed) = observed_path_under_root_v1(root, observed) else {
+        return false;
+    };
+    expected.trailing_slashes <= 1
+        && observed.trailing_slashes <= 1
+        && expected.segments == observed.segments
+}
+
 fn child_url(root: &WebDavRootV1, path: &str) -> Result<Url, &'static str> {
     safe_relative_path(path)?;
     Url::parse(&root.canonical_url)
@@ -217,6 +413,9 @@ enum CollectionProvisionResultV1 {
 }
 
 fn collection_href_matches(root: &WebDavRootV1, path: &str, href: &str) -> bool {
+    if !raw_dav_href_path_is_safe_v1(href) {
+        return false;
+    }
     let Ok(root_url) = Url::parse(&root.canonical_url) else {
         return false;
     };
@@ -229,7 +428,7 @@ fn collection_href_matches(root: &WebDavRootV1, path: &str, href: &str) -> bool 
     observed.origin() == root_url.origin()
         && observed.query().is_none()
         && observed.fragment().is_none()
-        && observed.path().trim_end_matches('/') == expected.path().trim_end_matches('/')
+        && semantic_path_matches_with_optional_trailing_slash_v1(&root_url, &expected, &observed)
 }
 
 fn is_success_http_status_line(status: &str) -> bool {
@@ -872,38 +1071,22 @@ impl WebDavS2RemoteV1 {
             Ok(value) => value,
             Err(_) => return DirectoryListResultV1::Indeterminate,
         };
-        let root_base = root.path();
-        let directory_base = format!("{}{}", root_base, directory);
-        let directory_base = format!("{}/", directory_base.trim_end_matches('/'));
-        let directory_self = directory_base.trim_end_matches('/');
         let mut entries = Vec::new();
         for href in hrefs {
+            if !raw_dav_href_path_is_safe_v1(&href) {
+                return DirectoryListResultV1::Indeterminate;
+            }
             let Ok(url) = directory_url.join(&href) else {
                 return DirectoryListResultV1::Indeterminate;
             };
-            if url.origin() != root.origin()
-                || !url.path().starts_with(root_base)
-                || url.query().is_some()
-                || url.fragment().is_some()
-            {
+            if url.origin() != root.origin() || url.query().is_some() || url.fragment().is_some() {
                 return DirectoryListResultV1::Indeterminate;
             }
-            let path = url.path();
-            if path == directory_self || path == directory_base {
-                continue;
+            match directory_child_from_observed_href_v1(&root, directory, &url) {
+                Some(None) => {}
+                Some(Some(child)) => entries.push(format!("{directory}/{child}")),
+                None => return DirectoryListResultV1::Indeterminate,
             }
-            if !path.starts_with(&directory_base) {
-                return DirectoryListResultV1::Indeterminate;
-            }
-            let relative = &path[directory_base.len()..];
-            let relative = relative.strip_suffix('/').unwrap_or(relative);
-            if relative.is_empty() {
-                return DirectoryListResultV1::Indeterminate;
-            }
-            if safe_relative_path(relative).is_err() || relative.contains('/') {
-                return DirectoryListResultV1::Indeterminate;
-            }
-            entries.push(format!("{directory}/{relative}"));
         }
         entries.sort();
         entries.dedup();
@@ -1049,8 +1232,10 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        child_url, is_success_http_status_line, safe_relative_path, valid_discovery_directory,
-        valid_immutable_object_path, webdav_root_v1, WebDavS2ConfigV1, WebDavS2RemoteV1,
+        child_url, collection_href_matches, depth_zero_response_is_dav_collection,
+        is_success_http_status_line, raw_dav_href_path_is_safe_v1, safe_relative_path,
+        valid_discovery_directory, valid_immutable_object_path, webdav_root_v1, WebDavS2ConfigV1,
+        WebDavS2RemoteV1,
     };
     use crate::s2_lite::canonical::sha256_hex;
     use crate::s2_lite::immutable_publish::{
@@ -1723,6 +1908,220 @@ mod tests {
             remote.list_directory("activations"),
             DirectoryListResultV1::Indeterminate
         );
+    }
+
+    #[test]
+    fn percent_equivalent_dav_href_paths_are_segment_safe() {
+        let response_for = |hrefs: &[String]| {
+            let responses = hrefs
+                .iter()
+                .map(|href| {
+                    format!(
+                        "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                    )
+                })
+                .collect::<String>();
+            format!("<d:multistatus xmlns:d=\"DAV:\">{responses}</d:multistatus>").into_bytes()
+        };
+        let configured_component = "%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA-S1-Test";
+        let provider_component = "%e5%bd%b1%e8%a7%86%e8%bf%bd%e8%b8%aa-S1-Test";
+        let unicode_component = "影视追踪-S1-Test";
+        let root_suffix = "i5-fresh-20260930-b";
+        let child = "immutable.json";
+        let (url, _) = server(vec![
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[
+                    format!("/dav/{provider_component}/{root_suffix}/activations"),
+                    format!("/dav/{provider_component}/{root_suffix}/activations/{child}"),
+                ]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[
+                    format!("/dav/{unicode_component}/{root_suffix}/activations/"),
+                    format!("/dav/{unicode_component}/{root_suffix}/activations/{child}/"),
+                ]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}-evil/activations/{child}"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/%2Fescape/activations/{child}"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/%5Cescape/activations/{child}"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/activations/immutable%2Fnested.json"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/activations/{child}/nested.json"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/activations/{child}//"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "https://evil.example/dav/{provider_component}/{root_suffix}/activations/{child}"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/activations/{child}?unexpected=1"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/activations/{child}#unexpected"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/{root_suffix}/activations/immutable%ZZ.json"
+                )]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&["../activations/immutable.json".to_string()]),
+            )),
+            Some(response(
+                "207 Multi-Status",
+                &response_for(&[format!(
+                    "/dav/{provider_component}/%2e%2e/{root_suffix}/activations/{child}"
+                )]),
+            )),
+        ]);
+        let mut remote = remote(&format!("{url}{configured_component}/{root_suffix}/"));
+        let expected = DirectoryListResultV1::Entries(vec![format!("activations/{child}")]);
+        assert_eq!(remote.list_directory("activations"), expected);
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec![format!("activations/{child}")])
+        );
+        for _ in 0..12 {
+            assert_eq!(
+                remote.list_directory("activations"),
+                DirectoryListResultV1::Indeterminate
+            );
+        }
+    }
+
+    #[test]
+    fn collection_href_matching_reuses_percent_equivalent_segment_containment() {
+        let configured_component = "%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA-S1-Test";
+        let provider_component = "%e5%bd%b1%e8%a7%86%e8%bf%bd%e8%b8%aa-S1-Test";
+        let root_suffix = "i5-fresh-20260930-b";
+        let root = webdav_root_v1(
+            &format!("https://dav.example.test/dav/{configured_component}/{root_suffix}/"),
+            "alice",
+        )
+        .unwrap();
+        let matching_href = format!("/dav/{provider_component}/{root_suffix}/activations/");
+        let absolute_matching_href =
+            format!("https://dav.example.test/dav/{provider_component}/{root_suffix}/activations/");
+        let outside_href = format!("/dav/{provider_component}/{root_suffix}-evil/activations/");
+        assert!(collection_href_matches(
+            &root,
+            "activations",
+            &matching_href
+        ));
+        assert!(collection_href_matches(
+            &root,
+            "activations",
+            &absolute_matching_href
+        ));
+        assert!(!collection_href_matches(
+            &root,
+            "activations",
+            &outside_href
+        ));
+        assert!(!collection_href_matches(
+            &root,
+            "activations",
+            "../activations/immutable.json"
+        ));
+
+        let matching_xml = format!(
+            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>{matching_href}</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+        );
+        let outside_xml = format!(
+            "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>{outside_href}</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+        );
+        let traversal_xml = "<d:multistatus xmlns:d=\"DAV:\"><d:response><d:href>../activations/immutable.json</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>";
+        assert!(depth_zero_response_is_dav_collection(
+            &root,
+            "activations",
+            matching_xml.as_bytes()
+        ));
+        assert!(!depth_zero_response_is_dav_collection(
+            &root,
+            "activations",
+            outside_xml.as_bytes()
+        ));
+        assert!(!depth_zero_response_is_dav_collection(
+            &root,
+            "activations",
+            traversal_xml.as_bytes()
+        ));
+    }
+
+    #[test]
+    fn raw_dav_href_validation_precedes_url_normalization() {
+        for href in [
+            ".",
+            "..",
+            "%2e",
+            "%2E",
+            "%2e%2e",
+            "%2E%2E",
+            ".%2e",
+            ".%2E",
+            "%2e.",
+            "%2E.",
+            "%2F",
+            "%2f",
+            "%5C",
+            "%5c",
+            "child%2Fgrandchild",
+            "child%5Cgrandchild",
+            "directory//child",
+            "child%ZZ",
+            "../activations/immutable.json",
+            "/dav/root/%2e%2e/root/activations/immutable.json",
+        ] {
+            assert!(!raw_dav_href_path_is_safe_v1(href), "{href}");
+        }
+        for href in [
+            "child",
+            "/dav/root/activations/child",
+            "https://dav.example.test/dav/root/activations/child",
+            "/dav/%e5%bd%b1%e8%a7%86/root/activations/child",
+        ] {
+            assert!(raw_dav_href_path_is_safe_v1(href), "{href}");
+        }
     }
 
     #[test]
