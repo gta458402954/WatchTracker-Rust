@@ -32,7 +32,7 @@ export function useSyncSettings(options: Options) {
       const identityChanged = !current || activeDescriptor?.username !== username.trim() || activeDescriptor?.normalizedUrl !== normalizedUrl;
       if (identityChanged) {
         setSyncStatus('正在只读检查目标...'); const probe = await probeSyncTarget({ username: username.trim(), password, url: normalizedUrl });
-        const description = probe.kind === 'empty' ? '目标中暂无同步文件，将在激活后以安全条件创建并上传本机数据。' : `目标包含 ${probe.recordCount} 条记录${probe.revision == null ? '' : `，修订 ${probe.revision}`}。激活后将先拉取、合并，再按需上传。`;
+        const description = probe.kind === 'empty' ? '目标中暂无同步文件。激活目标不会写入云端；请在准备好后手动同步。' : `目标包含 ${probe.recordCount} 条记录${probe.revision == null ? '' : `，修订 ${probe.revision}`}。激活目标不会拉取、合并或上传；请在准备好后手动同步。`;
         if (!confirm(`${description}\n\n确认切换到此 WebDAV 目标吗？旧目标的待上传数据和冲突会保留。`)) { setSyncStatus('已取消切换，当前目标未改变。'); return; }
       }
       await saveCreds({ username: username.trim(), password: password.trim(), url: normalizedUrl });
@@ -41,9 +41,9 @@ export function useSyncSettings(options: Options) {
       // state here; scheduling remains exclusively in the coordinator.
       await onSyncRuntimeRefresh();
       setSaved(true); setEditingTarget(false); setPassword('');
-      setTargetRegistry(await getSyncTargets()); setSyncStatus('目标已激活，正在执行首次拉取与合并...'); const result = onSync ? await onSync() : await syncToWebDAV(records);
-      if (!result.ok) { const safeMessage = syncFailureMessage(result.error); setSyncStatus(`⚠️ 目标已保存；首次同步未完成。${safeMessage || '请稍后重试。'}`); onNotify?.('warning', safeMessage || '目标已保存，但首次同步未完成。'); }
-      else { setSyncStatus(result.conflictCount ? `⚠️ 目标已激活，有 ${result.conflictCount} 项冲突等待选择` : '✅ 目标已激活并完成首次同步'); showSuccess('WebDAV 目标已激活并完成首次同步。'); }
+      setTargetRegistry(await getSyncTargets());
+      setSyncStatus('✅ 目标已激活。请手动同步以完成首次云端核对。');
+      showSuccess('WebDAV 目标已激活。请手动同步以完成云端核对。');
     } catch (error) {
       const safeMessage = syncFailureMessage(error instanceof Error ? error.message : String(error));
       if (safeMessage) { setSyncStatus(`⚠️ ${safeMessage}`); onNotify?.('warning', safeMessage); }

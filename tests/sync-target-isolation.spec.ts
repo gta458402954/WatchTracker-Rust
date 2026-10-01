@@ -63,12 +63,13 @@ test('@sync-target-isolation password rotation keeps the same target and proceed
   let dialogCount = 0;
   page.on('dialog', async dialog => { dialogCount += 1; await dialog.accept(); });
   await page.getByRole('button', { name: '只读检查并更新目标' }).click();
-  await expect(page.getByText('✅ 目标已激活并完成首次同步')).toBeVisible();
+  await expect(page.getByText('✅ 目标已激活。请手动同步以完成首次云端核对。')).toBeVisible();
 
   const snapshot = await mockSnapshot(page);
   const activation = snapshot.calls.findIndex(call => call.command === 'activate_sync_target');
   expect(activation).toBeGreaterThan(-1);
   expect(snapshot.calls.slice(0, activation).some(call => call.command === 'webdav_request')).toBe(false);
+  expect(snapshot.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(0);
   expect(dialogCount).toBe(0);
 });
 
@@ -91,13 +92,49 @@ test('@sync-target-isolation changing the physical target pauses automatic sync 
   expect(JSON.parse(beforeClose.settings.sync_scheduler_v1 as string).paused).toBe(true);
 
   const coordinatorCallsBeforeClose = beforeClose.calls.filter(call => call.command === 'run_desktop_sync_coordinator').length;
-  // The user-initiated save remains able to run its explicit first sync even
-  // though automatic scheduling is durably paused for the new root.
-  expect(coordinatorCallsBeforeClose).toBeGreaterThan(0);
+  expect(coordinatorCallsBeforeClose).toBe(0);
+  expect(beforeClose.calls.filter(call => call.command === 'webdav_request')).toHaveLength(0);
   await page.getByRole('button', { name: '返回主页' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const afterClose = await mockSnapshot(page);
   expect(afterClose.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(coordinatorCallsBeforeClose);
+});
+
+test('@sync-target-isolation first target activation remains paused and does not synchronize', async ({ page }) => {
+  await setupMockIpc(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: '☁️ 云端同步', exact: true }).click();
+  await page.getByPlaceholder('WebDAV 服务器地址').fill('https://new.example.test/dav/first-root/');
+  await page.getByPlaceholder('用户名').fill('new-user');
+  await page.getByPlaceholder('WebDAV 密码 / 应用密码').fill('new-password');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '只读检查并连接' }).click();
+
+  await expect(page.getByText('自动同步：已暂停')).toBeVisible();
+  await expect(page.getByText('✅ 目标已激活。请手动同步以完成首次云端核对。')).toBeVisible();
+  const snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.some(call => call.command === 'activate_sync_target')).toBe(true);
+  expect(JSON.parse(snapshot.settings.sync_scheduler_v1 as string).paused).toBe(true);
+  expect(snapshot.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(0);
+  expect(snapshot.calls.filter(call => call.command === 'webdav_request')).toHaveLength(0);
+  const probeCalls = snapshot.calls.filter(call => call.command === 'probe_webdav_request');
+  expect(probeCalls.length).toBeGreaterThan(0);
+  expect(probeCalls.every(call => call.args.request.method === 'GET')).toBe(true);
+});
+
+test('@sync-target-isolation manual sync is the only explicit coordinator entry point after save', async ({ page }) => {
+  await setupMockIpc(page, { settings, coordinatorInitialResult: 'success' });
+  await openSyncSettings(page);
+  await page.getByPlaceholder('WebDAV 密码 / 应用密码').fill('rotated-password');
+  await page.getByRole('button', { name: '只读检查并更新目标' }).click();
+
+  let snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(0);
+  await page.getByRole('button', { name: '立即同步到云端' }).click();
+  await expect(page.getByText('✅ 同步成功')).toBeVisible();
+  snapshot = await mockSnapshot(page);
+  expect(snapshot.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(1);
 });
 
 test('@sync-target-isolation reports HTTP 409 as an inaccessible target directory', async ({ page }) => {
