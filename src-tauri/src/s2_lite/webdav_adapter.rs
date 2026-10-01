@@ -894,6 +894,7 @@ impl WebDavS2RemoteV1 {
         let mut propstat_seen = false;
         let mut in_propstat = false;
         let mut propstat_status_seen = false;
+        let mut prop_depth = None;
         let mut in_href = false;
         let mut in_status = false;
         let mut text = String::new();
@@ -925,6 +926,13 @@ impl WebDavS2RemoteV1 {
                     propstat_seen = false;
                     in_propstat = false;
                     propstat_status_seen = false;
+                    prop_depth = None;
+                } else if prop_depth.is_some() {
+                    // A DAV:prop value is opaque provider data.  In
+                    // particular, nested extension elements (or DAV names
+                    // such as href/status) are not response control fields.
+                } else if $is_dav && $local == b"prop" && depth == 3 && in_propstat {
+                    prop_depth = Some(depth + 1);
                 } else if $local == b"propstat" {
                     if !$is_dav || depth != 2 || in_propstat || response_status_seen {
                         return DirectoryListResultV1::Indeterminate;
@@ -966,7 +974,14 @@ impl WebDavS2RemoteV1 {
                 if depth == 0 {
                     return DirectoryListResultV1::Indeterminate;
                 }
-                if $local == b"href" {
+                if let Some(open_depth) = prop_depth {
+                    if depth == open_depth {
+                        if !$is_dav || $local != b"prop" {
+                            return DirectoryListResultV1::Indeterminate;
+                        }
+                        prop_depth = None;
+                    }
+                } else if $local == b"href" {
                     if !$is_dav || !in_href || depth != 3 || text.is_empty() {
                         return DirectoryListResultV1::Indeterminate;
                     }
@@ -978,13 +993,23 @@ impl WebDavS2RemoteV1 {
                     }
                     in_status = false;
                 } else if $local == b"propstat" {
-                    if !$is_dav || depth != 3 || !in_propstat || !propstat_status_seen || in_status
+                    if !$is_dav
+                        || depth != 3
+                        || !in_propstat
+                        || !propstat_status_seen
+                        || in_status
+                        || prop_depth.is_some()
                     {
                         return DirectoryListResultV1::Indeterminate;
                     }
                     in_propstat = false;
                 } else if $local == b"response" {
-                    if depth != 2 || !$is_dav || response_href.is_none() || in_propstat || in_status
+                    if depth != 2
+                        || !$is_dav
+                        || response_href.is_none()
+                        || in_propstat
+                        || in_status
+                        || prop_depth.is_some()
                     {
                         return DirectoryListResultV1::Indeterminate;
                     }
@@ -1017,6 +1042,10 @@ impl WebDavS2RemoteV1 {
                             Ok(value) => text.push_str(&value),
                             Err(_) => return DirectoryListResultV1::Indeterminate,
                         }
+                    } else if prop_depth.is_some_and(|open_depth| depth > open_depth) {
+                        if e.unescape().is_err() {
+                            return DirectoryListResultV1::Indeterminate;
+                        }
                     } else {
                         let raw: &[u8] = e.as_ref();
                         if !raw.iter().all(|byte| is_xml_s(*byte)) {
@@ -1034,6 +1063,10 @@ impl WebDavS2RemoteV1 {
                             return DirectoryListResultV1::Indeterminate;
                         };
                         text.push_str(value);
+                    } else if prop_depth.is_some_and(|open_depth| depth > open_depth) {
+                        if std::str::from_utf8(e.as_ref()).is_err() {
+                            return DirectoryListResultV1::Indeterminate;
+                        }
                     } else {
                         return DirectoryListResultV1::Indeterminate;
                     }
@@ -1059,7 +1092,11 @@ impl WebDavS2RemoteV1 {
                 }
                 Ok((_, Event::DocType(_))) => return DirectoryListResultV1::Indeterminate,
                 Ok((_, Event::Eof))
-                    if phase == DocumentPhase::After && depth == 0 && !in_href && !in_status =>
+                    if phase == DocumentPhase::After
+                        && depth == 0
+                        && !in_href
+                        && !in_status
+                        && prop_depth.is_none() =>
                 {
                     break
                 }
@@ -2030,6 +2067,37 @@ mod tests {
     }
 
     #[test]
+    fn jianguoyun_like_property_values_replay_without_affecting_membership() {
+        let configured_component = "%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA-S1-Test";
+        let provider_component = "%e5%bd%b1%e8%a7%86%e8%bf%bd%e8%b8%aa-S1-Test";
+        let root_suffix = "i5-fresh-20260930-b";
+        let child = "immutable.json";
+        let response_for = |href: String, collection: &str| {
+            format!(
+                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:getetag/><d:getcontenttype>application&amp;json</d:getcontenttype><d:displayname>provider display name</d:displayname><d:owner>provider owner</d:owner><d:getcontentlength>51</d:getcontentlength><d:getlastmodified>Tue, 30 Sep 2026 00:00:00 GMT</d:getlastmodified><d:resourcetype>{collection}</d:resourcetype><x:provider-value xmlns:x=\"urn:provider-extension\">extension value</x:provider-value></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+            )
+        };
+        let body = format!(
+            "<d:multistatus xmlns:d=\"DAV:\">{}{}</d:multistatus>",
+            response_for(
+                format!("/dav/{provider_component}/{root_suffix}/activations"),
+                "<d:collection/>"
+            ),
+            response_for(
+                format!("/dav/{provider_component}/{root_suffix}/activations/{child}"),
+                ""
+            ),
+        );
+        let (url, _) = server(vec![Some(response("207 Multi-Status", body.as_bytes()))]);
+        let mut remote = remote(&format!("{url}{configured_component}/{root_suffix}/"));
+
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec![format!("activations/{child}")])
+        );
+    }
+
+    #[test]
     fn collection_href_matching_reuses_percent_equivalent_segment_containment() {
         let configured_component = "%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA-S1-Test";
         let provider_component = "%e5%bd%b1%e8%a7%86%e8%bf%bd%e8%b8%aa-S1-Test";
@@ -2185,6 +2253,43 @@ mod tests {
             remote.list_directory("activations"),
             DirectoryListResultV1::Indeterminate
         );
+    }
+
+    #[test]
+    fn propstat_property_values_are_opaque_but_control_text_remains_rejected() {
+        let jianguoyun_like = concat!(
+            r#"<d:multistatus xmlns:d="DAV:" xmlns:x="urn:provider-extension"><d:response><d:href>/dav/activations/immutable.json</d:href><d:propstat><d:prop><d:getcontenttype>application&amp;json</d:getcontenttype><d:displayname>"#,
+            "显示名",
+            r#"</d:displayname><d:owner><![CDATA[owner <provider>]]></d:owner><x:extension>extension value</x:extension><d:reserved><d:href>/some/property/value</d:href><d:status>HTTP/1.1 404 Not Found</d:status><d:propstat><d:status>HTTP/1.1 500 Not Found</d:status></d:propstat></d:reserved></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#,
+        )
+        .as_bytes();
+        let control_text_in_response = br#"<d:multistatus xmlns:d="DAV:"><d:response>unexpected<d:href>/dav/activations/immutable.json</d:href><d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+        let control_text_in_multistatus = br#"<d:multistatus xmlns:d="DAV:">unexpected<d:response><d:href>/dav/activations/immutable.json</d:href><d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+        let direct_text_in_prop = br#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/activations/immutable.json</d:href><d:propstat><d:prop>unexpected</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+        let missing_real_propstat_status = br#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/activations/immutable.json</d:href><d:propstat><d:prop><d:displayname>allowed property value</d:displayname></d:prop></d:propstat></d:response></d:multistatus>"#;
+        let invalid_real_propstat_status = br#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/activations/immutable.json</d:href><d:propstat><d:prop><d:displayname>allowed property value</d:displayname></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>"#;
+        let (url, _) = server(vec![
+            Some(response("207 Multi-Status", jianguoyun_like)),
+            Some(response("207 Multi-Status", control_text_in_response)),
+            Some(response("207 Multi-Status", control_text_in_multistatus)),
+            Some(response("207 Multi-Status", direct_text_in_prop)),
+            Some(response("207 Multi-Status", missing_real_propstat_status)),
+            Some(response("207 Multi-Status", invalid_real_propstat_status)),
+        ]);
+        let mut remote = remote(&url);
+
+        // Nested DAV href/status are opaque property values.  The direct
+        // response href and actual propstat status determine the listing.
+        assert_eq!(
+            remote.list_directory("activations"),
+            DirectoryListResultV1::Entries(vec!["activations/immutable.json".into()])
+        );
+        for _ in 0..5 {
+            assert_eq!(
+                remote.list_directory("activations"),
+                DirectoryListResultV1::Indeterminate
+            );
+        }
     }
 
     #[test]
