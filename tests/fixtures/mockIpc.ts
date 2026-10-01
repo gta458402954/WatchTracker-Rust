@@ -901,10 +901,23 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
             case 'activate_sync_target': {
               requireKeys(command, args, ['input']);
               const input = args.input as { url: string; username: string; password: string };
-              if (!activeTargetId) targetEpoch += 1;
+              const priorUsername = String(snapshot.settings.webdav_creds ?? '')
+                .replace(/^encrypted:/, '').split(':', 1)[0];
+              // The real backend compares the frozen physical-root identity.
+              // This browser fixture has no WebDAV root derivation, so its
+              // distinct URL/account inputs stand in for that backend result.
+              const physicalRootChanged = !activeTargetId
+                || snapshot.settings.webdav_url !== input.url
+                || priorUsername !== input.username;
+              if (!activeTargetId || physicalRootChanged) targetEpoch += 1;
               activeTargetId = 'a'.repeat(64);
               snapshot.settings.webdav_url = input.url;
               snapshot.settings.webdav_creds = `encrypted:${input.username}:${input.password}`;
+              if (physicalRootChanged) {
+                scheduler.paused = true;
+                scheduler.nextAttemptAt = null;
+                persistRuntime();
+              }
               return { version: 1, activeTargetId, targetEpoch, targets: [{ id: activeTargetId, normalizedUrl: input.url, username: input.username, createdAt: new Date().toISOString(), lastActivatedAt: new Date().toISOString() }] };
             }
             case 'disconnect_sync_target':

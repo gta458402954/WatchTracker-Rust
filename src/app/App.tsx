@@ -67,7 +67,7 @@ export default function App() {
   }, [notify]);
   const {
     records, loadRecords, addRecord, updateRecord, deleteRecord, changeNextEpisode, replaceRecords, syncNow,
-    syncRuntime, isSyncPaused, toggleSyncPause, notifySyncConfigurationChanged, reloadAndSchedule,
+    syncRuntime, isSyncPaused, toggleSyncPause, refreshSyncRuntime, notifySyncConfigurationChanged, reloadAndSchedule,
   } = useWatchList(syncInterval, pullIntervalMinutes, handleBackgroundError);
 
   const [query, setQuery] = useState<WatchlistQueryV1>(() => normalizeWatchlistQuery(EMPTY_WATCHLIST_QUERY));
@@ -636,6 +636,7 @@ export default function App() {
           }}
           onImport={handleImport}
           onSync={syncNow}
+          onSyncRuntimeRefresh={refreshSyncRuntime}
           onUpdateRecord={async (id, updates) => { await updateRecord(id, updates); }}
           onDatabaseRestored={async () => { const loaded = await reloadAndSchedule(); await collectionState.refresh(); return loaded; }}
           syncInterval={syncInterval}

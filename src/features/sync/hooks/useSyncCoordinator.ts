@@ -272,6 +272,7 @@ export function useSyncCoordinator(
     scheduleLocalWrite,
     syncNow,
     toggleSyncPause,
+    refreshSyncRuntime,
     notifySyncConfigurationChanged,
   };
 }

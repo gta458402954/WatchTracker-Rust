@@ -47,6 +47,7 @@ export function useWatchList(
     syncRuntime: coordinator.syncRuntime,
     isSyncPaused: coordinator.isSyncPaused,
     toggleSyncPause: coordinator.toggleSyncPause,
+    refreshSyncRuntime: coordinator.refreshSyncRuntime,
     notifySyncConfigurationChanged: coordinator.notifySyncConfigurationChanged,
     reloadAndSchedule,
   };

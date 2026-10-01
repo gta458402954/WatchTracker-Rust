@@ -3,9 +3,10 @@ use crate::auth;
 use crate::db_atomic_helpers::{get_setting_tx, set_setting_tx};
 use crate::error::AppError;
 use crate::recovery_points;
+use crate::s2_lite::webdav_adapter::webdav_root_v1;
 use chrono::Utc;
 use reqwest::Url;
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -108,6 +109,66 @@ pub fn target_id(normalized_url: &str, username: &str) -> String {
     digest.update(b"\n");
     digest.update(username.trim().as_bytes());
     format!("{:x}", digest.finalize())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TargetRootTransitionV1 {
+    FirstTarget,
+    RootChanged,
+    SameRoot,
+}
+
+impl TargetRootTransitionV1 {
+    fn pauses_automatic_sync(self) -> bool {
+        !matches!(self, Self::SameRoot)
+    }
+}
+
+fn target_root_transition_v1(
+    registry: &SyncTargetRegistry,
+    candidate_url: &str,
+    candidate_username: &str,
+) -> Result<TargetRootTransitionV1, AppError> {
+    let candidate_physical_root_id = webdav_root_v1(candidate_url, candidate_username)
+        .map_err(|_| invalid("invalid_sync_target_root"))?
+        .physical_root_id;
+    let active_physical_root_id = registry
+        .active_target_id
+        .as_ref()
+        .map(|active_id| {
+            let active = registry
+                .targets
+                .iter()
+                .find(|target| &target.id == active_id)
+                .ok_or_else(|| invalid("invalid_sync_target_registry"))?;
+            webdav_root_v1(&active.normalized_url, &active.username)
+                .map(|root| root.physical_root_id)
+                .map_err(|_| invalid("invalid_sync_target_root"))
+        })
+        .transpose()?;
+    Ok(match active_physical_root_id {
+        None => TargetRootTransitionV1::FirstTarget,
+        Some(active_physical_root_id) if active_physical_root_id == candidate_physical_root_id => {
+            TargetRootTransitionV1::SameRoot
+        }
+        Some(_) => TargetRootTransitionV1::RootChanged,
+    })
+}
+
+/// Make the newly active target and its automatic-execution policy visible as
+/// one durable fact.  A caller must never observe a changed physical root
+/// while the scheduler still carries the prior root's enabled state.
+fn persist_target_activation_v1(
+    transaction: &Transaction<'_>,
+    registry: &SyncTargetRegistry,
+    target_id: &str,
+    transition: TargetRootTransitionV1,
+) -> Result<(), AppError> {
+    save_registry(transaction, registry)?;
+    if transition.pauses_automatic_sync() {
+        crate::sync_state::pause_scheduler_for_root_change_tx(transaction, target_id)?;
+    }
+    Ok(())
 }
 
 pub fn scoped_key(target_id: &str, suffix: &str) -> String {
@@ -266,10 +327,14 @@ pub fn activate(
     if username.is_empty() || input.password.is_empty() {
         return Err(invalid("invalid_sync_target_credentials"));
     }
-    let mut registry = match ensure_migrated(conn, paths) {
-        Ok(registry) => registry,
+    let (mut registry, transition) = match ensure_migrated(conn, paths) {
+        Ok(registry) => {
+            let transition = target_root_transition_v1(&registry, &url, &username)?;
+            (registry, transition)
+        }
         Err(error) if error.to_string().contains("target_migration_required") => {
-            migrate_with_replacement_credentials(conn, paths, &url, &username)?
+            let replacement = migrate_with_replacement_credentials(conn, paths, &url, &username)?;
+            (replacement.registry, replacement.transition)
         }
         Err(error) => return Err(error),
     };
@@ -304,7 +369,7 @@ pub fn activate(
             .ok_or_else(|| invalid("sync_target_epoch_overflow"))?;
         registry.active_target_id = Some(id.clone());
     }
-    save_registry(&transaction, &registry)?;
+    persist_target_activation_v1(&transaction, &registry, &id, transition)?;
     if switching {
         let generation = get_setting_generation(&transaction)?;
         let staging =
@@ -333,12 +398,21 @@ pub fn activate(
     Ok(registry)
 }
 
+struct ReplacementMigrationV1 {
+    registry: SyncTargetRegistry,
+    transition: TargetRootTransitionV1,
+}
+
 fn migrate_with_replacement_credentials(
     conn: &mut Connection,
     paths: &AppPaths,
     url: &str,
     username: &str,
-) -> Result<SyncTargetRegistry, AppError> {
+) -> Result<ReplacementMigrationV1, AppError> {
+    // A corrupt legacy credential has no authoritative historical account/root
+    // identity. The supplied replacement is therefore always a fail-safe root
+    // transition, never a post-write inferred same-root refresh.
+    webdav_root_v1(url, username).map_err(|_| invalid("invalid_sync_target_root"))?;
     recovery_points::create(conn, paths, "target-migration")?;
     let id = target_id(url, username);
     let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -363,13 +437,21 @@ fn migrate_with_replacement_credentials(
             set_setting_tx(&transaction, &scoped_key(&id, suffix), &value)?;
         }
     }
-    save_registry(&transaction, &registry)?;
+    persist_target_activation_v1(
+        &transaction,
+        &registry,
+        &id,
+        TargetRootTransitionV1::RootChanged,
+    )?;
     for (legacy, _) in LEGACY_SCOPED_KEYS {
         transaction.execute("DELETE FROM settings WHERE key = ?1", [legacy])?;
     }
     transaction.execute("DELETE FROM settings WHERE key = 'webdav_url'", [])?;
     transaction.commit()?;
-    Ok(registry)
+    Ok(ReplacementMigrationV1 {
+        registry,
+        transition: TargetRootTransitionV1::RootChanged,
+    })
 }
 
 fn get_setting_generation(conn: &Connection) -> Result<i64, AppError> {
@@ -488,7 +570,10 @@ mod tests {
     use super::*;
     use crate::app_paths::AppPaths;
     use crate::db;
-    use crate::db_atomic_helpers::{get_sync_outbox, set_sync_outbox, SyncOutbox};
+    use crate::db_atomic_helpers::{
+        get_setting_tx, get_sync_outbox, set_setting_tx, set_sync_outbox, SyncOutbox,
+    };
+    use crate::sync_state::SyncSchedulerState;
 
     fn connection() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -525,6 +610,247 @@ mod tests {
             normalize_url("https://example.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/").unwrap(),
             "https://example.com/dav/%E5%BD%B1%E8%A7%86%E8%BF%BD%E8%B8%AA/"
         );
+    }
+
+    #[test]
+    fn physical_root_change_uses_frozen_webdav_identity() {
+        let a = target('a');
+        let registry = SyncTargetRegistry {
+            version: 1,
+            active_target_id: Some(a.id.clone()),
+            target_epoch: 1,
+            targets: vec![a.clone()],
+        };
+
+        // A first target has no prior root and must begin paused.
+        assert_eq!(
+            target_root_transition_v1(
+                &SyncTargetRegistry::default(),
+                &a.normalized_url,
+                &a.username,
+            )
+            .unwrap(),
+            TargetRootTransitionV1::FirstTarget
+        );
+        // Re-saving the exact frozen root preserves its current preference.
+        assert_eq!(
+            target_root_transition_v1(&registry, &a.normalized_url, &a.username).unwrap(),
+            TargetRootTransitionV1::SameRoot
+        );
+        // Both path and account identity participate through webdav_root_v1.
+        assert_eq!(
+            target_root_transition_v1(&registry, "https://a.example/dav/other-root/", &a.username,)
+                .unwrap(),
+            TargetRootTransitionV1::RootChanged
+        );
+        assert_eq!(
+            target_root_transition_v1(&registry, &a.normalized_url, "other-account").unwrap(),
+            TargetRootTransitionV1::RootChanged
+        );
+    }
+
+    #[test]
+    fn changed_root_persists_paused_scheduler_with_target_activation() {
+        let mut conn = connection();
+        let a = target('a');
+        let b = target('b');
+        let active_a = SyncTargetRegistry {
+            version: 1,
+            active_target_id: Some(a.id.clone()),
+            target_epoch: 1,
+            targets: vec![a.clone(), b.clone()],
+        };
+        save_registry(&conn, &active_a).unwrap();
+
+        let enabled = SyncSchedulerState {
+            next_attempt_at: Some("2026-10-01T00:00:00Z".into()),
+            ..SyncSchedulerState::default()
+        };
+        set_setting_tx(
+            &conn,
+            &scoped_key(&b.id, "scheduler_v1"),
+            &serde_json::to_string(&enabled).unwrap(),
+        )
+        .unwrap();
+
+        let changed_b = SyncTargetRegistry {
+            active_target_id: Some(b.id.clone()),
+            target_epoch: 2,
+            ..active_a.clone()
+        };
+        let transaction = conn.transaction().unwrap();
+        persist_target_activation_v1(
+            &transaction,
+            &changed_b,
+            &b.id,
+            TargetRootTransitionV1::RootChanged,
+        )
+        .unwrap();
+
+        // The transaction contains both facts before it can be committed.
+        assert_eq!(
+            super::registry(&transaction).unwrap(),
+            Some(changed_b.clone())
+        );
+        let raw = get_setting_tx(&transaction, &scoped_key(&b.id, "scheduler_v1"))
+            .unwrap()
+            .unwrap();
+        let persisted: SyncSchedulerState = serde_json::from_str(&raw).unwrap();
+        assert!(persisted.paused);
+        assert_eq!(persisted.next_attempt_at, None);
+        transaction.commit().unwrap();
+
+        let raw = get_setting_tx(&conn, &scoped_key(&b.id, "scheduler_v1"))
+            .unwrap()
+            .unwrap();
+        assert!(
+            serde_json::from_str::<SyncSchedulerState>(&raw)
+                .unwrap()
+                .paused
+        );
+    }
+
+    #[test]
+    fn first_target_activation_persists_automatic_sync_off() {
+        let mut conn = connection();
+        let a = target('a');
+        let first_registry = SyncTargetRegistry {
+            version: 1,
+            active_target_id: Some(a.id.clone()),
+            target_epoch: 1,
+            targets: vec![a.clone()],
+        };
+        assert_eq!(
+            target_root_transition_v1(
+                &SyncTargetRegistry::default(),
+                &a.normalized_url,
+                &a.username,
+            )
+            .unwrap(),
+            TargetRootTransitionV1::FirstTarget
+        );
+
+        let transaction = conn.transaction().unwrap();
+        persist_target_activation_v1(
+            &transaction,
+            &first_registry,
+            &a.id,
+            TargetRootTransitionV1::FirstTarget,
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+
+        let raw = get_setting_tx(&conn, &scoped_key(&a.id, "scheduler_v1"))
+            .unwrap()
+            .unwrap();
+        assert!(
+            serde_json::from_str::<SyncSchedulerState>(&raw)
+                .unwrap()
+                .paused
+        );
+    }
+
+    #[test]
+    fn same_root_credential_refresh_preserves_enabled_or_disabled_scheduler_preference() {
+        for paused in [false, true] {
+            let mut conn = connection();
+            let a = target('a');
+            let registry = SyncTargetRegistry {
+                version: 1,
+                active_target_id: Some(a.id.clone()),
+                target_epoch: 1,
+                targets: vec![a.clone()],
+            };
+            save_registry(&conn, &registry).unwrap();
+            let scheduler = SyncSchedulerState {
+                paused,
+                ..SyncSchedulerState::default()
+            };
+            set_setting_tx(
+                &conn,
+                &scoped_key(&a.id, "scheduler_v1"),
+                &serde_json::to_string(&scheduler).unwrap(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                target_root_transition_v1(&registry, &a.normalized_url, &a.username).unwrap(),
+                TargetRootTransitionV1::SameRoot
+            );
+            let transaction = conn.transaction().unwrap();
+            persist_target_activation_v1(
+                &transaction,
+                &registry,
+                &a.id,
+                TargetRootTransitionV1::SameRoot,
+            )
+            .unwrap();
+            transaction.commit().unwrap();
+
+            let raw = get_setting_tx(&conn, &scoped_key(&a.id, "scheduler_v1"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<SyncSchedulerState>(&raw)
+                    .unwrap()
+                    .paused,
+                paused
+            );
+        }
+    }
+
+    #[test]
+    fn corrupt_legacy_replacement_is_durably_paused_before_becoming_active() {
+        let root = std::env::temp_dir().join(format!(
+            "watchtracker-target-replacement-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = AppPaths::resolve_from(None, &root).unwrap();
+        let mut conn = Connection::open(paths.database()).unwrap();
+        db::setup_db(&conn).unwrap();
+        set_setting_tx(&conn, "webdav_creds", "corrupt-legacy-credentials").unwrap();
+        set_setting_tx(&conn, "webdav_url", "https://legacy.example/dav/old-root/").unwrap();
+        let legacy_scheduler = SyncSchedulerState {
+            next_attempt_at: Some("2026-10-01T00:00:00Z".into()),
+            ..SyncSchedulerState::default()
+        };
+        set_setting_tx(
+            &conn,
+            "sync_scheduler_v1",
+            &serde_json::to_string(&legacy_scheduler).unwrap(),
+        )
+        .unwrap();
+
+        assert!(ensure_migrated(&mut conn, &paths)
+            .unwrap_err()
+            .to_string()
+            .contains("target_migration_required"));
+
+        let replacement = migrate_with_replacement_credentials(
+            &mut conn,
+            &paths,
+            "https://replacement.example/dav/new-root/",
+            "replacement-user",
+        )
+        .unwrap();
+        assert_eq!(replacement.transition, TargetRootTransitionV1::RootChanged);
+        let id = replacement.registry.active_target_id.clone().unwrap();
+        assert_eq!(
+            super::registry(&conn).unwrap(),
+            Some(replacement.registry.clone())
+        );
+        let raw = get_setting_tx(&conn, &scoped_key(&id, "scheduler_v1"))
+            .unwrap()
+            .unwrap();
+        let scheduler: SyncSchedulerState = serde_json::from_str(&raw).unwrap();
+        assert!(scheduler.paused);
+        assert_eq!(scheduler.next_attempt_at, None);
+        assert_eq!(get_setting_tx(&conn, "sync_scheduler_v1").unwrap(), None);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

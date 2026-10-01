@@ -11,7 +11,7 @@ use crate::record_validation::prepare_import_batch;
 use crate::recovery_points;
 use crate::sync_staging::{SyncPublishIntent, SyncStaging};
 use chrono::Utc;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
@@ -209,6 +209,36 @@ fn set_scheduler_state(conn: &Connection, state: &SyncSchedulerState) -> Result<
         &scoped_key(conn, SCHEDULER_KEY, "scheduler_v1")?,
         &raw,
     )?;
+    Ok(())
+}
+
+/// Target activation owns the transaction that changes active root authority.
+/// It uses this narrow helper so a root change is already paused when that
+/// authority becomes visible; no later UI action is needed to close the
+/// automatic-execution window.
+pub(crate) fn pause_scheduler_for_root_change_tx(
+    transaction: &Transaction<'_>,
+    target_id: &str,
+) -> Result<(), AppError> {
+    let key = crate::sync_targets::scoped_key(target_id, "scheduler_v1");
+    let mut state = match get_setting_tx(transaction, &key)? {
+        Some(raw) => serde_json::from_str::<SyncSchedulerState>(&raw)
+            .map_err(|error| AppError::General(format!("Invalid {SCHEDULER_KEY}: {error}")))?,
+        None => SyncSchedulerState::default(),
+    };
+    if state.version != 1 {
+        return Err(AppError::General(format!(
+            "Invalid {SCHEDULER_KEY} version"
+        )));
+    }
+    state.paused = true;
+    // A retry scheduled under a previous visit to this target must not become
+    // the first automatic execution after its root changes.
+    state.next_attempt_at = None;
+    let raw = serde_json::to_string(&state).map_err(|error| {
+        AppError::General(format!("Could not serialize sync scheduler: {error}"))
+    })?;
+    set_setting_tx(transaction, &key, &raw)?;
     Ok(())
 }
 

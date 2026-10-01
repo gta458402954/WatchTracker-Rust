@@ -72,6 +72,34 @@ test('@sync-target-isolation password rotation keeps the same target and proceed
   expect(dialogCount).toBe(0);
 });
 
+test('@sync-target-isolation changing the physical target pauses automatic sync before any later configuration notification', async ({ page }) => {
+  await setupMockIpc(page, { settings });
+  await openSyncSettings(page);
+  await page.getByPlaceholder('WebDAV 服务器地址').fill('https://new.example.test/dav/new-root/');
+  await page.getByPlaceholder('用户名').fill('new-user');
+  await page.getByPlaceholder('WebDAV 密码 / 应用密码').fill('new-password');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '只读检查并更新目标' }).click();
+
+  await expect(page.getByText('自动同步：已暂停')).toBeVisible();
+  await expect(page.getByText('自动同步已暂停')).toBeVisible();
+  const beforeClose = await mockSnapshot(page);
+  const activation = beforeClose.calls.findIndex(call => call.command === 'activate_sync_target');
+  const runtimeAfterActivation = beforeClose.calls.findIndex((call, index) => index > activation && call.command === 'get_sync_runtime_state');
+  expect(activation).toBeGreaterThan(-1);
+  expect(runtimeAfterActivation).toBeGreaterThan(activation);
+  expect(JSON.parse(beforeClose.settings.sync_scheduler_v1 as string).paused).toBe(true);
+
+  const coordinatorCallsBeforeClose = beforeClose.calls.filter(call => call.command === 'run_desktop_sync_coordinator').length;
+  // The user-initiated save remains able to run its explicit first sync even
+  // though automatic scheduling is durably paused for the new root.
+  expect(coordinatorCallsBeforeClose).toBeGreaterThan(0);
+  await page.getByRole('button', { name: '返回主页' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const afterClose = await mockSnapshot(page);
+  expect(afterClose.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(coordinatorCallsBeforeClose);
+});
+
 test('@sync-target-isolation reports HTTP 409 as an inaccessible target directory', async ({ page }) => {
   await setupMockIpc(page, { settings, webdavFailureStatus: 409, webdavFailureCount: 1 });
   await openSyncSettings(page);

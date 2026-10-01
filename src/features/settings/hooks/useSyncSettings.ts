@@ -4,7 +4,7 @@ import { clearCreds, clearResolvedSyncConflicts, getCreds, importLegacyChangesTo
 import { getSyncSnapshot, getSyncTargets, resolveSyncConflict, setSettingAsync, type SyncTargetRegistry } from '../../../shared/lib/database';
 
 interface Options {
-  records: WatchRecord[]; onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>;
+  records: WatchRecord[]; onSync?: () => Promise<{ ok: boolean; error?: string; conflictCount?: number }>; onSyncRuntimeRefresh: () => Promise<unknown>;
   onImport: (records: WatchRecord[]) => void | Promise<void>; onDatabaseRestored: () => Promise<WatchRecord[]>;
   onNotify?: (tone: 'info' | 'success' | 'warning' | 'error', message: string) => void;
   showFailure: (scope: string, action: string, error: unknown, setStatus?: (message: string) => void) => void;
@@ -17,7 +17,7 @@ interface Options {
 }
 
 export function useSyncSettings(options: Options) {
-  const { records, onSync, onImport, onDatabaseRestored, onNotify, showFailure, showSuccess,
+  const { records, onSync, onSyncRuntimeRefresh, onImport, onDatabaseRestored, onNotify, showFailure, showSuccess,
     username, setUsername, password, setPassword, webdavUrl, setSaved, setEditingTarget,
     targetRegistry, setTargetRegistry, setSyncStatus, setSyncConflicts, syncInterval, onSyncIntervalChange, pullIntervalMinutes, onPullIntervalChange } = options;
   const [localInterval, setLocalInterval] = useState(syncInterval);
@@ -35,7 +35,12 @@ export function useSyncSettings(options: Options) {
         const description = probe.kind === 'empty' ? '目标中暂无同步文件，将在激活后以安全条件创建并上传本机数据。' : `目标包含 ${probe.recordCount} 条记录${probe.revision == null ? '' : `，修订 ${probe.revision}`}。激活后将先拉取、合并，再按需上传。`;
         if (!confirm(`${description}\n\n确认切换到此 WebDAV 目标吗？旧目标的待上传数据和冲突会保留。`)) { setSyncStatus('已取消切换，当前目标未改变。'); return; }
       }
-      await saveCreds({ username: username.trim(), password: password.trim(), url: normalizedUrl }); setSaved(true); setEditingTarget(false); setPassword('');
+      await saveCreds({ username: username.trim(), password: password.trim(), url: normalizedUrl });
+      // Target activation may have atomically paused automatic execution when
+      // the frozen physical root changed. Refresh only the visible runtime
+      // state here; scheduling remains exclusively in the coordinator.
+      await onSyncRuntimeRefresh();
+      setSaved(true); setEditingTarget(false); setPassword('');
       setTargetRegistry(await getSyncTargets()); setSyncStatus('目标已激活，正在执行首次拉取与合并...'); const result = onSync ? await onSync() : await syncToWebDAV(records);
       if (!result.ok) { const safeMessage = syncFailureMessage(result.error); setSyncStatus(`⚠️ 目标已保存；首次同步未完成。${safeMessage || '请稍后重试。'}`); onNotify?.('warning', safeMessage || '目标已保存，但首次同步未完成。'); }
       else { setSyncStatus(result.conflictCount ? `⚠️ 目标已激活，有 ${result.conflictCount} 项冲突等待选择` : '✅ 目标已激活并完成首次同步'); showSuccess('WebDAV 目标已激活并完成首次同步。'); }
