@@ -947,20 +947,28 @@ fn run_production_sync_coordinator_step_with_dispatch_and_admission_v1<
 
                 // This is the sole normal-S2 success boundary: discovery/replay,
                 // freeze, and any required immutable publication have all reached
-                // Success. Recheck the exact bound target/epoch inside the scheduler
-                // transaction so a stale completion cannot clear a replacement
-                // target's retry state.
+                // Success. The scheduler transaction rechecks the exact bound
+                // target, root, lifecycle, and writer authority before it records
+                // success, so a later durable freeze cannot be cleared here.
                 let mut guard = conn.lock().map_err(|_| COORDINATOR_FAILURE)?;
-                return if crate::sync_state::record_normal_s2_success_for_bound_target_v1(
+                return match crate::sync_state::record_normal_s2_success_for_bound_target_v1(
                     &mut guard,
-                    &bound.binding.target_id,
-                    bound.binding.target_epoch,
+                    &bound.binding,
                 )
                 .map_err(|_| COORDINATOR_FAILURE)?
                 {
-                    Ok(ProductionCoordinatorResultV1::Success)
-                } else {
-                    Ok(ProductionCoordinatorResultV1::TargetChanged)
+                    crate::sync_state::NormalS2SuccessBookkeepingResultV1::Recorded => {
+                        Ok(ProductionCoordinatorResultV1::Success)
+                    }
+                    crate::sync_state::NormalS2SuccessBookkeepingResultV1::TargetChanged => {
+                        Ok(ProductionCoordinatorResultV1::TargetChanged)
+                    }
+                    crate::sync_state::NormalS2SuccessBookkeepingResultV1::ReadOnlyFrozen => {
+                        Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
+                    }
+                    crate::sync_state::NormalS2SuccessBookkeepingResultV1::NoLongerNormalS2 => {
+                        Ok(ProductionCoordinatorResultV1::Pending)
+                    }
                 };
             }
         }
@@ -1202,7 +1210,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Barrier, Mutex};
 
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     use super::*;
     use crate::db_atomic_helpers::set_setting_tx;
@@ -2686,6 +2694,164 @@ mod tests {
         assert_eq!(
             scheduler.next_attempt_at.as_deref(),
             Some("2026-09-26T01:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn normal_s2_success_does_not_clear_the_same_target_after_an_epoch_advance() {
+        let conn = connection();
+        let active = target(
+            "https://dav.example.test/normal-success-race-epoch/",
+            "alice",
+        );
+        set_active(&conn, &active, vec![active.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, false);
+        let active_for_hook = active.clone();
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::with_after_normal(
+            remote,
+            Box::new(move |connection| {
+                set_active(
+                    connection,
+                    &active_for_hook,
+                    vec![active_for_hook.clone()],
+                    2,
+                );
+                seed_scheduler_failure_v1(connection, &active_for_hook, 2, true);
+            }),
+        );
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::TargetChanged
+        );
+        let scheduler = crate::sync_state::runtime_state(&conn.lock().unwrap())
+            .unwrap()
+            .scheduler;
+        assert!(scheduler.paused);
+        assert_eq!(scheduler.consecutive_failures, 2);
+        assert_eq!(scheduler.last_error_code.as_deref(), Some("s2_pending"));
+        assert_eq!(
+            scheduler.next_attempt_at.as_deref(),
+            Some("2026-09-26T01:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn normal_s2_success_cannot_clear_a_root_fatal_recorded_after_remote_work() {
+        let conn = connection();
+        let active = target(
+            "https://dav.example.test/normal-success-race-frozen/",
+            "alice",
+        );
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let root = prepare_empty_normal_root_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, false);
+        let expected = Arc::new(Mutex::new(None));
+        let expected_for_hook = Arc::clone(&expected);
+        let root_for_hook = root.clone();
+        let active_for_hook = active.clone();
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::with_after_normal(
+            remote,
+            Box::new(move |connection| {
+                let mut store = SqliteS2LiteStoreV1::open(connection, &root_for_hook).unwrap();
+                MigrationStateStoreV1::persist_root_fatal(
+                    &mut store,
+                    &root_for_hook,
+                    "TEST_NORMAL_COMPLETION_FATAL",
+                )
+                .unwrap();
+                crate::sync_state::record_failure(
+                    &connection.lock().unwrap(),
+                    "s2_read_only_frozen",
+                    Some("2026-09-26T02:00:00.000Z".to_string()),
+                    Some(&active_for_hook.id),
+                    Some(1),
+                )
+                .unwrap();
+                *expected_for_hook.lock().unwrap() = Some(
+                    crate::sync_state::runtime_state(&connection.lock().unwrap())
+                        .unwrap()
+                        .scheduler,
+                );
+            }),
+        );
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::ReadOnlyFrozen
+        );
+        assert_eq!(
+            crate::sync_state::runtime_state(&conn.lock().unwrap())
+                .unwrap()
+                .scheduler,
+            expected.lock().unwrap().clone().unwrap()
+        );
+    }
+
+    #[test]
+    fn normal_s2_success_preserves_scheduler_when_source_authority_reappears() {
+        let conn = connection();
+        let active = target(
+            "https://dav.example.test/normal-success-race-source-owner/",
+            "alice",
+        );
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let root = prepare_empty_normal_root_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, false);
+        let expected = Arc::new(Mutex::new(None));
+        let expected_for_hook = Arc::clone(&expected);
+        let root_for_hook = root.clone();
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::with_after_normal(
+            remote,
+            Box::new(move |connection| {
+                let mut store = SqliteS2LiteStoreV1::open(connection, &root_for_hook).unwrap();
+                let execution = store
+                    .load_migration_execution_binding_v1()
+                    .unwrap()
+                    .unwrap();
+                let guard = connection.lock().unwrap();
+                guard
+                    .execute(
+                        "INSERT INTO s2_lite_migration_source_guard_v1(
+                             root_id, migration_id, captured_records_generation
+                         ) VALUES(?1, ?2, ?3)",
+                        params![
+                            execution.physical_root_id.clone(),
+                            execution.migration_id.clone(),
+                            execution.captured_records_generation.to_string(),
+                        ],
+                    )
+                    .unwrap();
+                guard
+                    .execute(
+                        "INSERT INTO s2_lite_migration_source_owner_v1(
+                             owner_key, root_id, migration_id
+                         ) VALUES(1, ?1, ?2)",
+                        params![root_for_hook, execution.migration_id],
+                    )
+                    .unwrap();
+                drop(guard);
+                *expected_for_hook.lock().unwrap() = Some(
+                    crate::sync_state::runtime_state(&connection.lock().unwrap())
+                        .unwrap()
+                        .scheduler,
+                );
+            }),
+        );
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(
+            crate::sync_state::runtime_state(&conn.lock().unwrap())
+                .unwrap()
+                .scheduler,
+            expected.lock().unwrap().clone().unwrap()
         );
     }
 

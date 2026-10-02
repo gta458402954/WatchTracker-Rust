@@ -18,7 +18,9 @@ use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 use crate::s2_lite::durable_persistence::{
-    validate_legacy_route_ticket_v1, LegacyRouteTicketV1, LegacyRouteTicketValidationV1,
+    validate_legacy_route_ticket_v1, validate_normal_s2_completion_authority_in_transaction_v1,
+    LegacyRouteTicketV1, LegacyRouteTicketValidationV1, NormalS2CompletionAuthorityV1,
+    TargetRootBindingV1,
 };
 
 const DEVICE_ID_KEY: &str = "sync_device_id_v1";
@@ -596,25 +598,37 @@ pub fn record_failure(
     runtime_state(conn)
 }
 
-/// Records a completed normal-S2 cycle only for the target/epoch that actually
-/// completed it. The active target is rechecked inside the same transaction as
-/// the scheduler update, so an older completion can never clear a newer
-/// target's retry state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NormalS2SuccessBookkeepingResultV1 {
+    Recorded,
+    TargetChanged,
+    ReadOnlyFrozen,
+    NoLongerNormalS2,
+}
+
+/// Records a completed normal-S2 cycle only if its exact target/root/lifecycle
+/// authority remains valid in the same transaction as the scheduler update.
 pub(crate) fn record_normal_s2_success_for_bound_target_v1(
     conn: &mut Connection,
-    target_id: &str,
-    target_epoch: u64,
-) -> Result<bool, AppError> {
+    binding: &TargetRootBindingV1,
+) -> Result<NormalS2SuccessBookkeepingResultV1, AppError> {
     let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if !matches!(
-        crate::sync_targets::active_target(&transaction)?,
-        Some((active_target_id, active_target_epoch))
-            if active_target_id == target_id && active_target_epoch == target_epoch
-    ) {
-        return Ok(false);
+    match validate_normal_s2_completion_authority_in_transaction_v1(&transaction, binding)
+        .map_err(|_| AppError::General("s2_normal_completion_authority_invalid".into()))?
+    {
+        NormalS2CompletionAuthorityV1::TargetChanged => {
+            return Ok(NormalS2SuccessBookkeepingResultV1::TargetChanged)
+        }
+        NormalS2CompletionAuthorityV1::ReadOnlyFrozen => {
+            return Ok(NormalS2SuccessBookkeepingResultV1::ReadOnlyFrozen)
+        }
+        NormalS2CompletionAuthorityV1::NoLongerNormalS2 => {
+            return Ok(NormalS2SuccessBookkeepingResultV1::NoLongerNormalS2)
+        }
+        NormalS2CompletionAuthorityV1::Valid => {}
     }
 
-    let scheduler_key = crate::sync_targets::scoped_key(target_id, "scheduler_v1");
+    let scheduler_key = crate::sync_targets::scoped_key(&binding.target_id, "scheduler_v1");
     let mut scheduler = match get_setting_tx(&transaction, &scheduler_key)? {
         Some(raw) => serde_json::from_str::<SyncSchedulerState>(&raw)
             .map_err(|error| AppError::General(format!("Invalid {SCHEDULER_KEY}: {error}")))?,
@@ -640,7 +654,7 @@ pub(crate) fn record_normal_s2_success_for_bound_target_v1(
     })?;
     set_setting_tx(&transaction, &scheduler_key, &raw)?;
     transaction.commit()?;
-    Ok(true)
+    Ok(NormalS2SuccessBookkeepingResultV1::Recorded)
 }
 
 #[allow(dead_code)]

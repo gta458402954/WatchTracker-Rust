@@ -96,6 +96,18 @@ pub enum NormalS2RouteAdmissionV1 {
     ReadOnlyFrozen,
 }
 
+/// The final, read-only authority decision used immediately before normal-S2
+/// success bookkeeping.  It deliberately performs no writer initialization:
+/// a completed remote cycle may only clear scheduler failure state when the
+/// already-established root authority still admits normal S2.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NormalS2CompletionAuthorityV1 {
+    Valid,
+    TargetChanged,
+    ReadOnlyFrozen,
+    NoLongerNormalS2,
+}
+
 /// Outcome of the local-only, root-authoritative migration cutover
 /// finalization. This API has no remote collaborator and never publishes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -936,6 +948,75 @@ fn validate_active_migration_binding(
         return Err(ROOT_MISMATCH);
     }
     Ok(())
+}
+
+/// Revalidates the exact target/root/lifecycle authority at the final local
+/// scheduler-success boundary.  The caller owns the surrounding `BEGIN
+/// IMMEDIATE` transaction, so this decision and any subsequent scheduler write
+/// observe one durable state and cannot be separated by a later freeze or
+/// lifecycle transition.
+pub fn validate_normal_s2_completion_authority_in_transaction_v1(
+    conn: &Connection,
+    binding: &TargetRootBindingV1,
+) -> Result<NormalS2CompletionAuthorityV1> {
+    validate_target_root_binding(binding)?;
+    if !matches!(
+        crate::sync_targets::active_target(conn).map_err(|_| STORE_FAILURE)?,
+        Some((active_target_id, active_target_epoch))
+            if active_target_id == binding.target_id && active_target_epoch == binding.target_epoch
+    ) {
+        return Ok(NormalS2CompletionAuthorityV1::TargetChanged);
+    }
+    if load_target_root_binding_from(conn, &binding.target_id, binding.target_epoch)?.as_ref()
+        != Some(binding)
+    {
+        return Ok(NormalS2CompletionAuthorityV1::TargetChanged);
+    }
+    // The durable row alone is not enough: the current target configuration
+    // must still derive this exact physical root as well.
+    if validate_active_migration_binding(conn, binding, &binding.physical_root_id).is_err() {
+        return Ok(NormalS2CompletionAuthorityV1::TargetChanged);
+    }
+
+    let safety = load_root_safety_from(conn, &binding.physical_root_id)?.ok_or(STORE_CORRUPTION)?;
+    if !safety.root_fatal_signals.is_empty() || !safety.cutover_state.root_fatal_signals.is_empty()
+    {
+        return Ok(NormalS2CompletionAuthorityV1::ReadOnlyFrozen);
+    }
+    if !safety.cutover_state.remote_s2_activated {
+        return Ok(NormalS2CompletionAuthorityV1::NoLongerNormalS2);
+    }
+
+    let migration = load_migration_from(conn, &binding.physical_root_id)?;
+    let owner = load_migration_source_owner(conn)?;
+    match migration {
+        Some(migration) => {
+            if migration.status == MigrationStatusV1::RootFrozen {
+                return Ok(NormalS2CompletionAuthorityV1::ReadOnlyFrozen);
+            }
+            if owner.is_some() || migration.status != MigrationStatusV1::MigrationComplete {
+                return Ok(NormalS2CompletionAuthorityV1::NoLongerNormalS2);
+            }
+            let execution = load_migration_execution_binding_from(conn, &binding.physical_root_id)?
+                .ok_or(STORE_CORRUPTION)?;
+            if execution.migration_id != migration.migration_id {
+                return Err(STORE_CORRUPTION);
+            }
+            load_continued_completed_migration_writer_from(
+                conn,
+                &migration,
+                &binding.physical_root_id,
+            )?;
+        }
+        None => {
+            if owner.is_some() {
+                return Ok(NormalS2CompletionAuthorityV1::NoLongerNormalS2);
+            }
+            load_desktop_root_state_from(conn, &binding.physical_root_id)?
+                .ok_or(STORE_CORRUPTION)?;
+        }
+    }
+    Ok(NormalS2CompletionAuthorityV1::Valid)
 }
 
 pub(crate) fn completed_migration_writer_seed(
