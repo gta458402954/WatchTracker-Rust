@@ -209,6 +209,21 @@ fn scheduler_state(conn: &Connection) -> Result<SyncSchedulerState, AppError> {
     Ok(state)
 }
 
+/// Checks an automatic caller's target and scheduler observation against an
+/// already-open authority transaction.  Callers which are about to mutate a
+/// remote namespace must use this instead of opening an earlier, separate
+/// admission transaction and carrying its result across a later boundary.
+pub(crate) fn automatic_coordinator_admitted_in_transaction_v1(
+    conn: &Connection,
+    expected_target_id: &str,
+    expected_target_epoch: u64,
+) -> Result<bool, AppError> {
+    Ok(matches!(
+        crate::sync_targets::active_target(conn)?,
+        Some((id, epoch)) if id == expected_target_id && epoch == expected_target_epoch
+    ) && !scheduler_state(conn)?.paused)
+}
+
 fn set_scheduler_state(conn: &Connection, state: &SyncSchedulerState) -> Result<(), AppError> {
     let raw = serde_json::to_string(state).map_err(|error| {
         AppError::General(format!("Could not serialize sync scheduler: {error}"))
@@ -230,10 +245,11 @@ pub fn admit_automatic_coordinator_v1(
     expected_target_epoch: u64,
 ) -> Result<AutomaticCoordinatorAdmissionV1, AppError> {
     let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let active = crate::sync_targets::active_target(&transaction)?;
-    if !matches!(active, Some((id, epoch)) if id == expected_target_id && epoch == expected_target_epoch)
-        || scheduler_state(&transaction)?.paused
-    {
+    if !automatic_coordinator_admitted_in_transaction_v1(
+        &transaction,
+        expected_target_id,
+        expected_target_epoch,
+    )? {
         return Ok(AutomaticCoordinatorAdmissionV1::Skipped);
     }
     transaction.commit()?;

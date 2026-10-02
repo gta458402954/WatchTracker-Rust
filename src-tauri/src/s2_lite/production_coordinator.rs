@@ -25,7 +25,8 @@ use super::durable_persistence::{
     capture_legacy_route_ticket_v1, validate_legacy_route_ticket_v1, LegacyRouteTicketV1,
     LegacyRouteTicketValidationV1, LegacyTicketMigrationAdmissionV1, MigrationAdmissionInputV1,
     MigrationAdmissionResultV1, MigrationExecutionBindingV1,
-    NormalDiscoveryInfrastructureAdmissionV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
+    NormalDiscoveryInfrastructureAdmissionV1, NormalDiscoveryInfrastructureCallerAdmissionV1,
+    SqliteS2LiteStoreV1, TargetRootBindingV1,
 };
 use super::migration_admission::capture_production_legacy_snapshot_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
@@ -99,6 +100,15 @@ pub enum DesktopSyncAdmissionV1 {
 struct AutomaticCoordinatorAdmissionExpectationV1 {
     target_id: String,
     target_epoch: u64,
+}
+
+/// The coordinator's caller context for one normal-S2 execution. It keeps the
+/// resolved root binding and the automatic caller's scheduler observation
+/// together until the final writers/ infrastructure admission transaction.
+#[derive(Clone, Copy)]
+struct NormalS2ExecutionAdmissionV1<'a> {
+    binding: &'a TargetRootBindingV1,
+    automatic_admission: Option<&'a AutomaticCoordinatorAdmissionExpectationV1>,
 }
 
 /// Tauri-facing coordinator surface.  The ticket is an opaque handoff
@@ -510,7 +520,7 @@ fn map_activation_result_v1(
 fn run_one_normal_s2_cycle_with_factory_v1<R, L, F>(
     conn: &Mutex<Connection>,
     coordinator: &RootExecutionCoordinatorV1,
-    binding: &TargetRootBindingV1,
+    execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
     budgets: &DiscoveryBudgetsV1,
     diagnostic_time: &str,
     mut load_credentials: L,
@@ -521,6 +531,15 @@ where
     L: FnMut(&TargetRootBindingV1) -> Result<Option<HistoricalWebDavCredentialsV1>>,
     F: FnMut(&TargetRootBindingV1, HistoricalWebDavCredentialsV1) -> Result<R>,
 {
+    let binding = execution_admission.binding;
+    let automatic_admission = execution_admission.automatic_admission;
+    let infrastructure_admission = automatic_admission.map_or_else(
+        || NormalDiscoveryInfrastructureCallerAdmissionV1::Manual,
+        |expected| NormalDiscoveryInfrastructureCallerAdmissionV1::Automatic {
+            expected_target_id: expected.target_id.clone(),
+            expected_target_epoch: expected.target_epoch,
+        },
+    );
     let Some(credentials) = load_credentials(binding)? else {
         return Ok(ProductionCoordinatorResultV1::Pending);
     };
@@ -543,6 +562,7 @@ where
         match store.run_normal_discovery_infrastructure_exclusive(
             &binding.physical_root_id,
             binding,
+            &infrastructure_admission,
             || Ok(remote.prepare_normal_s2_discovery_infrastructure()),
         )? {
             NormalDiscoveryInfrastructureAdmissionV1::Executed(RemotePutResultV1::Success) => {}
@@ -554,6 +574,9 @@ where
             ) => return Ok(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked),
             NormalDiscoveryInfrastructureAdmissionV1::RejectedRootFrozen => {
                 return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
+            }
+            NormalDiscoveryInfrastructureAdmissionV1::AutomaticSkipped => {
+                return Ok(ProductionCoordinatorResultV1::AutomaticSkipped)
             }
         }
     }
@@ -609,14 +632,14 @@ fn run_one_normal_s2_cycle_v1(
     conn: &Mutex<Connection>,
     paths: &crate::app_paths::AppPaths,
     coordinator: &RootExecutionCoordinatorV1,
-    binding: &TargetRootBindingV1,
+    execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
     budgets: &DiscoveryBudgetsV1,
     diagnostic_time: &str,
 ) -> Result<ProductionCoordinatorResultV1> {
     run_one_normal_s2_cycle_with_factory_v1(
         conn,
         coordinator,
-        binding,
+        execution_admission,
         budgets,
         diagnostic_time,
         |binding| {
@@ -689,7 +712,7 @@ trait CoordinatorPrimitiveDispatchV1 {
         conn: &Mutex<Connection>,
         paths: &crate::app_paths::AppPaths,
         coordinator: &RootExecutionCoordinatorV1,
-        binding: &TargetRootBindingV1,
+        execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
         budgets: &DiscoveryBudgetsV1,
         diagnostic_time: &str,
     ) -> Result<ProductionCoordinatorResultV1>;
@@ -738,11 +761,18 @@ impl CoordinatorPrimitiveDispatchV1 for ProductionCoordinatorPrimitiveDispatchV1
         conn: &Mutex<Connection>,
         paths: &crate::app_paths::AppPaths,
         coordinator: &RootExecutionCoordinatorV1,
-        binding: &TargetRootBindingV1,
+        execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
         budgets: &DiscoveryBudgetsV1,
         diagnostic_time: &str,
     ) -> Result<ProductionCoordinatorResultV1> {
-        run_one_normal_s2_cycle_v1(conn, paths, coordinator, binding, budgets, diagnostic_time)
+        run_one_normal_s2_cycle_v1(
+            conn,
+            paths,
+            coordinator,
+            execution_admission,
+            budgets,
+            diagnostic_time,
+        )
     }
 }
 
@@ -905,7 +935,10 @@ fn run_production_sync_coordinator_step_with_dispatch_and_admission_v1<
                     conn,
                     paths,
                     coordinator,
-                    &bound.binding,
+                    &NormalS2ExecutionAdmissionV1 {
+                        binding: &bound.binding,
+                        automatic_admission,
+                    },
                     budgets,
                     &diagnostic_now_v1(),
                 )
@@ -1530,12 +1563,18 @@ mod tests {
             conn: &Mutex<Connection>,
             paths: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
-            binding: &TargetRootBindingV1,
+            execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
             budgets: &DiscoveryBudgetsV1,
             time: &str,
         ) -> Result<ProductionCoordinatorResultV1> {
-            let result =
-                run_one_normal_s2_cycle_v1(conn, paths, coordinator, binding, budgets, time);
+            let result = run_one_normal_s2_cycle_v1(
+                conn,
+                paths,
+                coordinator,
+                execution_admission,
+                budgets,
+                time,
+            );
             self.observe(ObservedPrimitiveV1::Normal);
             result
         }
@@ -1549,6 +1588,7 @@ mod tests {
         remote: Arc<Mutex<NormalRemoteStateV1>>,
         normal_calls: Mutex<usize>,
         before_normal: Option<Arc<Barrier>>,
+        before_infrastructure: Mutex<Option<AfterPrimitiveHookV1>>,
     }
 
     impl DeterministicNormalDispatchV1 {
@@ -1557,6 +1597,7 @@ mod tests {
                 remote,
                 normal_calls: Mutex::new(0),
                 before_normal: None,
+                before_infrastructure: Mutex::new(None),
             }
         }
 
@@ -1565,6 +1606,19 @@ mod tests {
                 remote,
                 normal_calls: Mutex::new(0),
                 before_normal: Some(Arc::new(Barrier::new(2))),
+                before_infrastructure: Mutex::new(None),
+            }
+        }
+
+        fn with_before_infrastructure(
+            remote: Arc<Mutex<NormalRemoteStateV1>>,
+            hook: AfterPrimitiveHookV1,
+        ) -> Self {
+            Self {
+                remote,
+                normal_calls: Mutex::new(0),
+                before_normal: None,
+                before_infrastructure: Mutex::new(Some(hook)),
             }
         }
 
@@ -1601,7 +1655,7 @@ mod tests {
             conn: &Mutex<Connection>,
             _: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
-            binding: &TargetRootBindingV1,
+            execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
             budgets: &DiscoveryBudgetsV1,
             time: &str,
         ) -> Result<ProductionCoordinatorResultV1> {
@@ -1609,11 +1663,14 @@ mod tests {
                 barrier.wait();
             }
             *self.normal_calls.lock().unwrap() += 1;
+            if let Some(hook) = self.before_infrastructure.lock().unwrap().take() {
+                hook(conn);
+            }
             let remote = Arc::clone(&self.remote);
             run_one_normal_s2_cycle_with_factory_v1(
                 conn,
                 coordinator,
-                binding,
+                execution_admission,
                 budgets,
                 time,
                 |candidate| {
@@ -1705,7 +1762,7 @@ mod tests {
             conn: &Mutex<Connection>,
             paths: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
-            binding: &TargetRootBindingV1,
+            execution_admission: &NormalS2ExecutionAdmissionV1<'_>,
             budgets: &DiscoveryBudgetsV1,
             diagnostic_time: &str,
         ) -> Result<ProductionCoordinatorResultV1> {
@@ -1713,7 +1770,7 @@ mod tests {
                 conn,
                 paths,
                 coordinator,
-                binding,
+                execution_admission,
                 budgets,
                 diagnostic_time,
             );
@@ -2043,6 +2100,28 @@ mod tests {
             &DiscoveryBudgetsV1::default(),
             1,
             dispatch,
+        )
+        .unwrap()
+    }
+
+    fn run_normal_coordinator_with_automatic_admission_v1(
+        conn: &Mutex<Connection>,
+        dispatch: &DeterministicNormalDispatchV1,
+        active: &SyncTarget,
+        epoch: u64,
+    ) -> ProductionCoordinatorResultV1 {
+        let expected = AutomaticCoordinatorAdmissionExpectationV1 {
+            target_id: active.id.clone(),
+            target_epoch: epoch,
+        };
+        run_production_sync_coordinator_step_with_dispatch_and_admission_v1(
+            conn,
+            &normal_paths(),
+            &RootExecutionCoordinatorV1::default(),
+            &DiscoveryBudgetsV1::default(),
+            1,
+            dispatch,
+            Some(&expected),
         )
         .unwrap()
     }
@@ -2408,6 +2487,142 @@ mod tests {
             assert!(!discovery.state.last_round_indeterminate);
             assert!(discovery.state.observed_writers.is_empty());
         }
+    }
+
+    #[test]
+    fn automatic_writers_provisioning_revalidates_pause_and_target_races_in_its_transaction() {
+        enum RaceV1 {
+            Pause,
+            EpochAdvance,
+            TargetSwitch,
+        }
+
+        for race in [RaceV1::Pause, RaceV1::EpochAdvance, RaceV1::TargetSwitch] {
+            let conn = connection();
+            let active = target("https://dav.example.test/writers-auto-a/", "alice");
+            let alternate = target("https://dav.example.test/writers-auto-b/", "bob");
+            set_active(&conn, &active, vec![active.clone(), alternate.clone()], 1);
+            prepare_empty_normal_root_v1(&conn, &active);
+            let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+            let hook: AfterPrimitiveHookV1 = match race {
+                RaceV1::Pause => Box::new({
+                    let target_id = active.id.clone();
+                    move |connection| {
+                        crate::sync_state::set_paused(
+                            &connection.lock().unwrap(),
+                            true,
+                            Some(&target_id),
+                            Some(1),
+                        )
+                        .unwrap();
+                    }
+                }),
+                RaceV1::EpochAdvance => Box::new({
+                    let active = active.clone();
+                    let alternate = alternate.clone();
+                    move |connection| {
+                        set_active(connection, &active, vec![active.clone(), alternate], 2)
+                    }
+                }),
+                RaceV1::TargetSwitch => Box::new({
+                    let active = active.clone();
+                    let alternate = alternate.clone();
+                    move |connection| {
+                        set_active(connection, &alternate, vec![active, alternate.clone()], 2)
+                    }
+                }),
+            };
+            let dispatch = DeterministicNormalDispatchV1::with_before_infrastructure(
+                Arc::clone(&remote),
+                hook,
+            );
+
+            assert_eq!(
+                run_normal_coordinator_with_automatic_admission_v1(&conn, &dispatch, &active, 1),
+                ProductionCoordinatorResultV1::AutomaticSkipped
+            );
+            let state = remote.lock().unwrap();
+            assert_eq!(state.infrastructure_calls, 0);
+            assert_eq!(state.put_calls, 0);
+            assert!(state.events.is_empty());
+        }
+    }
+
+    #[test]
+    fn current_automatic_and_paused_manual_have_distinct_writers_provisioning_admission() {
+        let conn = connection();
+        let active = target("https://dav.example.test/writers-auto-current/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+        assert_eq!(
+            run_normal_coordinator_with_automatic_admission_v1(&conn, &dispatch, &active, 1),
+            ProductionCoordinatorResultV1::Success
+        );
+        assert_eq!(remote.lock().unwrap().infrastructure_calls, 1);
+
+        let conn = connection();
+        let active = target("https://dav.example.test/writers-manual-paused/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        crate::sync_state::set_paused(&conn.lock().unwrap(), true, Some(&active.id), Some(1))
+            .unwrap();
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Success
+        );
+        assert_eq!(remote.lock().unwrap().infrastructure_calls, 1);
+    }
+
+    #[test]
+    fn manual_writers_provisioning_does_not_bypass_root_target_authority() {
+        let conn = connection();
+        let active = target(
+            "https://dav.example.test/writers-manual-authority-a/",
+            "alice",
+        );
+        let alternate = target(
+            "https://dav.example.test/writers-manual-authority-b/",
+            "bob",
+        );
+        set_active(&conn, &active, vec![active.clone(), alternate.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        set_active(
+            &conn,
+            &alternate,
+            vec![active.clone(), alternate.clone()],
+            2,
+        );
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let remote_for_factory = Arc::clone(&remote);
+        assert!(run_one_normal_s2_cycle_with_factory_v1(
+            &conn,
+            &RootExecutionCoordinatorV1::default(),
+            &NormalS2ExecutionAdmissionV1 {
+                binding: &load_historical_target_root_binding_v1(&conn, &active.id, 1)
+                    .unwrap()
+                    .unwrap(),
+                automatic_admission: None,
+            },
+            &DiscoveryBudgetsV1::default(),
+            TIME,
+            |binding| Ok(Some(HistoricalWebDavCredentialsV1 {
+                canonical_url: binding.canonical_url.clone(),
+                username: binding.normalized_account.clone(),
+                password: "test".into(),
+            })),
+            |binding, _| Ok(NormalRemoteV1 {
+                root_id: binding.physical_root_id.clone(),
+                state: Arc::clone(&remote_for_factory),
+            }),
+        )
+        .is_err());
+        let state = remote.lock().unwrap();
+        assert_eq!(state.infrastructure_calls, 0);
+        assert!(state.events.is_empty());
     }
 
     #[test]

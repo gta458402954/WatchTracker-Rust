@@ -71,6 +71,20 @@ pub enum OrdinaryPublishExclusiveResultV1<T> {
 pub enum NormalDiscoveryInfrastructureAdmissionV1<T> {
     Executed(T),
     RejectedRootFrozen,
+    AutomaticSkipped,
+}
+
+/// The caller context that must be revalidated at the final durable boundary
+/// before writers/ can be created. Manual work deliberately has no scheduler
+/// pause restriction; automatic work must remain tied to its exact runnable
+/// target observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NormalDiscoveryInfrastructureCallerAdmissionV1 {
+    Manual,
+    Automatic {
+        expected_target_id: String,
+        expected_target_epoch: u64,
+    },
 }
 
 /// The final transaction-local result of admitting a normal S2 lifecycle
@@ -4185,12 +4199,32 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         &mut self,
         root_id: &str,
         binding: &TargetRootBindingV1,
+        caller_admission: &NormalDiscoveryInfrastructureCallerAdmissionV1,
         operation: F,
     ) -> Result<NormalDiscoveryInfrastructureAdmissionV1<T>> {
         match self.run_root_publication_admission(
             root_id,
-            |_transaction, _safety| Ok(()),
+            |_transaction, _safety| {
+                Ok(NormalDiscoveryInfrastructureAdmissionV1::RejectedRootFrozen)
+            },
             |transaction, safety| {
+                if let NormalDiscoveryInfrastructureCallerAdmissionV1::Automatic {
+                    expected_target_id,
+                    expected_target_epoch,
+                } = caller_admission
+                {
+                    if !crate::sync_state::automatic_coordinator_admitted_in_transaction_v1(
+                        transaction,
+                        expected_target_id,
+                        *expected_target_epoch,
+                    )
+                    .map_err(|_| STORE_FAILURE)?
+                    {
+                        return Ok(Some(
+                            NormalDiscoveryInfrastructureAdmissionV1::AutomaticSkipped,
+                        ));
+                    }
+                }
                 validate_active_migration_binding(transaction, binding, root_id)?;
                 if safety.cutover_state.state_version != 1
                     || !safety.cutover_state.remote_s2_activated
@@ -4205,12 +4239,12 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
                 {
                     return Err(STORE_CORRUPTION);
                 }
-                Ok(None::<()>)
+                Ok(None::<NormalDiscoveryInfrastructureAdmissionV1<T>>)
             },
             operation,
         )? {
             Ok(value) => Ok(NormalDiscoveryInfrastructureAdmissionV1::Executed(value)),
-            Err(()) => Ok(NormalDiscoveryInfrastructureAdmissionV1::RejectedRootFrozen),
+            Err(rejected) => Ok(rejected),
         }
     }
 
