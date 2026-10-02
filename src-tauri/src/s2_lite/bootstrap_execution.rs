@@ -20,8 +20,7 @@ use super::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
 use super::migration_orchestration::{
     create_activation_publication_execution_capability_v1,
     create_migration_root_execution_capability_v1, execute_migration_step_v1,
-    recover_migration_activation_cutover_v1, start_or_attach_migration_v1, MigrationStateStoreV1,
-    MigrationStatusV1,
+    start_or_attach_migration_v1, MigrationStateStoreV1, MigrationStatusV1,
 };
 use super::outbound_publish::HistoricalWebDavCredentialsV1;
 use super::root_coordinator::RootExecutionCoordinatorV1;
@@ -168,14 +167,9 @@ fn recover_durable_verified_activation_cutover_v1(
     store: &mut SqliteS2LiteStoreV1<'_>,
     migration: &super::migration_orchestration::MigrationStateV1,
 ) -> Result<ActivationExecutionResultV1> {
-    let recovery = recover_migration_activation_cutover_v1(migration, store)?;
-    let cutover = recovery
-        .diagnostic_state()
-        .ok_or(ProtocolError("activation_cutover_not_ready"))?;
-    if !cutover.remote_s2_activated {
-        return Err(ProtocolError("activation_cutover_not_ready"));
-    }
-    MigrationStateStoreV1::persist_cutover_state(store, &migration.root_id, &cutover)?;
+    // The store reloads all authoritative records and merges the latch under
+    // one BEGIN IMMEDIATE transaction; this call has no remote collaborator.
+    store.recover_durable_verified_activation_cutover_v1()?;
     let safety = MigrationStateStoreV1::load_root_safety(store, &migration.root_id)?;
     Ok(
         if safety.root_fatal_signals.is_empty()
@@ -976,6 +970,8 @@ mod tests {
         target_a: String,
         remote_state: Arc<Mutex<FakeState>>,
     }
+
+    type DurableAuthorityMutation = fn(&Connection, &Fixture, &str);
 
     fn activate(conn: &Mutex<Connection>, url: &str, username: &str, epoch: u64) -> String {
         let normalized_url = sync_targets::normalize_url(url).unwrap();
@@ -1923,6 +1919,160 @@ mod tests {
         assert_eq!(remote.get_calls, 0);
         assert_eq!(remote.put_calls, 0);
         assert!(activation_state(&fixture).activation_receipt.is_some());
+    }
+
+    fn reset_activation_cutover_latch_for_recovery_test(fixture: &Fixture) {
+        let connection = fixture.conn.lock().unwrap();
+        let bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT state_json FROM s2_lite_root_authority_v1 WHERE root_id=?1",
+                [&fixture.root_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        envelope["payload"]["cutoverState"] = serde_json::to_value(
+            super::super::activation_cutover::create_activation_cutover_state_v1(),
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE s2_lite_root_authority_v1 SET state_json=?1 WHERE root_id=?2",
+                rusqlite::params![serde_json::to_vec(&envelope).unwrap(), fixture.root_id],
+            )
+            .unwrap();
+    }
+
+    fn verified_activation_ready_for_local_cutover_recovery(fixture: &Fixture) {
+        complete_stage_b(fixture);
+        assert_eq!(
+            run_activation(fixture),
+            ActivationExecutionResultV1::Progressed
+        );
+        assert_eq!(
+            run_activation(fixture),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(
+            activation_state(fixture).status,
+            MigrationStatusV1::ActivationVerified
+        );
+        reset_activation_cutover_latch_for_recovery_test(fixture);
+        assert!(
+            !SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id)
+                .unwrap()
+                .load_root_safety(&fixture.root_id)
+                .unwrap()
+                .cutover_state
+                .remote_s2_activated
+        );
+        let mut remote = fixture.remote_state.lock().unwrap();
+        remote.get_calls = 0;
+        remote.put_calls = 0;
+        remote.preparation_calls = 0;
+    }
+
+    #[test]
+    fn verified_durable_authority_recovers_cutover_latch_without_network_io() {
+        let fixture = fixture();
+        verified_activation_ready_for_local_cutover_recovery(&fixture);
+
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        let remote = fixture.remote_state.lock().unwrap();
+        assert_eq!(remote.get_calls, 0);
+        assert_eq!(remote.put_calls, 0);
+        assert_eq!(remote.preparation_calls, 0);
+        drop(remote);
+        assert!(
+            SqliteS2LiteStoreV1::open(&fixture.conn, &fixture.root_id)
+                .unwrap()
+                .load_root_safety(&fixture.root_id)
+                .unwrap()
+                .cutover_state
+                .remote_s2_activated
+        );
+    }
+
+    #[test]
+    fn verified_durable_cutover_recovery_fails_closed_for_independent_authority_mismatches() {
+        let cases: &[(&str, DurableAuthorityMutation)] = &[
+            ("execution fingerprint", |connection, fixture, _| {
+                mutate_execution_binding(connection, &fixture.root_id, |binding| {
+                    binding["legacyFingerprint"] = serde_json::Value::String("f".repeat(64));
+                });
+            }),
+            ("source guard generation", |connection, _, _| {
+                connection
+                    .execute(
+                        "UPDATE s2_lite_migration_source_guard_v1
+                             SET captured_records_generation='999'",
+                        [],
+                    )
+                    .unwrap();
+            }),
+            ("source owner migration", |connection, _, _| {
+                connection
+                    .execute(
+                        "UPDATE s2_lite_migration_source_owner_v1
+                             SET migration_id='90000000-0000-4000-8000-000000000099'",
+                        [],
+                    )
+                    .unwrap();
+            }),
+            ("prepared activation bytes", |connection, fixture, path| {
+                connection
+                    .execute(
+                        "UPDATE s2_lite_prepared_intent_v1 SET exact_bytes=X'00'
+                             WHERE root_id=?1 AND intent_kind='activation' AND remote_path=?2",
+                        rusqlite::params![fixture.root_id, path],
+                    )
+                    .unwrap();
+            }),
+            ("activation receipt", |connection, fixture, path| {
+                connection
+                    .execute(
+                        "UPDATE s2_lite_published_receipt_v1 SET receipt_json=X'00'
+                             WHERE root_id=?1 AND receipt_kind='activation' AND remote_path=?2",
+                        rusqlite::params![fixture.root_id, path],
+                    )
+                    .unwrap();
+            }),
+        ];
+        for (name, mutate) in cases {
+            let fixture = fixture();
+            verified_activation_ready_for_local_cutover_recovery(&fixture);
+            let activation_path = activation_state(&fixture)
+                .activation_intent
+                .unwrap()
+                .remote_path;
+            mutate(&fixture.conn.lock().unwrap(), &fixture, &activation_path);
+
+            assert!(run_activation_result(&fixture).is_err(), "{name}");
+            let bytes: Vec<u8> = fixture
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT state_json FROM s2_lite_root_authority_v1 WHERE root_id=?1",
+                    [&fixture.root_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let authority: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                !authority["payload"]["cutoverState"]["remoteS2Activated"]
+                    .as_bool()
+                    .unwrap(),
+                "{name}"
+            );
+            let remote = fixture.remote_state.lock().unwrap();
+            assert_eq!(remote.get_calls, 0, "{name}");
+            assert_eq!(remote.put_calls, 0, "{name}");
+            assert_eq!(remote.preparation_calls, 0, "{name}");
+        }
     }
 
     #[test]

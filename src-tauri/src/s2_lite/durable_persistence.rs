@@ -42,7 +42,10 @@ use super::migration_orchestration::{
     MigrationRootFatalV1, MigrationRootSafetyStateV1, MigrationStateStoreV1, MigrationStateV1,
     MigrationStatusV1, PublishExclusiveResultV1,
 };
-use super::remote_discovery::{create_discovery_state_v1, DiscoveryStateV1};
+use super::remote_discovery::{
+    create_discovery_state_v1, DiscoveryStateV1, VerifiedFingerprintEvidenceV1,
+    VerifiedRemoteObjectV1,
+};
 use super::types::CommitRef;
 
 const STORE_FAILURE: ProtocolError = ProtocolError("S2_DURABLE_PERSISTENCE_FAILURE");
@@ -2313,6 +2316,146 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
     pub fn migration_source_protected_v1(&self) -> Result<bool> {
         let conn = self.connection()?;
         Ok(load_migration_source_owner(&conn)?.is_some())
+    }
+
+    /// Recovers the activation cutover latch only after one SQLite authority
+    /// transaction has proved that every independently persisted activation
+    /// fact belongs to the current frozen migration.  This is deliberately
+    /// local-only: the durable exact receipt is the recovery evidence, and no
+    /// remote operation is performed while (or before) this transaction runs.
+    pub fn recover_durable_verified_activation_cutover_v1(&mut self) -> Result<()> {
+        let mut conn = self.connection()?;
+        let transaction = database(conn.transaction_with_behavior(TransactionBehavior::Immediate))?;
+        ensure_root_authority(&transaction, self.root_id)?;
+
+        let mut safety =
+            load_root_safety_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if !safety.root_fatal_signals.is_empty()
+            || !safety.cutover_state.root_fatal_signals.is_empty()
+        {
+            database(transaction.commit())?;
+            return Ok(());
+        }
+
+        // `load_migration_from` strictly reconciles the persisted snapshot and
+        // deterministic plan before it can be used as a cutover input.
+        let migration = load_migration_from(&transaction, self.root_id)?.ok_or(STORE_CORRUPTION)?;
+        if migration.status != MigrationStatusV1::ActivationVerified
+            || migration.root_id != self.root_id
+        {
+            return Err(STORE_CORRUPTION);
+        }
+        let execution =
+            load_frozen_migration_execution_from(&transaction, &migration, self.root_id)?;
+        let owner = load_migration_source_owner(&transaction)?.ok_or(STORE_CORRUPTION)?;
+        if owner.root_id != self.root_id
+            || owner.migration_id != migration.migration_id
+            || execution.migration_id != migration.migration_id
+        {
+            return Err(STORE_CORRUPTION);
+        }
+
+        let snapshot = migration.snapshot.as_ref().ok_or(STORE_CORRUPTION)?;
+        if execution.legacy_fingerprint.as_deref() != Some(snapshot.legacy_fingerprint.as_str()) {
+            return Err(STORE_CORRUPTION);
+        }
+        // A compatible third-party activation is adopted with an already
+        // durable cutover latch but deliberately has no local publication
+        // receipt.  It is not eligible for receipt-based recovery (and cannot
+        // create a latch here); preserve that established, read-only path.
+        if migration.activation_receipt.is_none() {
+            if safety.cutover_state.remote_s2_activated
+                && matches!(
+                    &safety.cutover_state.fingerprint_consistency,
+                    ActivationFingerprintConsistencyV1::Consistent { legacy_fingerprint }
+                        if legacy_fingerprint.as_deref()
+                            == Some(snapshot.legacy_fingerprint.as_str())
+                )
+            {
+                database(transaction.commit())?;
+                return Ok(());
+            }
+            return Err(STORE_CORRUPTION);
+        }
+        let embedded_intent = migration
+            .activation_intent
+            .as_ref()
+            .ok_or(STORE_CORRUPTION)?;
+        if migration.activation_intent_root_id.as_deref() != Some(self.root_id) {
+            return Err(STORE_CORRUPTION);
+        }
+        let durable_intent =
+            load_activation_intent_from(&transaction, self.root_id, &embedded_intent.remote_path)?
+                .ok_or(STORE_CORRUPTION)?;
+        // Equality includes immutable path, activation id, exact bytes,
+        // content hash, and the prepared-intent fingerprint.
+        if durable_intent != *embedded_intent {
+            return Err(STORE_CORRUPTION);
+        }
+        let embedded_receipt = migration
+            .activation_receipt
+            .as_ref()
+            .ok_or(STORE_CORRUPTION)?;
+        if migration.activation_receipt_root_id.as_deref() != Some(self.root_id) {
+            return Err(STORE_CORRUPTION);
+        }
+        let durable_receipt =
+            load_activation_receipt_from(&transaction, self.root_id, &embedded_intent.remote_path)?
+                .ok_or(STORE_CORRUPTION)?;
+        // The durable receipt loader validates its root binding and every
+        // receipt-to-intent identity; equality additionally rejects a merely
+        // internally consistent receipt embedded in a replaced migration row.
+        if durable_receipt != *embedded_receipt {
+            return Err(STORE_CORRUPTION);
+        }
+        validate_published_activation_receipt_v1(embedded_receipt, embedded_intent)
+            .map_err(|_| STORE_CORRUPTION)?;
+
+        let mut discovery = create_discovery_state_v1();
+        discovery.verified_objects.push(VerifiedRemoteObjectV1 {
+            path: durable_intent.remote_path.clone(),
+            kind: "activation".to_string(),
+            exact_bytes_hash: durable_receipt.verified_exact_bytes_hash.clone(),
+            exact_bytes_hex: String::new(),
+            content_hash: durable_intent.content_hash.clone(),
+            commit_ref: None,
+            activation_id: Some(durable_intent.activation_id.clone()),
+            fingerprint_evidence: VerifiedFingerprintEvidenceV1::Value {
+                value: snapshot.legacy_fingerprint.clone(),
+            },
+        });
+        let cutover = recover_activation_cutover_v1(&discovery, Some(&safety.cutover_state))
+            .diagnostic_state()
+            .ok_or(STORE_CORRUPTION)?;
+        if !cutover.remote_s2_activated {
+            return Err(STORE_CORRUPTION);
+        }
+        let merged = merge_migration_root_cutover_state_v1(&safety.cutover_state, &cutover)?;
+        let mut fatal_codes = safety
+            .root_fatal_signals
+            .iter()
+            .map(|fatal| fatal.code.clone())
+            .chain(
+                merged
+                    .root_fatal_signals
+                    .iter()
+                    .map(|fatal| fatal.code.clone()),
+            )
+            .collect::<Vec<_>>();
+        fatal_codes.sort();
+        fatal_codes.dedup();
+        let next_fatals = fatal_codes
+            .into_iter()
+            .map(|code| MigrationRootFatalV1 { code })
+            .collect::<Vec<_>>();
+        if safety.cutover_state != merged || safety.root_fatal_signals != next_fatals {
+            safety.generation = safety.generation.checked_add(1).ok_or(STORE_CORRUPTION)?;
+            safety.cutover_state = merged;
+            safety.root_fatal_signals = next_fatals;
+            save_root_safety(&transaction, &safety)?;
+        }
+        database(transaction.commit())?;
+        Ok(())
     }
 
     /// Atomically converts a durably verified compatible activation into the
