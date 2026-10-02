@@ -1196,6 +1196,15 @@ impl ImmutableObjectRemoteV1 for WebDavS2RemoteV1 {
     fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
         self.get(path)
     }
+    fn prepare_normal_s2_discovery_infrastructure(&mut self) -> RemotePutResultV1 {
+        match self.ensure_collection("writers") {
+            CollectionProvisionResultV1::Ready => RemotePutResultV1::Success,
+            CollectionProvisionResultV1::AuthOrCapabilityFailure => {
+                RemotePutResultV1::AuthOrCapabilityFailure
+            }
+            CollectionProvisionResultV1::Indeterminate => RemotePutResultV1::Indeterminate,
+        }
+    }
     fn prepare_immutable_parent_collections(&mut self, path: &str) -> RemotePutResultV1 {
         assert!(
             valid_immutable_object_path(path),
@@ -1544,6 +1553,66 @@ mod tests {
             assert!(!text.contains("if-none-match"));
             assert!(!text.contains("content-length:"));
         }
+    }
+
+    #[test]
+    fn normal_discovery_infrastructure_strictly_prepares_only_writers() {
+        let (url, received) = server(vec![
+            Some(response("201 Created", b"")),
+            Some(response("405 Method Not Allowed", b"")),
+            Some(response(
+                "207 Multi-Status",
+                &depth_zero_collection("writers"),
+            )),
+            Some(response("401 Unauthorized", b"")),
+            Some(response("500 Server Error", b"")),
+        ]);
+        let mut webdav = remote(&url);
+        assert_eq!(
+            webdav.prepare_normal_s2_discovery_infrastructure(),
+            RemotePutResultV1::Success
+        );
+        assert_eq!(
+            webdav.prepare_normal_s2_discovery_infrastructure(),
+            RemotePutResultV1::Success
+        );
+        assert_eq!(
+            webdav.prepare_normal_s2_discovery_infrastructure(),
+            RemotePutResultV1::AuthOrCapabilityFailure
+        );
+        assert_eq!(
+            webdav.prepare_normal_s2_discovery_infrastructure(),
+            RemotePutResultV1::Indeterminate
+        );
+
+        let requests = received.lock().unwrap();
+        let request_lines = requests
+            .iter()
+            .map(|raw| {
+                String::from_utf8_lossy(raw)
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            request_lines,
+            vec![
+                "MKCOL /dav/writers HTTP/1.1",
+                "MKCOL /dav/writers HTTP/1.1",
+                "PROPFIND /dav/writers HTTP/1.1",
+                "MKCOL /dav/writers HTTP/1.1",
+                "MKCOL /dav/writers HTTP/1.1",
+            ]
+        );
+        assert!(requests.iter().all(|raw| {
+            let text = String::from_utf8_lossy(raw).to_ascii_lowercase();
+            !text.starts_with("put ") && !text.contains("if-none-match")
+        }));
+        assert!(String::from_utf8_lossy(&requests[2])
+            .to_ascii_lowercase()
+            .contains("depth: 0"));
     }
 
     #[test]

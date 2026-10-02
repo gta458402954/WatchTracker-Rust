@@ -24,8 +24,8 @@ use super::desktop_lifecycle::{
 use super::durable_persistence::{
     capture_legacy_route_ticket_v1, validate_legacy_route_ticket_v1, LegacyRouteTicketV1,
     LegacyRouteTicketValidationV1, LegacyTicketMigrationAdmissionV1, MigrationAdmissionInputV1,
-    MigrationAdmissionResultV1, MigrationExecutionBindingV1, SqliteS2LiteStoreV1,
-    TargetRootBindingV1,
+    MigrationAdmissionResultV1, MigrationExecutionBindingV1,
+    NormalDiscoveryInfrastructureAdmissionV1, SqliteS2LiteStoreV1, TargetRootBindingV1,
 };
 use super::migration_admission::capture_production_legacy_snapshot_v1;
 use super::migration_orchestration::MigrationStateStoreV1;
@@ -39,7 +39,10 @@ use super::target_root_binding::{
     load_historical_target_root_binding_v1, resolve_active_target_root_binding_v1,
 };
 use super::webdav_adapter::{webdav_root_v1, WebDavRootV1, WebDavS2ConfigV1, WebDavS2RemoteV1};
-use super::{immutable_publish::ImmutableObjectRemoteV1, remote_discovery::DiscoveryBudgetsV1};
+use super::{
+    immutable_publish::{ImmutableObjectRemoteV1, RemotePutResultV1},
+    remote_discovery::DiscoveryBudgetsV1,
+};
 
 const COORDINATOR_FAILURE: ProtocolError = ProtocolError("S2_PRODUCTION_COORDINATOR_FAILURE");
 const DEFAULT_PHASE_STEP_BUDGET: u8 = 4;
@@ -530,6 +533,30 @@ where
         account: binding.normalized_account.clone(),
         remote_identity: remote.execution_context_identity(),
     };
+    // `writers/` is fixed S2 collection infrastructure. Prepare it under the
+    // current target/root and cross-process root authority before read-only
+    // discovery needs to enumerate the writer set. A 404 listing is never
+    // reinterpreted as proof of an empty set.
+    {
+        let _guard = coordinator.acquire_blocking(&binding.physical_root_id)?;
+        let mut store = SqliteS2LiteStoreV1::open(conn, &binding.physical_root_id)?;
+        match store.run_normal_discovery_infrastructure_exclusive(
+            &binding.physical_root_id,
+            binding,
+            || Ok(remote.prepare_normal_s2_discovery_infrastructure()),
+        )? {
+            NormalDiscoveryInfrastructureAdmissionV1::Executed(RemotePutResultV1::Success) => {}
+            NormalDiscoveryInfrastructureAdmissionV1::Executed(
+                RemotePutResultV1::Indeterminate,
+            ) => return Ok(ProductionCoordinatorResultV1::RemoteIndeterminate),
+            NormalDiscoveryInfrastructureAdmissionV1::Executed(
+                RemotePutResultV1::AuthOrCapabilityFailure,
+            ) => return Ok(ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked),
+            NormalDiscoveryInfrastructureAdmissionV1::RejectedRootFrozen => {
+                return Ok(ProductionCoordinatorResultV1::ReadOnlyFrozen)
+            }
+        }
+    }
     // Discovery/replay and all older durable work complete before the only
     // possible successor freeze.  The established runner owns recovery.
     let prior = run_desktop_s2_sync_execution_v1(
@@ -1214,6 +1241,8 @@ mod tests {
         objects: BTreeMap<String, Vec<u8>>,
         listings: BTreeMap<String, Vec<String>>,
         events: Vec<String>,
+        infrastructure_result: RemotePutResultV1,
+        infrastructure_calls: usize,
         put_calls: usize,
         list_indeterminate: bool,
         old_intent_path: String,
@@ -1243,9 +1272,31 @@ mod tests {
                 objects,
                 listings,
                 events: vec![],
+                infrastructure_result: RemotePutResultV1::Success,
+                infrastructure_calls: 0,
                 put_calls: 0,
                 list_indeterminate: false,
                 old_intent_path,
+                old_intent_get_mode: NormalRemoteGetModeV1::Exact,
+                old_intent_get_calls: 0,
+            }
+        }
+
+        fn empty(writers_collection_exists: bool) -> Self {
+            let mut listings = BTreeMap::new();
+            listings.insert("activations/".into(), vec![]);
+            if writers_collection_exists {
+                listings.insert("writers/".into(), vec![]);
+            }
+            Self {
+                objects: BTreeMap::new(),
+                listings,
+                events: vec![],
+                infrastructure_result: RemotePutResultV1::Success,
+                infrastructure_calls: 0,
+                put_calls: 0,
+                list_indeterminate: false,
+                old_intent_path: String::new(),
                 old_intent_get_mode: NormalRemoteGetModeV1::Exact,
                 old_intent_get_calls: 0,
             }
@@ -1265,6 +1316,17 @@ mod tests {
 
         fn execution_context_identity(&self) -> u64 {
             402
+        }
+
+        fn prepare_normal_s2_discovery_infrastructure(&mut self) -> RemotePutResultV1 {
+            let mut state = self.state.lock().unwrap();
+            state.events.push("prepare:writers".into());
+            state.infrastructure_calls += 1;
+            let result = state.infrastructure_result;
+            if result == RemotePutResultV1::Success {
+                state.listings.entry("writers/".into()).or_default();
+            }
+            result
         }
 
         fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
@@ -1337,7 +1399,9 @@ mod tests {
         fn list_directory(&mut self, path: &str) -> DirectoryListResultV1 {
             let mut state = self.state.lock().unwrap();
             state.events.push(format!("list:{path}"));
-            if state.list_indeterminate {
+            if state.list_indeterminate
+                || (path == "writers/" && !state.listings.contains_key(path))
+            {
                 DirectoryListResultV1::Indeterminate
             } else {
                 DirectoryListResultV1::Entries(
@@ -1942,6 +2006,28 @@ mod tests {
         (root, batch, intent)
     }
 
+    fn prepare_empty_normal_root_v1(conn: &Mutex<Connection>, active: &SyncTarget) -> String {
+        let admitted = admit_empty_historical_migration(conn, active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        persist_compatible_activation(conn, &root, "78000000-0000-4000-8000-000000000001");
+        assert_eq!(
+            execute_production_activation_with_webdav_for_execution_v1(
+                conn,
+                &normal_paths(),
+                &RootExecutionCoordinatorV1::default(),
+                &admitted.execution_binding,
+                TIME,
+            )
+            .unwrap(),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        assert_eq!(
+            route_desktop_sync_v1(conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        root
+    }
+
     fn normal_paths() -> crate::app_paths::AppPaths {
         crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap()
     }
@@ -2283,6 +2369,150 @@ mod tests {
             .unwrap();
         assert!(old_get < successor_put);
         assert_eq!(state.put_calls, 1);
+    }
+
+    #[test]
+    fn normal_s2_prepares_absent_or_existing_writers_before_read_only_discovery() {
+        for writers_collection_exists in [false, true] {
+            let conn = connection();
+            let active = target(
+                if writers_collection_exists {
+                    "https://dav.example.test/writers-existing/"
+                } else {
+                    "https://dav.example.test/writers-absent/"
+                },
+                "alice",
+            );
+            set_active(&conn, &active, vec![active.clone()], 1);
+            let root = prepare_empty_normal_root_v1(&conn, &active);
+            let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(
+                writers_collection_exists,
+            )));
+            let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+            assert_eq!(
+                run_normal_coordinator_v1(&conn, &dispatch),
+                ProductionCoordinatorResultV1::Success
+            );
+            let state = remote.lock().unwrap();
+            assert_eq!(state.infrastructure_calls, 1);
+            assert_eq!(state.put_calls, 0);
+            assert_eq!(state.events.first().unwrap(), "prepare:writers");
+            assert!(state.events.iter().any(|event| event == "list:writers/"));
+            drop(state);
+            let discovery = SqliteS2LiteStoreV1::open(&conn, &root)
+                .unwrap()
+                .load_discovery_state()
+                .unwrap()
+                .unwrap();
+            assert!(!discovery.state.last_round_indeterminate);
+            assert!(discovery.state.observed_writers.is_empty());
+        }
+    }
+
+    #[test]
+    fn existing_remote_writers_are_discovered_after_infrastructure_verification() {
+        let conn = connection();
+        let active = target("https://dav.example.test/writers-populated/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let root = prepare_empty_normal_root_v1(&conn, &active);
+        let writer_id = "78000000-0000-4000-8000-000000000002";
+        let mut state = NormalRemoteStateV1::empty(true);
+        state
+            .listings
+            .insert("writers/".into(), vec![format!("writers/{writer_id}/")]);
+        state
+            .listings
+            .insert(format!("writers/{writer_id}/segments/"), vec![]);
+        let remote = Arc::new(Mutex::new(state));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Success
+        );
+        let discovery = SqliteS2LiteStoreV1::open(&conn, &root)
+            .unwrap()
+            .load_discovery_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            discovery.state.observed_writers,
+            vec![writer_id.to_string()]
+        );
+        let state = remote.lock().unwrap();
+        assert_eq!(state.infrastructure_calls, 1);
+        assert_eq!(state.put_calls, 0);
+    }
+
+    #[test]
+    fn infrastructure_failure_is_typed_and_listing_anomaly_remains_pending() {
+        for (result, expected) in [
+            (
+                RemotePutResultV1::Indeterminate,
+                ProductionCoordinatorResultV1::RemoteIndeterminate,
+            ),
+            (
+                RemotePutResultV1::AuthOrCapabilityFailure,
+                ProductionCoordinatorResultV1::RemoteAuthOrCapabilityBlocked,
+            ),
+        ] {
+            let conn = connection();
+            let active = target(
+                if result == RemotePutResultV1::Indeterminate {
+                    "https://dav.example.test/writers-indeterminate/"
+                } else {
+                    "https://dav.example.test/writers-auth/"
+                },
+                "alice",
+            );
+            set_active(&conn, &active, vec![active.clone()], 1);
+            let root = prepare_empty_normal_root_v1(&conn, &active);
+            let mut state = NormalRemoteStateV1::empty(false);
+            state.infrastructure_result = result;
+            let remote = Arc::new(Mutex::new(state));
+            let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+            assert_eq!(run_normal_coordinator_v1(&conn, &dispatch), expected);
+            let state = remote.lock().unwrap();
+            assert_eq!(state.infrastructure_calls, 1);
+            assert_eq!(state.put_calls, 0);
+            assert_eq!(state.events, vec!["prepare:writers"]);
+            drop(state);
+            assert!(SqliteS2LiteStoreV1::open(&conn, &root)
+                .unwrap()
+                .load_discovery_state()
+                .unwrap()
+                .is_none());
+        }
+
+        let conn = connection();
+        let active = target("https://dav.example.test/writers-list-anomaly/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let root = prepare_empty_normal_root_v1(&conn, &active);
+        let mut state = NormalRemoteStateV1::empty(false);
+        state.list_indeterminate = true;
+        let remote = Arc::new(Mutex::new(state));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Pending
+        );
+        let state = remote.lock().unwrap();
+        assert_eq!(state.infrastructure_calls, 1);
+        assert_eq!(state.put_calls, 0);
+        assert!(state.events.iter().any(|event| event == "list:writers/"));
+        drop(state);
+        assert!(
+            SqliteS2LiteStoreV1::open(&conn, &root)
+                .unwrap()
+                .load_discovery_state()
+                .unwrap()
+                .unwrap()
+                .state
+                .last_round_indeterminate
+        );
     }
 
     #[test]

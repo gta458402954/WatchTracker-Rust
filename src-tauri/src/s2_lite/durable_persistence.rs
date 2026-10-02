@@ -64,6 +64,15 @@ pub enum OrdinaryPublishExclusiveResultV1<T> {
     RejectedRootFrozen,
 }
 
+/// Admission outcome for the fixed normal-S2 discovery infrastructure
+/// mutation. It carries no object-publication authority; it only gates the
+/// idempotent preparation of the canonical top-level writers collection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NormalDiscoveryInfrastructureAdmissionV1<T> {
+    Executed(T),
+    RejectedRootFrozen,
+}
+
 /// The final transaction-local result of admitting a normal S2 lifecycle
 /// route.  A preliminary router result is deliberately not authority to
 /// create a writer until this admission has re-read root state.
@@ -1538,6 +1547,27 @@ pub struct VersionedDiscoveryStateV1 {
     pub state: DiscoveryStateV1,
 }
 
+fn load_desktop_root_state_from(
+    conn: &Connection,
+    root_id: &str,
+) -> Result<Option<DesktopRootStateV1>> {
+    let bytes = database(
+        conn.query_row(
+            "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
+            [root_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional(),
+    )?;
+    bytes
+        .map(|bytes| {
+            let state: DesktopRootStateV1 = decode(&bytes)?;
+            validate_desktop_root_state(&state, root_id)?;
+            Ok(state)
+        })
+        .transpose()
+}
+
 fn initialize_desktop_writer_from(conn: &Connection, root_id: &str) -> Result<DesktopRootStateV1> {
     ensure_root_authority(conn, root_id)?;
     let migration = load_migration_from(conn, root_id)?;
@@ -2718,21 +2748,7 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
 
     pub fn load_desktop_root_state(&mut self) -> Result<Option<DesktopRootStateV1>> {
         let conn = self.connection()?;
-        let bytes = database(
-            conn.query_row(
-                "SELECT state_json FROM s2_lite_desktop_root_state_v1 WHERE root_id=?1",
-                [self.root_id],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
-            .optional(),
-        )?;
-        bytes
-            .map(|bytes| {
-                let state: DesktopRootStateV1 = decode(&bytes)?;
-                validate_desktop_root_state(&state, self.root_id)?;
-                Ok(state)
-            })
-            .transpose()
+        load_desktop_root_state_from(&conn, self.root_id)
     }
 
     pub fn load_materialized_projection(
@@ -4158,6 +4174,43 @@ impl<'a> SqliteS2LiteStoreV1<'a> {
         )? {
             Ok(value) => Ok(OrdinaryPublishExclusiveResultV1::Executed(value)),
             Err(()) => Ok(OrdinaryPublishExclusiveResultV1::RejectedRootFrozen),
+        }
+    }
+
+    /// Runs the fixed writers-collection preparation under the same
+    /// cross-process root authority used for publication. The operation is
+    /// admitted only for an activated normal-S2 root with established writer
+    /// authority and no remaining migration source owner.
+    pub fn run_normal_discovery_infrastructure_exclusive<T, F: FnOnce() -> Result<T>>(
+        &mut self,
+        root_id: &str,
+        binding: &TargetRootBindingV1,
+        operation: F,
+    ) -> Result<NormalDiscoveryInfrastructureAdmissionV1<T>> {
+        match self.run_root_publication_admission(
+            root_id,
+            |_transaction, _safety| Ok(()),
+            |transaction, safety| {
+                validate_active_migration_binding(transaction, binding, root_id)?;
+                if safety.cutover_state.state_version != 1
+                    || !safety.cutover_state.remote_s2_activated
+                    || !safety.cutover_state.root_fatal_signals.is_empty()
+                    || load_migration_source_owner(transaction)?.is_some()
+                {
+                    return Err(STORE_CORRUPTION);
+                }
+                load_desktop_root_state_from(transaction, root_id)?.ok_or(STORE_CORRUPTION)?;
+                if load_migration_from(transaction, root_id)?
+                    .is_some_and(|state| state.status != MigrationStatusV1::MigrationComplete)
+                {
+                    return Err(STORE_CORRUPTION);
+                }
+                Ok(None::<()>)
+            },
+            operation,
+        )? {
+            Ok(value) => Ok(NormalDiscoveryInfrastructureAdmissionV1::Executed(value)),
+            Err(()) => Ok(NormalDiscoveryInfrastructureAdmissionV1::RejectedRootFrozen),
         }
     }
 

@@ -93,6 +93,14 @@ pub trait ImmutableObjectRemoteV1 {
         None
     }
 
+    /// Prepares the fixed top-level collection needed by normal S2 discovery.
+    /// This is a root-authorized infrastructure mutation, not part of the
+    /// read-only `DiscoveryRemoteV1` surface. Production WebDAV remotes create
+    /// or strictly verify only the canonical `writers` collection.
+    fn prepare_normal_s2_discovery_infrastructure(&mut self) -> RemotePutResultV1 {
+        RemotePutResultV1::Success
+    }
+
     /// Publication-only infrastructure admission for one already-validated
     /// immutable object path. Read-only recovery and discovery must never use
     /// this hook. The default keeps deterministic non-WebDAV remotes side
