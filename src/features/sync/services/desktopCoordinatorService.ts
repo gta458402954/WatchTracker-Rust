@@ -25,6 +25,7 @@ function terminalResult(
     targetChanged: { ok: false, outcome: 'target-changed', error: 's2_target_changed' },
     readOnlyFrozen: { ok: false, outcome: 'read-only-frozen', error: 's2_read_only_frozen' },
     internalFailure: { ok: false, outcome: 'internal-failure', error: 's2_internal_failure' },
+    automaticSkipped: { ok: true, outcome: 'automatic-skipped' },
   };
   const result = results[kind];
   return { ok: result.ok, coordinatorOutcome: result.outcome, error: result.error };

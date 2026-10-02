@@ -3,6 +3,7 @@ import {
   getSyncRuntimeState,
   recordSyncFailure,
   setAutoSyncPaused,
+  type DesktopSyncAdmissionV1,
   type SyncRuntimeState,
 } from '../../../shared/lib/database';
 import {
@@ -76,15 +77,23 @@ export function useSyncCoordinator(
 
   const queueAutomaticRef = useRef<(trigger: AutomaticTrigger, delayMs: number, reset?: boolean) => void>(() => undefined);
 
-  const executeSync = useCallback(async (manual = false): Promise<SyncResult> => {
+  const executeSync = useCallback(async (admission: DesktopSyncAdmissionV1): Promise<SyncResult> => {
+    const manual = admission.kind === 'manual';
     if (syncInFlightRef.current) {
       rerunRequestedRef.current = true;
       return syncInFlightRef.current;
     }
-    const task = syncToWebDAV();
+    const task = syncToWebDAV(undefined, admission);
     syncInFlightRef.current = task;
     try {
       const result = await task;
+      if (result.coordinatorOutcome === 'automatic-skipped') {
+        // A completed guarded S1 cycle can still require a reload when its
+        // continuation is skipped. Skipping never records a failure/retry.
+        if (result.reloadRecords) await reloadRecords();
+        await refreshSyncRuntime();
+        return result;
+      }
       if (result.ok || result.reloadRecords) {
         lastNotifiedErrorRef.current = null;
         await reloadRecords();
@@ -159,7 +168,12 @@ export function useSyncCoordinator(
         );
         return;
       }
-      await executeSync(false);
+      if (runtime.targetId == null || runtime.targetEpoch == null) return;
+      await executeSync({
+        kind: 'automatic',
+        targetId: runtime.targetId,
+        targetEpoch: runtime.targetEpoch,
+      });
     } catch (error) {
       reportOperationFailure('Sync.AutomaticCoordinator', error);
       notifyBackgroundFailure(String(error));
@@ -246,7 +260,7 @@ export function useSyncCoordinator(
   const syncNow = useCallback(async () => {
     if (wakeTimerRef.current) { clearTimeout(wakeTimerRef.current); wakeTimerRef.current = null; }
     if (debounceTimerRef.current) { clearTimeout(debounceTimerRef.current); debounceTimerRef.current = null; }
-    return executeSync(true);
+    return executeSync({ kind: 'manual' });
   }, [executeSync]);
 
   const toggleSyncPause = useCallback(async () => {

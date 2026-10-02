@@ -11,7 +11,8 @@ use crate::s2_lite::durable_persistence::{
     LegacyRouteTicketV1, LegacyS1PublishAdmissionV1, SqliteS2LiteStoreV1,
 };
 use crate::s2_lite::production_coordinator::{
-    run_desktop_sync_coordinator_with_legacy_route_v1, DesktopSyncCoordinatorCommandResultV1,
+    run_desktop_sync_coordinator_with_admission_v1, DesktopSyncAdmissionV1,
+    DesktopSyncCoordinatorCommandResultV1,
 };
 use crate::s2_lite::remote_discovery::DiscoveryBudgetsV1;
 use crate::s2_lite::root_coordinator::RootExecutionCoordinatorV1;
@@ -538,13 +539,15 @@ pub fn run_desktop_sync_coordinator(
     paths: State<AppPaths>,
     root_coordinator: State<RootExecutionCoordinatorV1>,
     completed_legacy_route: Option<LegacyRouteTicketV1>,
+    admission: DesktopSyncAdmissionV1,
 ) -> Result<DesktopSyncCoordinatorCommandResultV1, crate::error::AppError> {
-    run_desktop_sync_coordinator_with_legacy_route_v1(
+    run_desktop_sync_coordinator_with_admission_v1(
         &state.inner().conn,
         paths.inner(),
         root_coordinator.inner(),
         &DiscoveryBudgetsV1::default(),
         completed_legacy_route,
+        admission,
     )
     .map_err(|error| crate::error::AppError::General(error.0.to_string()))
 }

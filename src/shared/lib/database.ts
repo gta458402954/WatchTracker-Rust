@@ -240,6 +240,11 @@ export interface LegacyRouteTicketV1 {
   rootSafetyGeneration: number;
 }
 
+/** Explicit caller intent for the Rust coordinator admission boundary. */
+export type DesktopSyncAdmissionV1 =
+  | { kind: 'manual' }
+  | { kind: 'automatic'; targetId: string; targetEpoch: number };
+
 export type DesktopSyncCoordinatorResultV1 =
   | { kind: 'legacyS1Required'; ticket: LegacyRouteTicketV1 }
   | { kind: 'success' }
@@ -249,7 +254,8 @@ export type DesktopSyncCoordinatorResultV1 =
   | { kind: 'conflicts' }
   | { kind: 'targetChanged' }
   | { kind: 'readOnlyFrozen' }
-  | { kind: 'internalFailure' };
+  | { kind: 'internalFailure' }
+  | { kind: 'automaticSkipped' };
 
 export async function getSyncSnapshot(): Promise<SyncSnapshot> {
   return invoke('get_sync_snapshot');
@@ -286,8 +292,11 @@ export async function prepareSyncPublishIntent(input: {
   return invoke('prepare_sync_publish_intent', { input, legacyRouteTicket });
 }
 
-export const runDesktopSyncCoordinator = (completedLegacyRoute: LegacyRouteTicketV1 | null = null): Promise<DesktopSyncCoordinatorResultV1> =>
-  invoke('run_desktop_sync_coordinator', { completedLegacyRoute });
+export const runDesktopSyncCoordinator = (
+  completedLegacyRoute: LegacyRouteTicketV1 | null = null,
+  admission: DesktopSyncAdmissionV1 = { kind: 'manual' },
+): Promise<DesktopSyncCoordinatorResultV1> =>
+  invoke('run_desktop_sync_coordinator', { completedLegacyRoute, admission });
 
 export type SyncConflictResolution = 'local' | 'remote' | 'keep' | 'delete';
 

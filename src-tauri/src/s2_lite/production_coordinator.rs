@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::bootstrap_execution::{
     execute_production_activation_with_webdav_for_execution_v1,
@@ -71,6 +71,31 @@ pub enum ProductionCoordinatorResultV1 {
     TargetChanged,
     ReadOnlyFrozen,
     InternalFailure,
+    AutomaticSkipped,
+}
+
+/// Explicit caller intent for coordinator admission.  Automatic callers carry
+/// the scheduler observation that must still be current and runnable; manual
+/// callers deliberately do not inherit scheduler pause restrictions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum DesktopSyncAdmissionV1 {
+    Manual,
+    Automatic {
+        target_id: String,
+        target_epoch: u64,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AutomaticCoordinatorAdmissionExpectationV1 {
+    target_id: String,
+    target_epoch: u64,
 }
 
 /// Tauri-facing coordinator surface.  The ticket is an opaque handoff
@@ -87,6 +112,7 @@ pub enum DesktopSyncCoordinatorCommandResultV1 {
     TargetChanged,
     ReadOnlyFrozen,
     InternalFailure,
+    AutomaticSkipped,
 }
 
 fn diagnostic_now_v1() -> String {
@@ -108,6 +134,32 @@ fn active_epoch_is_current_v1(
     active_target_v1(conn)
         .map(|current| current.0 == target_id && current.1 == target_epoch)
         .unwrap_or(false)
+}
+
+fn automatic_admission_is_current_v1(
+    conn: &Mutex<Connection>,
+    expected: &AutomaticCoordinatorAdmissionExpectationV1,
+) -> Result<bool> {
+    let mut guard = conn.lock().map_err(|_| COORDINATOR_FAILURE)?;
+    Ok(matches!(
+        crate::sync_state::admit_automatic_coordinator_v1(
+            &mut guard,
+            &expected.target_id,
+            expected.target_epoch,
+        )
+        .map_err(|_| COORDINATOR_FAILURE)?,
+        crate::sync_state::AutomaticCoordinatorAdmissionV1::Admitted
+    ))
+}
+
+fn automatic_admission_matches_bound_v1(
+    conn: &Mutex<Connection>,
+    expected: &AutomaticCoordinatorAdmissionExpectationV1,
+    bound: &BoundCoordinatorRouteV1,
+) -> Result<bool> {
+    Ok(bound.binding.target_id == expected.target_id
+        && bound.binding.target_epoch == expected.target_epoch
+        && automatic_admission_is_current_v1(conn, expected)?)
 }
 
 /// Re-routes from SQLite and returns the exact binding which was authoritative
@@ -675,6 +727,28 @@ fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitive
     phase_step_budget: u8,
     dispatch: &D,
 ) -> Result<ProductionCoordinatorResultV1> {
+    run_production_sync_coordinator_step_with_dispatch_and_admission_v1(
+        conn,
+        paths,
+        coordinator,
+        budgets,
+        phase_step_budget,
+        dispatch,
+        None,
+    )
+}
+
+fn run_production_sync_coordinator_step_with_dispatch_and_admission_v1<
+    D: CoordinatorPrimitiveDispatchV1,
+>(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    budgets: &DiscoveryBudgetsV1,
+    phase_step_budget: u8,
+    dispatch: &D,
+    automatic_admission: Option<&AutomaticCoordinatorAdmissionExpectationV1>,
+) -> Result<ProductionCoordinatorResultV1> {
     // This invocation may execute a historical migration for a target that is
     // no longer active. Retain only its exact, already-validated authority as
     // handoff evidence. Once that migration finalizes, a fresh SQLite route
@@ -682,7 +756,27 @@ fn run_production_sync_coordinator_step_with_dispatch_v1<D: CoordinatorPrimitive
     // target-specific work can be dispatched.
     let mut completed_historical_handoff: Option<TargetRootBindingV1> = None;
     for _ in 0..phase_step_budget {
-        let bound = load_bound_coordinator_route_v1(conn)?;
+        if let Some(expected) = automatic_admission {
+            if !automatic_admission_is_current_v1(conn, expected)? {
+                return Ok(ProductionCoordinatorResultV1::AutomaticSkipped);
+            }
+        }
+        let bound = match load_bound_coordinator_route_v1(conn) {
+            Ok(bound) => bound,
+            Err(error) => {
+                if let Some(expected) = automatic_admission {
+                    if !automatic_admission_is_current_v1(conn, expected)? {
+                        return Ok(ProductionCoordinatorResultV1::AutomaticSkipped);
+                    }
+                }
+                return Err(error);
+            }
+        };
+        if let Some(expected) = automatic_admission {
+            if !automatic_admission_matches_bound_v1(conn, expected, &bound)? {
+                return Ok(ProductionCoordinatorResultV1::AutomaticSkipped);
+            }
+        }
         if bound.historical_migration {
             completed_historical_handoff = Some(bound.binding.clone());
         } else if completed_historical_handoff
@@ -859,6 +953,9 @@ fn command_result_from_production_v1(
         ProductionCoordinatorResultV1::InternalFailure => {
             DesktopSyncCoordinatorCommandResultV1::InternalFailure
         }
+        ProductionCoordinatorResultV1::AutomaticSkipped => {
+            DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped
+        }
     })
 }
 
@@ -872,6 +969,50 @@ pub fn run_desktop_sync_coordinator_with_legacy_route_v1(
     budgets: &DiscoveryBudgetsV1,
     completed_legacy_route: Option<LegacyRouteTicketV1>,
 ) -> Result<DesktopSyncCoordinatorCommandResultV1> {
+    run_desktop_sync_coordinator_with_admission_v1(
+        conn,
+        paths,
+        coordinator,
+        budgets,
+        completed_legacy_route,
+        DesktopSyncAdmissionV1::Manual,
+    )
+}
+
+/// Tauri boundary for one deterministic coordinator invocation with explicit
+/// manual or automatic admission.  Automatic admission is checked under
+/// `BEGIN IMMEDIATE` before any lifecycle routing and remains an exact target
+/// context for every later route in this invocation.
+pub fn run_desktop_sync_coordinator_with_admission_v1(
+    conn: &Mutex<Connection>,
+    paths: &crate::app_paths::AppPaths,
+    coordinator: &RootExecutionCoordinatorV1,
+    budgets: &DiscoveryBudgetsV1,
+    completed_legacy_route: Option<LegacyRouteTicketV1>,
+    admission: DesktopSyncAdmissionV1,
+) -> Result<DesktopSyncCoordinatorCommandResultV1> {
+    let automatic_admission = match admission {
+        DesktopSyncAdmissionV1::Manual => None,
+        DesktopSyncAdmissionV1::Automatic {
+            target_id,
+            target_epoch,
+        } => {
+            let expected = AutomaticCoordinatorAdmissionExpectationV1 {
+                target_id,
+                target_epoch,
+            };
+            if !automatic_admission_is_current_v1(conn, &expected)? {
+                return Ok(DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped);
+            }
+            Some(expected)
+        }
+    };
+    let automatic_expected = automatic_admission.as_ref();
+    if let (Some(expected), Some(ticket)) = (automatic_expected, completed_legacy_route.as_ref()) {
+        if ticket.target_id != expected.target_id || ticket.target_epoch != expected.target_epoch {
+            return Ok(DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped);
+        }
+    }
     let production = match completed_legacy_route.as_ref() {
         Some(ticket) => {
             let validation = {
@@ -880,53 +1021,92 @@ pub fn run_desktop_sync_coordinator_with_legacy_route_v1(
             };
             match validation {
                 LegacyRouteTicketValidationV1::Valid => {
+                    if let Some(expected) = automatic_expected {
+                        if !automatic_admission_is_current_v1(conn, expected)? {
+                            return Ok(DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped);
+                        }
+                    }
                     // The store repeats this validation inside the BEGIN IMMEDIATE
                     // admission transaction before it captures any migration state.
                     match admit_migration_from_completed_legacy_route_v1(conn, ticket)? {
                         LegacyTicketMigrationAdmissionV1::Admitted(_) => {
-                            run_production_sync_coordinator_step_v1(
+                            run_production_sync_coordinator_step_with_dispatch_and_admission_v1(
                                 conn,
                                 paths,
                                 coordinator,
                                 budgets,
+                                DEFAULT_PHASE_STEP_BUDGET,
+                                &ProductionCoordinatorPrimitiveDispatchV1,
+                                automatic_expected,
                             )?
                         }
                         LegacyTicketMigrationAdmissionV1::TicketInvalid(
                             LegacyRouteTicketValidationV1::TargetChanged,
-                        ) => ProductionCoordinatorResultV1::TargetChanged,
+                        ) => automatic_expected
+                            .map_or(ProductionCoordinatorResultV1::TargetChanged, |_| {
+                                ProductionCoordinatorResultV1::AutomaticSkipped
+                            }),
                         LegacyTicketMigrationAdmissionV1::TicketInvalid(
                             LegacyRouteTicketValidationV1::ReadOnlyFrozen,
                         ) => ProductionCoordinatorResultV1::ReadOnlyFrozen,
                         LegacyTicketMigrationAdmissionV1::TicketInvalid(
                             LegacyRouteTicketValidationV1::NoLongerLegacy,
-                        ) => run_production_sync_coordinator_step_v1(
+                        ) => run_production_sync_coordinator_step_with_dispatch_and_admission_v1(
                             conn,
                             paths,
                             coordinator,
                             budgets,
+                            DEFAULT_PHASE_STEP_BUDGET,
+                            &ProductionCoordinatorPrimitiveDispatchV1,
+                            automatic_expected,
                         )?,
                         LegacyTicketMigrationAdmissionV1::TicketInvalid(
                             LegacyRouteTicketValidationV1::Valid,
                         ) => return Err(COORDINATOR_FAILURE),
                     }
                 }
-                LegacyRouteTicketValidationV1::TargetChanged => {
-                    ProductionCoordinatorResultV1::TargetChanged
-                }
+                LegacyRouteTicketValidationV1::TargetChanged => automatic_expected
+                    .map_or(ProductionCoordinatorResultV1::TargetChanged, |_| {
+                        ProductionCoordinatorResultV1::AutomaticSkipped
+                    }),
                 LegacyRouteTicketValidationV1::ReadOnlyFrozen => {
                     ProductionCoordinatorResultV1::ReadOnlyFrozen
                 }
                 LegacyRouteTicketValidationV1::NoLongerLegacy => {
                     // The ticket has no authority to start anything. A normal
                     // re-route may still observe already-authoritative work.
-                    run_production_sync_coordinator_step_v1(conn, paths, coordinator, budgets)?
+                    run_production_sync_coordinator_step_with_dispatch_and_admission_v1(
+                        conn,
+                        paths,
+                        coordinator,
+                        budgets,
+                        DEFAULT_PHASE_STEP_BUDGET,
+                        &ProductionCoordinatorPrimitiveDispatchV1,
+                        automatic_expected,
+                    )?
                 }
             }
         }
-        None => run_production_sync_coordinator_step_v1(conn, paths, coordinator, budgets)?,
+        None => run_production_sync_coordinator_step_with_dispatch_and_admission_v1(
+            conn,
+            paths,
+            coordinator,
+            budgets,
+            DEFAULT_PHASE_STEP_BUDGET,
+            &ProductionCoordinatorPrimitiveDispatchV1,
+            automatic_expected,
+        )?,
     };
+    if automatic_expected.is_some() && production == ProductionCoordinatorResultV1::TargetChanged {
+        return Ok(DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped);
+    }
     let ticket = if production == ProductionCoordinatorResultV1::LegacyS1Required {
         let bound = load_bound_coordinator_route_v1(conn)?;
+        if let Some(expected) = automatic_expected {
+            if !automatic_admission_matches_bound_v1(conn, expected, &bound)? {
+                return Ok(DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped);
+            }
+        }
         if bound.route != DesktopSyncRouteV1::ContinueLegacyS1 || bound.historical_migration {
             return Err(COORDINATOR_FAILURE);
         }
@@ -1791,6 +1971,122 @@ mod tests {
                 .next_writer_sequence,
             old.writer_sequence + 1
         );
+    }
+
+    fn automatic_admission(target: &SyncTarget, epoch: u64) -> DesktopSyncAdmissionV1 {
+        DesktopSyncAdmissionV1::Automatic {
+            target_id: target.id.clone(),
+            target_epoch: epoch,
+        }
+    }
+
+    #[test]
+    fn automatic_admission_binds_the_scheduler_observation_and_never_reroutes_to_a_paused_target() {
+        let conn = connection();
+        let target_a = target("https://dav.example.test/automatic-a/", "alice");
+        let target_b = target("https://dav.example.test/automatic-b/", "bob");
+        set_active(
+            &conn,
+            &target_a,
+            vec![target_a.clone(), target_b.clone()],
+            1,
+        );
+        let captured = automatic_admission(&target_a, 1);
+
+        // This is the exact stale-task interleaving: the scheduler saw A/1 as
+        // runnable, then target activation atomically made B/2 paused before
+        // the automatic coordinator reached Rust.
+        set_active(&conn, &target_b, vec![target_a, target_b.clone()], 2);
+        crate::sync_state::set_paused(&conn.lock().unwrap(), true, Some(&target_b.id), Some(2))
+            .unwrap();
+
+        assert_eq!(
+            run_desktop_sync_coordinator_with_admission_v1(
+                &conn,
+                &normal_paths(),
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                None,
+                captured,
+            )
+            .unwrap(),
+            DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped
+        );
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            SqliteS2LiteStoreV1::load_target_root_binding_v1(&conn, &target_b.id, 2)
+                .unwrap()
+                .is_none()
+        );
+        let runtime = crate::sync_state::runtime_state(&conn.lock().unwrap()).unwrap();
+        assert!(runtime.scheduler.paused);
+        assert_eq!(runtime.scheduler.consecutive_failures, 0);
+        assert!(runtime.scheduler.last_error_code.is_none());
+    }
+
+    #[test]
+    fn automatic_admission_accepts_only_the_exact_unpaused_target_epoch() {
+        let conn = connection();
+        let active = target("https://dav.example.test/automatic-current/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 7);
+        let paths = normal_paths();
+        let coordinator = RootExecutionCoordinatorV1::default();
+
+        assert!(matches!(
+            run_desktop_sync_coordinator_with_admission_v1(
+                &conn,
+                &paths,
+                &coordinator,
+                &DiscoveryBudgetsV1::default(),
+                None,
+                automatic_admission(&active, 7),
+            )
+            .unwrap(),
+            DesktopSyncCoordinatorCommandResultV1::LegacyS1Required { .. }
+        ));
+
+        crate::sync_state::set_paused(&conn.lock().unwrap(), true, Some(&active.id), Some(7))
+            .unwrap();
+        for admission in [
+            automatic_admission(&active, 7),
+            automatic_admission(&active, 6),
+            DesktopSyncAdmissionV1::Automatic {
+                target_id: "f".repeat(64),
+                target_epoch: 7,
+            },
+        ] {
+            assert_eq!(
+                run_desktop_sync_coordinator_with_admission_v1(
+                    &conn,
+                    &paths,
+                    &coordinator,
+                    &DiscoveryBudgetsV1::default(),
+                    None,
+                    admission,
+                )
+                .unwrap(),
+                DesktopSyncCoordinatorCommandResultV1::AutomaticSkipped
+            );
+        }
+
+        // Manual admission is deliberately distinct: the explicit user action
+        // remains able to begin the guarded legacy route while paused.
+        assert!(matches!(
+            run_desktop_sync_coordinator_with_admission_v1(
+                &conn,
+                &paths,
+                &coordinator,
+                &DiscoveryBudgetsV1::default(),
+                None,
+                DesktopSyncAdmissionV1::Manual,
+            )
+            .unwrap(),
+            DesktopSyncCoordinatorCommandResultV1::LegacyS1Required { .. }
+        ));
     }
 
     #[test]

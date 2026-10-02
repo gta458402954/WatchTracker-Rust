@@ -66,6 +66,15 @@ pub struct SyncSchedulerState {
     pub last_remote_check_at: Option<String>,
 }
 
+/// Result of the SQLite-backed automatic coordinator admission check.  A
+/// rejected automatic invocation is an expected no-op: it must not be
+/// reclassified as a sync failure against a newer target.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum AutomaticCoordinatorAdmissionV1 {
+    Admitted,
+    Skipped,
+}
+
 impl Default for SyncSchedulerState {
     fn default() -> Self {
         Self {
@@ -210,6 +219,25 @@ fn set_scheduler_state(conn: &Connection, state: &SyncSchedulerState) -> Result<
         &raw,
     )?;
     Ok(())
+}
+
+/// Atomically validates that an automatic task still belongs to the active,
+/// runnable target observed by its scheduler.  This intentionally does not
+/// mutate the scheduler: a stale or paused task is simply not admitted.
+pub fn admit_automatic_coordinator_v1(
+    conn: &mut Connection,
+    expected_target_id: &str,
+    expected_target_epoch: u64,
+) -> Result<AutomaticCoordinatorAdmissionV1, AppError> {
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let active = crate::sync_targets::active_target(&transaction)?;
+    if !matches!(active, Some((id, epoch)) if id == expected_target_id && epoch == expected_target_epoch)
+        || scheduler_state(&transaction)?.paused
+    {
+        return Ok(AutomaticCoordinatorAdmissionV1::Skipped);
+    }
+    transaction.commit()?;
+    Ok(AutomaticCoordinatorAdmissionV1::Admitted)
 }
 
 /// Target activation owns the transaction that changes active root authority.

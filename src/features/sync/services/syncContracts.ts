@@ -10,7 +10,8 @@ export type SyncCoordinatorOutcome =
   | 'target-changed'
   | 'read-only-frozen'
   | 'internal-failure'
-  | 'legacy-s1-required';
+  | 'legacy-s1-required'
+  | 'automatic-skipped';
 
 export interface SyncResult {
   ok: boolean;

@@ -15,7 +15,7 @@ import {
   probeSyncTarget as probeSyncTargetWithCreds,
   type SyncTargetProbe,
 } from '../../features/sync/services/legacyImportService.ts';
-import { runDesktopSyncCoordinator } from './database.ts';
+import { runDesktopSyncCoordinator, type DesktopSyncAdmissionV1 } from './database.ts';
 import { runDesktopCoordinatorHandoff } from '../../features/sync/services/desktopCoordinatorService.ts';
 import { syncLegacyS1Cycle } from '../../features/sync/services/syncService.ts';
 import type { SyncResult } from '../../features/sync/services/syncContracts.ts';
@@ -31,9 +31,12 @@ export async function probeSyncTarget(creds: WebDAVCreds): Promise<SyncTargetPro
 }
 
 /** Keeps the old ignored-records argument while the service reads its snapshot from Rust. */
-export async function syncToWebDAV(_ignoredRecords?: WatchRecord[]): Promise<SyncResult> {
+export async function syncToWebDAV(
+  _ignoredRecords?: WatchRecord[],
+  admission: DesktopSyncAdmissionV1 = { kind: 'manual' },
+): Promise<SyncResult> {
   return runDesktopCoordinatorHandoff({
-    runCoordinator: completedLegacyRoute => runDesktopSyncCoordinator(completedLegacyRoute),
+    runCoordinator: completedLegacyRoute => runDesktopSyncCoordinator(completedLegacyRoute, admission),
     runLegacyS1Cycle: async ticket => {
       const creds = await getCreds();
       if (!creds) return { ok: false, error: '未配置凭据' };

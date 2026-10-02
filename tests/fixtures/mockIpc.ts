@@ -811,7 +811,14 @@ export async function setupMockIpc(page: Page, options: MockIpcOptions = {}) {
               return { recordsGeneration, recordCount: snapshot.records.length };
             }
             case 'run_desktop_sync_coordinator': {
-              requireKeys(command, args, ['completedLegacyRoute']);
+              requireKeys(command, args, ['admission', 'completedLegacyRoute']);
+              const admission = args.admission as { kind: 'manual' } | { kind: 'automatic'; targetId: string; targetEpoch: number };
+              if (admission.kind === 'automatic'
+                && (admission.targetId !== activeTargetId
+                  || admission.targetEpoch !== targetEpoch
+                  || scheduler.paused)) {
+                return { kind: 'automaticSkipped' };
+              }
               if (args.completedLegacyRoute === null && coordinatorInitialResult) {
                 return { kind: coordinatorInitialResult };
               }

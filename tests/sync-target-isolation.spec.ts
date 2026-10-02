@@ -100,6 +100,37 @@ test('@sync-target-isolation changing the physical target pauses automatic sync 
   expect(afterClose.calls.filter(call => call.command === 'run_desktop_sync_coordinator')).toHaveLength(coordinatorCallsBeforeClose);
 });
 
+test('@sync-target-isolation stale automatic admission cannot reinterpret a paused replacement target', async ({ page }) => {
+  await setupMockIpc(page, { settings });
+  await openSyncSettings(page);
+  await page.getByPlaceholder('WebDAV 服务器地址').fill('https://new.example.test/dav/replacement-root/');
+  await page.getByPlaceholder('用户名').fill('new-user');
+  await page.getByPlaceholder('WebDAV 密码 / 应用密码').fill('new-password');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '只读检查并更新目标' }).click();
+
+  const result = await page.evaluate(async () => {
+    const { runDesktopSyncCoordinator } = await import('/src/shared/lib/database.ts');
+    return runDesktopSyncCoordinator(null, {
+      kind: 'automatic',
+      targetId: 'a'.repeat(64),
+      targetEpoch: 1,
+    });
+  });
+  expect(result).toEqual({ kind: 'automaticSkipped' });
+
+  const snapshot = await mockSnapshot(page);
+  const coordinator = snapshot.calls.filter(call => call.command === 'run_desktop_sync_coordinator');
+  expect(coordinator).toHaveLength(1);
+  expect(coordinator[0].args.admission).toEqual({
+    kind: 'automatic',
+    targetId: 'a'.repeat(64),
+    targetEpoch: 1,
+  });
+  expect(JSON.parse(snapshot.settings.sync_scheduler_v1 as string).paused).toBe(true);
+  expect(snapshot.calls.filter(call => call.command === 'webdav_request')).toHaveLength(0);
+});
+
 test('@sync-target-isolation first target activation remains paused and does not synchronize', async ({ page }) => {
   await setupMockIpc(page);
   await page.goto('/');

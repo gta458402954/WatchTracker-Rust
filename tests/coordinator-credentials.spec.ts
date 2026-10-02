@@ -44,12 +44,27 @@ test('missing credentials are resolved lazily only after Rust requests legacy S1
 });
 
 test('automatic coordinator admission does not require credentials first', async ({ page }) => {
-  await setupMockIpc(page, { coordinatorInitialResult: 'readOnlyFrozen' });
+  await setupMockIpc(page, {
+    settings: {
+      webdav_creds: 'encrypted:user:password',
+      webdav_url: 'https://old.example.test/dav/',
+    },
+    coordinatorInitialResult: 'readOnlyFrozen',
+  });
   await page.goto('/');
   await clearRecordedCalls(page);
 
   await expect.poll(async () => (await mockSnapshot(page)).calls
     .filter(call => call.command === 'run_desktop_sync_coordinator').length, { timeout: 5_000 }).toBeGreaterThan(0);
   const snapshot = await mockSnapshot(page);
+  const [coordinatorCall] = snapshot.calls.filter(call => call.command === 'run_desktop_sync_coordinator');
+  expect(coordinatorCall.args).toMatchObject({
+    completedLegacyRoute: null,
+    admission: {
+      kind: 'automatic',
+      targetId: 'a'.repeat(64),
+      targetEpoch: 1,
+    },
+  });
   expect(snapshot.calls.some(call => call.command === 'get_active_sync_connection')).toBe(false);
 });
