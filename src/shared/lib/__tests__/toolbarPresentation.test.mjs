@@ -14,11 +14,13 @@ function runtime(overrides = {}) {
 }
 
 describe('toolbar sync presentation', () => {
-  test('prioritizes syncing, conflicts, failures, paused, pending, then success', () => {
+  test('prioritizes syncing, conflicts, paused, result states, pending, then success', () => {
     assert.equal(syncPresentation({ hasCredentials: true, syncing: true, message: '', runtime: runtime({ conflictCount: 2 }), paused: false }).label, '同步中');
     assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime({ conflictCount: 2 }), paused: false }).label, '2 项冲突');
+    assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime({ scheduler: { ...runtime().scheduler, paused: true, lastErrorCode: 's2_pending' } }), paused: false }).label, '已暂停');
     assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime({ scheduler: { ...runtime().scheduler, lastErrorCode: 'http_503' } }), paused: false }).label, '同步失败');
-    assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime(), paused: true }).label, '已暂停');
+    assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime({ scheduler: { ...runtime().scheduler, lastErrorCode: 's2_pending' } }), paused: false }).label, '等待同步');
+    assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime({ scheduler: { ...runtime().scheduler, paused: true } }), paused: false }).label, '已暂停');
     assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime({ stagedCount: 2 }), paused: false }).label, '待同步');
     assert.equal(syncPresentation({ hasCredentials: true, syncing: false, message: '', runtime: runtime(), paused: false }).label, '已同步');
   });

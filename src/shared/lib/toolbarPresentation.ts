@@ -20,11 +20,13 @@ export function syncPresentation(input: SyncPresentationInput): SyncPresentation
   const pendingCount = (input.runtime?.stagedCount ?? 0)
     + (input.runtime?.outbox.pending ? 1 : 0)
     + (input.runtime?.publishPending ? 1 : 0);
+  const paused = input.runtime?.scheduler.paused ?? input.paused;
   if (!input.hasCredentials) return { label: '未配置', description: '尚未配置 WebDAV，同步不会运行。', className: 'border-gray-200 bg-gray-50 text-gray-500', pendingCount };
   if (input.syncing) return { label: '同步中', description: '正在安全核对并合并本机与云端数据。', className: 'border-blue-200 bg-blue-50 text-blue-700', pendingCount };
   if ((input.runtime?.conflictCount ?? 0) > 0) return { label: `${input.runtime?.conflictCount} 项冲突`, description: '存在需要明确选择本机或云端版本的冲突。', className: 'border-red-200 bg-red-50 text-red-700', pendingCount };
+  if (paused) return { label: '已暂停', description: '自动同步已暂停，待发布修改会继续保留。', className: 'border-amber-200 bg-amber-50 text-amber-700', pendingCount };
+  if (input.runtime?.scheduler.lastErrorCode === 's2_pending') return { label: '等待同步', description: '同步正在等待可恢复的远端步骤完成。', className: 'border-amber-200 bg-amber-50 text-amber-700', pendingCount };
   if (input.runtime?.scheduler.lastErrorCode || input.message.startsWith('❌')) return { label: '同步失败', description: '最近一次同步失败，本地数据仍保持安全。', className: 'border-red-200 bg-red-50 text-red-700', pendingCount };
-  if (input.paused) return { label: '已暂停', description: '自动同步已暂停，待发布修改会继续保留。', className: 'border-amber-200 bg-amber-50 text-amber-700', pendingCount };
   if (pendingCount > 0 || input.runtime?.scheduler.nextAttemptAt) return { label: '待同步', description: '存在待发布修改或已安排下一次重试。', className: 'border-amber-200 bg-amber-50 text-amber-700', pendingCount };
   return { label: '已同步', description: '自动同步已开启，当前没有待发布修改。', className: 'border-green-200 bg-green-50 text-green-700', pendingCount };
 }

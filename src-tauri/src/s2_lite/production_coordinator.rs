@@ -599,14 +599,14 @@ where
     }
     // `freeze_active_outbound_v1` is zero-network. It can only run after the
     // recovery pass above; publication consumes precisely the frozen batch.
-    match freeze_active_outbound_v1(
+    let final_result = match freeze_active_outbound_v1(
         conn,
         &binding.target_id,
         binding.target_epoch,
         diagnostic_time,
     )? {
-        OutboundFreezeResultV1::Frozen { batch, .. } => Ok(map_outbound_publish_v1(
-            publish_frozen_outbound_batch_with_factory_v1(
+        OutboundFreezeResultV1::Frozen { batch, .. } => {
+            map_outbound_publish_v1(publish_frozen_outbound_batch_with_factory_v1(
                 conn,
                 coordinator,
                 &batch,
@@ -615,17 +615,16 @@ where
                     build_remote(publish_binding, publish_credentials)
                 },
                 diagnostic_time,
-            )?,
-        )),
-        OutboundFreezeResultV1::NoSemanticMutation => Ok(ProductionCoordinatorResultV1::Success),
-        OutboundFreezeResultV1::ExistingPendingOutbound => {
-            Ok(ProductionCoordinatorResultV1::Pending)
+            )?)
         }
-        OutboundFreezeResultV1::TargetChanged => Ok(ProductionCoordinatorResultV1::TargetChanged),
+        OutboundFreezeResultV1::NoSemanticMutation => ProductionCoordinatorResultV1::Success,
+        OutboundFreezeResultV1::ExistingPendingOutbound => ProductionCoordinatorResultV1::Pending,
+        OutboundFreezeResultV1::TargetChanged => ProductionCoordinatorResultV1::TargetChanged,
         OutboundFreezeResultV1::Blocked | OutboundFreezeResultV1::BlockedStaleEntityBases => {
-            Ok(ProductionCoordinatorResultV1::Conflicts)
+            ProductionCoordinatorResultV1::Conflicts
         }
-    }
+    };
+    Ok(final_result)
 }
 
 fn run_one_normal_s2_cycle_v1(
@@ -931,7 +930,7 @@ fn run_production_sync_coordinator_step_with_dispatch_and_admission_v1<
                 }
             }
             DesktopSyncRouteV1::EnterNormalS2 => {
-                return dispatch.execute_normal_s2(
+                let result = dispatch.execute_normal_s2(
                     conn,
                     paths,
                     coordinator,
@@ -941,7 +940,28 @@ fn run_production_sync_coordinator_step_with_dispatch_and_admission_v1<
                     },
                     budgets,
                     &diagnostic_now_v1(),
+                )?;
+                if result != ProductionCoordinatorResultV1::Success {
+                    return Ok(result);
+                }
+
+                // This is the sole normal-S2 success boundary: discovery/replay,
+                // freeze, and any required immutable publication have all reached
+                // Success. Recheck the exact bound target/epoch inside the scheduler
+                // transaction so a stale completion cannot clear a replacement
+                // target's retry state.
+                let mut guard = conn.lock().map_err(|_| COORDINATOR_FAILURE)?;
+                return if crate::sync_state::record_normal_s2_success_for_bound_target_v1(
+                    &mut guard,
+                    &bound.binding.target_id,
+                    bound.binding.target_epoch,
                 )
+                .map_err(|_| COORDINATOR_FAILURE)?
+                {
+                    Ok(ProductionCoordinatorResultV1::Success)
+                } else {
+                    Ok(ProductionCoordinatorResultV1::TargetChanged)
+                };
             }
         }
     }
@@ -1589,6 +1609,7 @@ mod tests {
         normal_calls: Mutex<usize>,
         before_normal: Option<Arc<Barrier>>,
         before_infrastructure: Mutex<Option<AfterPrimitiveHookV1>>,
+        after_normal: Mutex<Option<AfterPrimitiveHookV1>>,
     }
 
     impl DeterministicNormalDispatchV1 {
@@ -1598,6 +1619,7 @@ mod tests {
                 normal_calls: Mutex::new(0),
                 before_normal: None,
                 before_infrastructure: Mutex::new(None),
+                after_normal: Mutex::new(None),
             }
         }
 
@@ -1607,6 +1629,7 @@ mod tests {
                 normal_calls: Mutex::new(0),
                 before_normal: Some(Arc::new(Barrier::new(2))),
                 before_infrastructure: Mutex::new(None),
+                after_normal: Mutex::new(None),
             }
         }
 
@@ -1619,6 +1642,20 @@ mod tests {
                 normal_calls: Mutex::new(0),
                 before_normal: None,
                 before_infrastructure: Mutex::new(Some(hook)),
+                after_normal: Mutex::new(None),
+            }
+        }
+
+        fn with_after_normal(
+            remote: Arc<Mutex<NormalRemoteStateV1>>,
+            hook: AfterPrimitiveHookV1,
+        ) -> Self {
+            Self {
+                remote,
+                normal_calls: Mutex::new(0),
+                before_normal: None,
+                before_infrastructure: Mutex::new(None),
+                after_normal: Mutex::new(Some(hook)),
             }
         }
 
@@ -1667,7 +1704,7 @@ mod tests {
                 hook(conn);
             }
             let remote = Arc::clone(&self.remote);
-            run_one_normal_s2_cycle_with_factory_v1(
+            let result = run_one_normal_s2_cycle_with_factory_v1(
                 conn,
                 coordinator,
                 execution_admission,
@@ -1686,7 +1723,11 @@ mod tests {
                         state: Arc::clone(&remote),
                     })
                 },
-            )
+            );
+            if let Some(hook) = self.after_normal.lock().unwrap().take() {
+                hook(conn);
+            }
+            result
         }
     }
 
@@ -2126,6 +2167,24 @@ mod tests {
         .unwrap()
     }
 
+    fn seed_scheduler_failure_v1(
+        conn: &Mutex<Connection>,
+        target: &SyncTarget,
+        epoch: u64,
+        paused: bool,
+    ) {
+        crate::sync_state::set_paused(&conn.lock().unwrap(), paused, Some(&target.id), Some(epoch))
+            .unwrap();
+        crate::sync_state::record_failure(
+            &conn.lock().unwrap(),
+            "s2_pending",
+            Some("2026-09-26T01:00:00.000Z".to_string()),
+            Some(&target.id),
+            Some(epoch),
+        )
+        .unwrap();
+    }
+
     fn assert_old_batch_remains_the_only_outbound_authority_v1(
         conn: &Mutex<Connection>,
         root: &str,
@@ -2487,6 +2546,147 @@ mod tests {
             assert!(!discovery.state.last_round_indeterminate);
             assert!(discovery.state.observed_writers.is_empty());
         }
+    }
+
+    #[test]
+    fn normal_s2_no_op_success_clears_failure_state_but_preserves_manual_pause() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-success-paused/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, true);
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::new(remote);
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Success
+        );
+        let scheduler = crate::sync_state::runtime_state(&conn.lock().unwrap())
+            .unwrap()
+            .scheduler;
+        assert!(scheduler.paused);
+        assert_eq!(scheduler.consecutive_failures, 0);
+        assert!(scheduler.next_attempt_at.is_none());
+        assert!(scheduler.last_error_code.is_none());
+        assert!(scheduler.last_attempt_at.is_some());
+        assert!(scheduler.last_success_at.is_some());
+        assert!(scheduler.last_remote_check_at.is_some());
+    }
+
+    #[test]
+    fn normal_s2_publish_success_clears_scheduler_failure_state() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-publish-success/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let (_, _, old_intent) = prepare_normal_recovery_fixture_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, false);
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::exact(
+            old_intent.remote_path,
+            old_intent.exact_bytes,
+        )));
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::clone(&remote));
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Success
+        );
+        assert_eq!(remote.lock().unwrap().put_calls, 1);
+        let scheduler = crate::sync_state::runtime_state(&conn.lock().unwrap())
+            .unwrap()
+            .scheduler;
+        assert!(!scheduler.paused);
+        assert_eq!(scheduler.consecutive_failures, 0);
+        assert!(scheduler.next_attempt_at.is_none());
+        assert!(scheduler.last_error_code.is_none());
+        assert!(scheduler.last_success_at.is_some());
+    }
+
+    #[test]
+    fn normal_s2_pending_and_automatic_skip_leave_scheduler_unchanged() {
+        let conn = connection();
+        let active = target(
+            "https://dav.example.test/normal-pending-scheduler/",
+            "alice",
+        );
+        set_active(&conn, &active, vec![active.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, false);
+        let before = crate::sync_state::runtime_state(&conn.lock().unwrap())
+            .unwrap()
+            .scheduler;
+        let mut state = NormalRemoteStateV1::empty(false);
+        state.list_indeterminate = true;
+        let dispatch = DeterministicNormalDispatchV1::new(Arc::new(Mutex::new(state)));
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert_eq!(
+            crate::sync_state::runtime_state(&conn.lock().unwrap())
+                .unwrap()
+                .scheduler,
+            before
+        );
+
+        crate::sync_state::set_paused(&conn.lock().unwrap(), true, Some(&active.id), Some(1))
+            .unwrap();
+        let before_skip = crate::sync_state::runtime_state(&conn.lock().unwrap())
+            .unwrap()
+            .scheduler;
+        let skipped = DeterministicNormalDispatchV1::new(Arc::new(Mutex::new(
+            NormalRemoteStateV1::empty(false),
+        )));
+        assert_eq!(
+            run_normal_coordinator_with_automatic_admission_v1(&conn, &skipped, &active, 1),
+            ProductionCoordinatorResultV1::AutomaticSkipped
+        );
+        assert_eq!(
+            crate::sync_state::runtime_state(&conn.lock().unwrap())
+                .unwrap()
+                .scheduler,
+            before_skip
+        );
+    }
+
+    #[test]
+    fn normal_s2_success_does_not_clear_a_replacement_target_scheduler() {
+        let conn = connection();
+        let active = target("https://dav.example.test/normal-success-race-a/", "alice");
+        let replacement = target("https://dav.example.test/normal-success-race-b/", "bob");
+        set_active(&conn, &active, vec![active.clone(), replacement.clone()], 1);
+        prepare_empty_normal_root_v1(&conn, &active);
+        seed_scheduler_failure_v1(&conn, &active, 1, false);
+        let replacement_for_hook = replacement.clone();
+        let active_for_hook = active.clone();
+        let remote = Arc::new(Mutex::new(NormalRemoteStateV1::empty(false)));
+        let dispatch = DeterministicNormalDispatchV1::with_after_normal(
+            remote,
+            Box::new(move |connection| {
+                set_active(
+                    connection,
+                    &replacement_for_hook,
+                    vec![active_for_hook, replacement_for_hook.clone()],
+                    2,
+                );
+                seed_scheduler_failure_v1(connection, &replacement_for_hook, 2, true);
+            }),
+        );
+
+        assert_eq!(
+            run_normal_coordinator_v1(&conn, &dispatch),
+            ProductionCoordinatorResultV1::TargetChanged
+        );
+        let scheduler = crate::sync_state::runtime_state(&conn.lock().unwrap())
+            .unwrap()
+            .scheduler;
+        assert!(scheduler.paused);
+        assert_eq!(scheduler.consecutive_failures, 1);
+        assert_eq!(scheduler.last_error_code.as_deref(), Some("s2_pending"));
+        assert_eq!(
+            scheduler.next_attempt_at.as_deref(),
+            Some("2026-09-26T01:00:00.000Z")
+        );
     }
 
     #[test]

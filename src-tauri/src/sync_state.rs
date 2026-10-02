@@ -596,6 +596,53 @@ pub fn record_failure(
     runtime_state(conn)
 }
 
+/// Records a completed normal-S2 cycle only for the target/epoch that actually
+/// completed it. The active target is rechecked inside the same transaction as
+/// the scheduler update, so an older completion can never clear a newer
+/// target's retry state.
+pub(crate) fn record_normal_s2_success_for_bound_target_v1(
+    conn: &mut Connection,
+    target_id: &str,
+    target_epoch: u64,
+) -> Result<bool, AppError> {
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !matches!(
+        crate::sync_targets::active_target(&transaction)?,
+        Some((active_target_id, active_target_epoch))
+            if active_target_id == target_id && active_target_epoch == target_epoch
+    ) {
+        return Ok(false);
+    }
+
+    let scheduler_key = crate::sync_targets::scoped_key(target_id, "scheduler_v1");
+    let mut scheduler = match get_setting_tx(&transaction, &scheduler_key)? {
+        Some(raw) => serde_json::from_str::<SyncSchedulerState>(&raw)
+            .map_err(|error| AppError::General(format!("Invalid {SCHEDULER_KEY}: {error}")))?,
+        None => SyncSchedulerState::default(),
+    };
+    if scheduler.version != 1 {
+        return Err(AppError::General(format!(
+            "Invalid {SCHEDULER_KEY} version"
+        )));
+    }
+
+    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    scheduler.consecutive_failures = 0;
+    scheduler.next_attempt_at = None;
+    scheduler.last_attempt_at = Some(now.clone());
+    scheduler.last_success_at = Some(now.clone());
+    scheduler.last_remote_check_at = Some(now);
+    scheduler.last_error_code = None;
+    // `paused` is deliberate target policy. A manual success must not enable
+    // automatic execution as a side effect.
+    let raw = serde_json::to_string(&scheduler).map_err(|error| {
+        AppError::General(format!("Could not serialize sync scheduler: {error}"))
+    })?;
+    set_setting_tx(&transaction, &scheduler_key, &raw)?;
+    transaction.commit()?;
+    Ok(true)
+}
+
 #[allow(dead_code)]
 pub fn record_remote_unchanged(
     conn: &mut Connection,
