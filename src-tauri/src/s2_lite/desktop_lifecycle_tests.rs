@@ -1483,11 +1483,14 @@ fn durable_router_maps_every_migration_status_without_legacy_fallback_after_cuto
         .unwrap(),
         DesktopSyncRouteV1::EnterNormalS2
     );
-    assert!(super::desktop_lifecycle::route_migration_status_v1(
-        MigrationStatusV1::ActivationVerified,
-        false,
-    )
-    .is_err());
+    assert_eq!(
+        super::desktop_lifecycle::route_migration_status_v1(
+            MigrationStatusV1::ActivationVerified,
+            false,
+        )
+        .unwrap(),
+        DesktopSyncRouteV1::ResumeActivation
+    );
     assert!(super::desktop_lifecycle::route_migration_status_v1(
         MigrationStatusV1::MigrationComplete,
         false,

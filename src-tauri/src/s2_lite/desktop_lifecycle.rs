@@ -105,11 +105,14 @@ pub(crate) fn route_migration_status_v1(
         MigrationStatusV1::StageBComplete | MigrationStatusV1::ActivationPublishing => {
             Ok(DesktopSyncRouteV1::ResumeActivation)
         }
-        // These states require a durable activation latch.  Treat a missing
-        // latch as corruption rather than reopening legacy S1.
-        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete => {
-            Err(ROUTER_FAILURE)
-        }
+        // These states require a durable activation latch and must never
+        // reopen legacy S1.
+        // Exact activation verification and the durable cutover latch are two
+        // independently crashable writes.  Resume the local-only activation
+        // recovery step when the receipt is durable but the latch is not yet
+        // visible; MigrationComplete without the latch remains corruption.
+        MigrationStatusV1::ActivationVerified => Ok(DesktopSyncRouteV1::ResumeActivation),
+        MigrationStatusV1::MigrationComplete => Err(ROUTER_FAILURE),
         MigrationStatusV1::RootFrozen => Ok(DesktopSyncRouteV1::ReadOnlyFrozen),
     }
 }

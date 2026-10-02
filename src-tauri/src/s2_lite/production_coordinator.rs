@@ -1433,18 +1433,31 @@ mod tests {
         fn execute_activation(
             &self,
             conn: &Mutex<Connection>,
-            paths: &crate::app_paths::AppPaths,
+            _: &crate::app_paths::AppPaths,
             coordinator: &RootExecutionCoordinatorV1,
-            expected_execution: &MigrationExecutionBindingV1,
+            _: &MigrationExecutionBindingV1,
             time: &str,
         ) -> Result<ActivationExecutionResultV1> {
-            let result = execute_production_activation_with_webdav_for_execution_v1(
-                conn,
-                paths,
-                coordinator,
-                expected_execution,
-                time,
-            );
+            let remote = Arc::clone(&self.remote);
+            let result =
+                crate::s2_lite::bootstrap_execution::execute_production_activation_with_factory_v1(
+                    conn,
+                    coordinator,
+                    |binding| {
+                        Ok(Some(HistoricalWebDavCredentialsV1 {
+                            canonical_url: binding.canonical_url.clone(),
+                            username: binding.normalized_account.clone(),
+                            password: "test".into(),
+                        }))
+                    },
+                    |binding, _| {
+                        Ok(BootstrapRemoteV1 {
+                            root_id: binding.physical_root_id.clone(),
+                            state: remote,
+                        })
+                    },
+                    time,
+                );
             self.observe(ObservedPrimitiveV1::Activation);
             result
         }
@@ -3187,6 +3200,103 @@ mod tests {
         assert_eq!(
             load_bound_coordinator_route_v1(&conn).unwrap().route,
             DesktopSyncRouteV1::EnterNormalS2
+        );
+    }
+
+    #[test]
+    fn locally_verified_empty_activation_recovers_cutover_after_restart_and_finalizes() {
+        let conn = connection();
+        let active = target("https://dav.example.test/empty-local-activation/", "alice");
+        set_active(&conn, &active, vec![active.clone()], 1);
+        let admitted = admit_empty_historical_migration(&conn, &active);
+        let root = admitted.execution_binding.physical_root_id.clone();
+        let writer_id = admitted.state.writer_id.clone();
+        let dispatch = DeterministicBootstrapDispatchV1::new(None);
+        let paths = crate::app_paths::AppPaths::resolve_from(None, &std::env::temp_dir()).unwrap();
+
+        // Separate one-step coordinator invocations model restart boundaries
+        // without depending on how many bootstrap phases an empty migration
+        // can advance in one production wrapper call. Stop at the exact crash
+        // point: the activation receipt and ActivationVerified are durable,
+        // while the independently persisted cutover latch is not yet present.
+        let mut reached_verified_without_cutover = false;
+        for _ in 0..8 {
+            assert_eq!(
+                run_production_sync_coordinator_step_with_dispatch_v1(
+                    &conn,
+                    &paths,
+                    &RootExecutionCoordinatorV1::default(),
+                    &DiscoveryBudgetsV1::default(),
+                    1,
+                    &dispatch,
+                )
+                .unwrap(),
+                ProductionCoordinatorResultV1::Pending
+            );
+            let mut step_store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+            let migration = MigrationStateStoreV1::load(&mut step_store, &root)
+                .unwrap()
+                .unwrap();
+            let safety = MigrationStateStoreV1::load_root_safety(&mut step_store, &root).unwrap();
+            if migration.status
+                == crate::s2_lite::migration_orchestration::MigrationStatusV1::ActivationVerified
+                && !safety.cutover_state.remote_s2_activated
+            {
+                reached_verified_without_cutover = true;
+                break;
+            }
+        }
+        assert!(reached_verified_without_cutover);
+        let mut store = SqliteS2LiteStoreV1::open(&conn, &root).unwrap();
+        assert_eq!(
+            MigrationStateStoreV1::load(&mut store, &root)
+                .unwrap()
+                .unwrap()
+                .status,
+            crate::s2_lite::migration_orchestration::MigrationStatusV1::ActivationVerified
+        );
+        assert!(
+            !MigrationStateStoreV1::load_root_safety(&mut store, &root)
+                .unwrap()
+                .cutover_state
+                .remote_s2_activated
+        );
+        assert_eq!(dispatch.remote.lock().unwrap().put_calls, 1);
+
+        // A fresh coordinator invocation performs local-only cutover recovery.
+        // It neither repeats the activation PUT nor requires writer objects.
+        assert_eq!(
+            run_production_sync_coordinator_step_with_dispatch_v1(
+                &conn,
+                &paths,
+                &RootExecutionCoordinatorV1::default(),
+                &DiscoveryBudgetsV1::default(),
+                1,
+                &dispatch,
+            )
+            .unwrap(),
+            ProductionCoordinatorResultV1::Pending
+        );
+        assert!(
+            MigrationStateStoreV1::load_root_safety(&mut store, &root)
+                .unwrap()
+                .cutover_state
+                .remote_s2_activated
+        );
+        assert_eq!(dispatch.remote.lock().unwrap().put_calls, 1);
+
+        assert_eq!(
+            route_desktop_sync_v1(&conn).unwrap(),
+            DesktopSyncRouteV1::EnterNormalS2
+        );
+        let desktop = store.load_desktop_root_state().unwrap().unwrap();
+        assert_eq!(desktop.local_writer_id, writer_id);
+        assert_eq!(desktop.writer_head, None);
+        assert_eq!(desktop.next_writer_sequence, 1);
+        assert!(
+            SqliteS2LiteStoreV1::load_migration_source_execution_binding_v1(&conn)
+                .unwrap()
+                .is_none()
         );
     }
 

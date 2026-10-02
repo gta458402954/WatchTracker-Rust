@@ -20,7 +20,8 @@ use super::immutable_publish::{RemoteExactGetResultV1, RemotePutResultV1};
 use super::migration_orchestration::{
     create_activation_publication_execution_capability_v1,
     create_migration_root_execution_capability_v1, execute_migration_step_v1,
-    start_or_attach_migration_v1, MigrationStateStoreV1, MigrationStatusV1,
+    recover_migration_activation_cutover_v1, start_or_attach_migration_v1, MigrationStateStoreV1,
+    MigrationStatusV1,
 };
 use super::outbound_publish::HistoricalWebDavCredentialsV1;
 use super::root_coordinator::RootExecutionCoordinatorV1;
@@ -161,6 +162,30 @@ fn activation_observed_remote_result(
             ActivationExecutionResultV1::RemoteAuthOrCapabilityBlocked
         }
     }
+}
+
+fn recover_durable_verified_activation_cutover_v1(
+    store: &mut SqliteS2LiteStoreV1<'_>,
+    migration: &super::migration_orchestration::MigrationStateV1,
+) -> Result<ActivationExecutionResultV1> {
+    let recovery = recover_migration_activation_cutover_v1(migration, store)?;
+    let cutover = recovery
+        .diagnostic_state()
+        .ok_or(ProtocolError("activation_cutover_not_ready"))?;
+    if !cutover.remote_s2_activated {
+        return Err(ProtocolError("activation_cutover_not_ready"));
+    }
+    MigrationStateStoreV1::persist_cutover_state(store, &migration.root_id, &cutover)?;
+    let safety = MigrationStateStoreV1::load_root_safety(store, &migration.root_id)?;
+    Ok(
+        if safety.root_fatal_signals.is_empty()
+            && safety.cutover_state.root_fatal_signals.is_empty()
+        {
+            ActivationExecutionResultV1::ActivationVerified
+        } else {
+            ActivationExecutionResultV1::RootFrozen
+        },
+    )
 }
 
 fn freeze_root(
@@ -536,10 +561,10 @@ where
     if migration.status == MigrationStatusV1::RootFrozen {
         return Ok(ActivationExecutionResultV1::RootFrozen);
     }
-    if matches!(
-        migration.status,
-        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
-    ) {
+    if migration.status == MigrationStatusV1::ActivationVerified {
+        return recover_durable_verified_activation_cutover_v1(&mut preflight, &migration);
+    }
+    if migration.status == MigrationStatusV1::MigrationComplete {
         return Ok(ActivationExecutionResultV1::ActivationVerified);
     }
     if !matches!(
@@ -626,10 +651,10 @@ where
     if durable.status == MigrationStatusV1::RootFrozen {
         return Ok(ActivationExecutionResultV1::RootFrozen);
     }
-    if matches!(
-        durable.status,
-        MigrationStatusV1::ActivationVerified | MigrationStatusV1::MigrationComplete
-    ) {
+    if durable.status == MigrationStatusV1::ActivationVerified {
+        return recover_durable_verified_activation_cutover_v1(&mut migration_store, &durable);
+    }
+    if durable.status == MigrationStatusV1::MigrationComplete {
         return Ok(ActivationExecutionResultV1::ActivationVerified);
     }
     if !matches!(
