@@ -856,6 +856,11 @@ fn persist_transition<M: MigrationStateStoreV1>(
         .generation
         .checked_add(1)
         .ok_or(ProtocolError("LOCAL_MIGRATION_STATE_CORRUPTION"))?;
+    // Receipts can collapse an intermediate phase (for example when Stage B
+    // is empty). Commit the validated canonical successor, while retaining
+    // the original predecessor identity and generation for the strict CAS.
+    let next = reconcile_migration_state_v1(&next)?;
+    validate_attempt_transition(prior, &next)?;
     if store.compare_and_swap(&prior.root_id, &prior.migration_id, prior.generation, &next)? {
         return Ok(next);
     }

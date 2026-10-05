@@ -372,6 +372,377 @@ fn assert_corruption<T>(result: super::canonical::Result<T>) {
     assert_eq!(result.err().unwrap().0, "S2_DURABLE_STATE_CORRUPTION");
 }
 
+// Reopen a real SQLite database for every executor step, including all five
+// persistence interfaces used by the production migration executor.
+fn sqlite_migration_step(
+    path: &Path,
+    remote: &mut MigrationRemote,
+) -> super::canonical::Result<MigrationStateV1> {
+    with_store(path, ROOT_A, |store, connection| {
+        let current = store.load(ROOT_A)?.unwrap();
+        let attachment = start_or_attach_migration_v1(&current, store)?;
+        let capability = create_migration_root_execution_capability_v1(&attachment, remote, store)?;
+        super::migration_orchestration::execute_migration_step_v1(
+            &current,
+            &capability,
+            remote,
+            store,
+            &mut SqliteS2LiteStoreV1::open(connection, ROOT_A)?,
+            &mut SqliteS2LiteStoreV1::open(connection, ROOT_A)?,
+            &mut SqliteS2LiteStoreV1::open(connection, ROOT_A)?,
+            &mut SqliteS2LiteStoreV1::open(connection, ROOT_A)?,
+            TIMESTAMP,
+        )
+    })
+}
+
+#[derive(Default)]
+struct MigrationRemote {
+    objects: BTreeMap<String, Vec<u8>>,
+    gets: Vec<String>,
+    puts: Vec<(String, Vec<u8>)>,
+    lose_put_response: bool,
+    hide_after_put: bool,
+}
+
+impl ImmutableObjectRemoteV1 for MigrationRemote {
+    fn physical_root_id(&self) -> Option<&str> {
+        Some(ROOT_A)
+    }
+
+    fn get_exact(&mut self, path: &str) -> RemoteExactGetResultV1 {
+        self.gets.push(path.to_string());
+        if self.hide_after_put {
+            return RemoteExactGetResultV1::Indeterminate;
+        }
+        self.objects.get(path).cloned().map_or(
+            RemoteExactGetResultV1::DefinitelyAbsent,
+            RemoteExactGetResultV1::DefinitelyPresent,
+        )
+    }
+
+    fn put_exact(&mut self, path: &str, bytes: &[u8], conditional: bool) -> RemotePutResultV1 {
+        assert!(conditional);
+        assert!(
+            !self.objects.contains_key(path),
+            "immutable object republished"
+        );
+        self.puts.push((path.to_string(), bytes.to_vec()));
+        self.objects.insert(path.to_string(), bytes.to_vec());
+        if self.lose_put_response {
+            self.hide_after_put = true;
+            RemotePutResultV1::Indeterminate
+        } else {
+            RemotePutResultV1::Success
+        }
+    }
+}
+
+fn seed_sqlite_migration(path: &Path, with_members: bool) -> MigrationStateV1 {
+    let (initial, captured, planned) = if with_members {
+        migration_states(ROOT_A, MIGRATION_A, WRITER_A, 3)
+    } else {
+        let initial =
+            create_migration_state_v1(MIGRATION_A, ROOT_A, WRITER_A, TIMESTAMP, "legacy-bootstrap")
+                .unwrap();
+        let entries = (0..3)
+            .map(|index| LegacySnapshotEntryV1 {
+                entity_type: "record".to_string(),
+                value: serde_json::to_value(record(index)).unwrap(),
+            })
+            .collect::<Vec<_>>();
+        let snapshot = capture_legacy_snapshot_v1(&entries, &IdentityAdapter).unwrap();
+        let mut captured = retain_captured_snapshot_v1(&initial, &snapshot).unwrap();
+        captured.generation = 1;
+        let mut planned = plan_captured_migration_v1(&captured).unwrap();
+        planned.generation = 2;
+        (initial, captured, planned)
+    };
+    with_store(path, ROOT_A, |store, _| {
+        store.claim_or_load(&initial).unwrap();
+        persist_transition(store, &initial, &captured);
+        persist_transition(store, &captured, &planned);
+    });
+    planned
+}
+
+#[test]
+fn sqlite_migration_empty_stage_b_receipt_commits_canonical_state() {
+    let database = TempDatabase::new("empty-b-canonical");
+    let planned = seed_sqlite_migration(&database.path, false);
+    assert_eq!(planned.stage_a.len(), 1);
+    assert!(planned.stage_b.is_empty());
+    let intent = planned.stage_a[0].intent.clone();
+    with_store(&database.path, ROOT_A, |store, _| {
+        PreparedIntentStoreV1::persist(store, &intent).unwrap();
+        persist_commit_receipt(store, ROOT_A, &commit_receipt(&planned.stage_a[0])).unwrap();
+    });
+    let mut remote = MigrationRemote::default();
+    let next = sqlite_migration_step(&database.path, &mut remote).unwrap();
+    assert_eq!(next.status, MigrationStatusV1::ActivationPublishing);
+    assert_eq!(
+        next.stage_a[0].receipt,
+        Some(commit_receipt(&planned.stage_a[0]))
+    );
+    assert_eq!(next.stage_a[0].intent, intent);
+    assert_eq!(load_migration(&database.path, ROOT_A), next);
+    assert!(remote.gets.is_empty());
+    assert!(remote.puts.is_empty());
+    // This store-only fixture has no source-owner/target execution binding.
+    // Recover an exactly verified activation receipt; actual activation PUT
+    // admission is exercised by the production bootstrap execution tests.
+    with_store(&database.path, ROOT_A, |store, _| {
+        PreparedActivationIntentStoreV1::persist(store, next.activation_intent.as_ref().unwrap())
+            .unwrap();
+        persist_activation_receipt(store, ROOT_A, &activation_receipt(&next)).unwrap();
+    });
+    let activated = sqlite_migration_step(&database.path, &mut remote).unwrap();
+    assert_eq!(activated.status, MigrationStatusV1::ActivationVerified);
+    assert_eq!(activated.activation_intent, planned.activation_intent);
+    assert!(activated.activation_receipt.is_some());
+}
+
+#[test]
+fn sqlite_migration_lost_put_response_recovers_exact_identity_after_restart() {
+    let database = TempDatabase::new("lost-put-canonical");
+    let planned = seed_sqlite_migration(&database.path, false);
+    let intent = planned.stage_a[0].intent.clone();
+    let mut remote = MigrationRemote {
+        lose_put_response: true,
+        ..Default::default()
+    };
+    let uncertain = sqlite_migration_step(&database.path, &mut remote).unwrap();
+    assert_eq!(uncertain.status, MigrationStatusV1::StageAPublishing);
+    assert!(uncertain.stage_a[0].receipt.is_none());
+    with_store(&database.path, ROOT_A, |store, _| {
+        assert_eq!(
+            store.load_prepared_intent(&intent.remote_path).unwrap(),
+            Some(intent.clone())
+        );
+        assert!(store
+            .load_published_receipt(&intent.remote_path)
+            .unwrap()
+            .is_none());
+    });
+    assert_eq!(
+        remote.puts,
+        vec![(intent.remote_path.clone(), intent.exact_bytes.clone())]
+    );
+    remote.hide_after_put = false;
+    remote.lose_put_response = false;
+    remote.gets.clear();
+    let recovered = sqlite_migration_step(&database.path, &mut remote).unwrap();
+    assert_eq!(recovered.status, MigrationStatusV1::ActivationPublishing);
+    assert_eq!(recovered.stage_a[0].intent, intent);
+    assert_eq!(
+        recovered.stage_a[0].receipt,
+        Some(commit_receipt(&planned.stage_a[0]))
+    );
+    assert_eq!(recovered.activation_intent, planned.activation_intent);
+    assert_eq!(remote.gets, vec![intent.remote_path]);
+    assert_eq!(remote.puts.len(), 1);
+    assert_eq!(load_migration(&database.path, ROOT_A), recovered);
+}
+
+#[test]
+fn sqlite_migration_receipt_survives_failed_state_commit_and_restart() {
+    let database = TempDatabase::new("receipt-before-cas-crash");
+    let planned = seed_sqlite_migration(&database.path, false);
+    let mut publishing = planned.clone();
+    publishing.status = MigrationStatusV1::StageAPublishing;
+    publishing.generation += 1;
+    with_store(&database.path, ROOT_A, |store, connection| {
+        persist_transition(store, &planned, &publishing);
+        connection
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_receipt_state_commit
+             BEFORE UPDATE ON s2_lite_migration_v1
+             BEGIN SELECT RAISE(ABORT, 'crash after receipt'); END;",
+            )
+            .unwrap();
+    });
+    let mut remote = MigrationRemote::default();
+    assert_eq!(
+        sqlite_migration_step(&database.path, &mut remote)
+            .unwrap_err()
+            .0,
+        "S2_DURABLE_PERSISTENCE_FAILURE"
+    );
+    assert_eq!(load_migration(&database.path, ROOT_A), publishing);
+    let receipt = with_store(&database.path, ROOT_A, |store, connection| {
+        let receipt = store
+            .load_published_receipt(&publishing.stage_a[0].intent.remote_path)
+            .unwrap()
+            .unwrap();
+        connection
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_receipt_state_commit")
+            .unwrap();
+        receipt
+    });
+    let puts = remote.puts.clone();
+    remote.gets.clear();
+    // Even an unavailable provider cannot erase the already verified receipt.
+    remote.hide_after_put = true;
+    let recovered = sqlite_migration_step(&database.path, &mut remote).unwrap();
+    assert_eq!(recovered.status, MigrationStatusV1::ActivationPublishing);
+    assert_eq!(recovered.stage_a[0].receipt, Some(receipt));
+    assert_eq!(recovered.stage_a[0].intent, publishing.stage_a[0].intent);
+    assert_eq!(recovered.activation_intent, planned.activation_intent);
+    assert!(remote.gets.is_empty());
+    assert_eq!(remote.puts, puts);
+    assert_eq!(load_migration(&database.path, ROOT_A), recovered);
+}
+
+#[test]
+fn sqlite_migration_mismatched_receipt_or_intent_remains_corruption() {
+    for field in [
+        "remotePath",
+        "contentHash",
+        "verifiedExactBytesHash",
+        "preparedIntentFingerprint",
+        "commitRef",
+        "exactBytes",
+    ] {
+        let database = TempDatabase::new("receipt-canonical-mismatch");
+        let planned = seed_sqlite_migration(&database.path, false);
+        let task = &planned.stage_a[0];
+        with_store(&database.path, ROOT_A, |store, _| {
+            PreparedIntentStoreV1::persist(store, &task.intent).unwrap();
+            persist_commit_receipt(store, ROOT_A, &commit_receipt(task)).unwrap();
+        });
+        if field == "exactBytes" {
+            let connection = Connection::open(&database.path).unwrap();
+            connection
+                .execute(
+                    "UPDATE s2_lite_prepared_intent_v1 SET exact_bytes=?1 WHERE root_id=?2",
+                    params![b"{}".as_slice(), ROOT_A],
+                )
+                .unwrap();
+        } else {
+            let mut damaged: Value = serde_json::from_slice(&read_blob(
+                &database.path,
+                "s2_lite_published_receipt_v1",
+                "receipt_json",
+                ROOT_A,
+            ))
+            .unwrap();
+            if field == "commitRef" {
+                damaged["payload"]["receipt"][field]["commitId"] = json!(MIGRATION_B);
+            } else {
+                damaged["payload"]["receipt"][field] = json!("wrong-identity");
+            }
+            write_blob(
+                &database.path,
+                "s2_lite_published_receipt_v1",
+                "receipt_json",
+                ROOT_A,
+                &damaged,
+            );
+        }
+        let before = load_migration(&database.path, ROOT_A);
+        let mut remote = MigrationRemote::default();
+        assert_corruption(sqlite_migration_step(&database.path, &mut remote));
+        // The normal executor may durably enter StageAPublishing first, but
+        // must never attach the invalid receipt or advance toward activation.
+        let after = load_migration(&database.path, ROOT_A);
+        assert_eq!(after.stage_a, before.stage_a);
+        assert_eq!(after.activation_intent, before.activation_intent);
+        assert_eq!(after.status, MigrationStatusV1::StageAPublishing);
+        assert!(remote.gets.is_empty());
+        assert!(remote.puts.is_empty());
+    }
+}
+
+#[test]
+fn sqlite_migration_nonempty_stage_b_preserves_canonical_boundaries() {
+    let database = TempDatabase::new("nonempty-b-canonical");
+    let planned = seed_sqlite_migration(&database.path, true);
+    assert_eq!(planned.stage_a.len(), 1);
+    assert_eq!(planned.stage_b.len(), 1);
+    let mut remote = MigrationRemote::default();
+    for expected in [
+        MigrationStatusV1::StageAComplete,
+        MigrationStatusV1::StageBPublishing,
+        MigrationStatusV1::StageBComplete,
+        MigrationStatusV1::ActivationPublishing,
+        MigrationStatusV1::ActivationVerified,
+    ] {
+        if expected == MigrationStatusV1::ActivationVerified {
+            with_store(&database.path, ROOT_A, |store, _| {
+                PreparedActivationIntentStoreV1::persist(
+                    store,
+                    planned.activation_intent.as_ref().unwrap(),
+                )
+                .unwrap();
+                persist_activation_receipt(store, ROOT_A, &activation_receipt(&planned)).unwrap();
+            });
+        }
+        let next = sqlite_migration_step(&database.path, &mut remote).unwrap();
+        assert_eq!(next.status, expected);
+        assert_eq!(load_migration(&database.path, ROOT_A), next);
+        assert_eq!(next.snapshot, planned.snapshot);
+        assert_eq!(next.activation_intent, planned.activation_intent);
+        for (actual, original) in next
+            .stage_a
+            .iter()
+            .chain(&next.stage_b)
+            .zip(planned.stage_a.iter().chain(&planned.stage_b))
+        {
+            assert_eq!(actual.intent, original.intent);
+        }
+    }
+    assert_eq!(remote.puts.len(), 2);
+    sqlite_migration_step(&database.path, &mut remote).unwrap();
+    with_store(&database.path, ROOT_A, |store, _| {
+        assert!(
+            store
+                .load_root_safety(ROOT_A)
+                .unwrap()
+                .cutover_state
+                .remote_s2_activated
+        );
+    });
+}
+
+#[test]
+fn sqlite_migration_canonical_receipt_successor_stale_cas_preserves_new_authority() {
+    let database = TempDatabase::new("stale-canonical-receipt");
+    let planned = seed_sqlite_migration(&database.path, false);
+    let mut prior = planned.clone();
+    prior.generation += 1;
+    prior.status = MigrationStatusV1::StageAPublishing;
+    with_store(&database.path, ROOT_A, |store, _| {
+        persist_transition(store, &planned, &prior);
+        PreparedIntentStoreV1::persist(store, &prior.stage_a[0].intent).unwrap();
+        persist_commit_receipt(store, ROOT_A, &commit_receipt(&prior.stage_a[0])).unwrap();
+    });
+    let reader_a = load_migration(&database.path, ROOT_A);
+    let mut next = reader_a.clone();
+    next.generation += 1;
+    next.stage_a[0].receipt = Some(commit_receipt(&reader_a.stage_a[0]));
+    next.stage_a[0].receipt_root_id = Some(ROOT_A.to_string());
+    next.status = MigrationStatusV1::StageAComplete;
+    let next = super::migration_orchestration::reconcile_migration_state_v1(&next).unwrap();
+    assert_eq!(next.status, MigrationStatusV1::ActivationPublishing);
+    // Both handles share the same durable authority but use independent
+    // connections. B advances after A has loaded its predecessor.
+    with_store(&database.path, ROOT_A, |reader_a_store, _| {
+        with_store(&database.path, ROOT_A, |reader_b_store, _| {
+            assert!(reader_b_store
+                .compare_and_swap(ROOT_A, MIGRATION_A, reader_a.generation, &next)
+                .unwrap());
+        });
+        assert!(!reader_a_store
+            .compare_and_swap(ROOT_A, MIGRATION_A, reader_a.generation, &next)
+            .unwrap());
+    });
+    assert_eq!(load_migration(&database.path, ROOT_A), next);
+}
+
 #[test]
 fn schema_uses_existing_database_migration_path() {
     let database = TempDatabase::new("schema");

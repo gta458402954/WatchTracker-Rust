@@ -784,7 +784,10 @@ fn admitted_bootstrap_and_activation_preflight_after_collection_preparation() {
         &mut bootstrap_stores,
         timestamp,
     );
-    assert_eq!(bootstrap_next.status, MigrationStatusV1::StageAComplete);
+    assert_eq!(
+        bootstrap_next.status,
+        MigrationStatusV1::ActivationPublishing
+    );
     assert_eq!(bootstrap_remote.preparation_calls, 1);
     assert_eq!(bootstrap_remote.trace, ["PREPARE", "GET", "PUT", "GET"]);
 
@@ -917,7 +920,7 @@ fn activation_same_path_mismatch_freezes_without_overwrite() {
     let mut state = planned_for(&fixture, &fixture["planningScenarios"][1]);
     let mut remote = FakeRemote::default();
     let mut stores = FakeStores::default();
-    while state.status != MigrationStatusV1::StageAComplete {
+    while state.status != MigrationStatusV1::ActivationPublishing {
         state = execute(&state, &mut remote, &mut stores, timestamp);
     }
     let path = state
@@ -1035,7 +1038,7 @@ fn shared_root_binding_failures_reject_confusion_receipts_and_same_root_handoff(
     let mut remote = FakeRemote::default();
     let mut stores = FakeStores::default();
     let mut receipted = planned.clone();
-    while receipted.status != MigrationStatusV1::StageAComplete {
+    while receipted.status != MigrationStatusV1::ActivationPublishing {
         receipted = execute(&receipted, &mut remote, &mut stores, timestamp);
     }
     let mut moved = receipted.clone();
@@ -1395,13 +1398,24 @@ fn stale_authority_identity_cannot_execute_a_live_capability() {
 #[test]
 fn same_generation_snapshot_replacement_keeps_original_receipt_and_seq1() {
     let fixture = fixture();
-    let scenario = correctness_scenario(&fixture, "same-generation-snapshot-replacement");
+    let frozen_scenario = correctness_scenario(&fixture, "same-generation-snapshot-replacement");
+    // This fixture's old empty-B intermediate status is the real-provider
+    // defect being repaired. Keep its frozen bytes and every other assertion;
+    // only the committed phase now follows the canonical reconciler result.
+    assert_eq!(
+        frozen_scenario["expectedStatus"],
+        serde_json::to_value(MigrationStatusV1::StageAComplete).unwrap()
+    );
+    let mut scenario = frozen_scenario.clone();
+    scenario["expectedStatus"] =
+        serde_json::to_value(MigrationStatusV1::ActivationPublishing).unwrap();
     let timestamp = fixture["identity"]["createdAt"].as_str().unwrap();
     let planned_x = planned_for(&fixture, &fixture["planningScenarios"][1]);
+    assert!(planned_x.stage_b.is_empty());
     let mut remote = FakeRemote::default();
     let mut stores = FakeStores::default();
     let durable_x = execute(&planned_x, &mut remote, &mut stores, timestamp);
-    assert_eq!(durable_x.status, MigrationStatusV1::StageAComplete);
+    assert_eq!(durable_x.status, MigrationStatusV1::ActivationPublishing);
     let original_path = durable_x.stage_a[0].intent.remote_path.clone();
     remote.trace.clear();
     remote.detailed_trace.clear();
@@ -1426,7 +1440,7 @@ fn same_generation_snapshot_replacement_keeps_original_receipt_and_seq1() {
         Err(ProtocolError("LOCAL_MIGRATION_STATE_CORRUPTION"))
     );
     let retained = stores.migration.current.as_ref().unwrap();
-    assert_correctness_projection(scenario, retained, &remote);
+    assert_correctness_projection(&scenario, retained, &remote);
     assert_eq!(remote.objects.len(), 1);
     assert!(remote.objects.contains_key(&original_path));
     let commits = remote

@@ -1003,6 +1003,13 @@ mod tests {
     }
 
     fn fixture_from_connection(conn: Mutex<Connection>) -> Fixture {
+        fixture_from_connection_with_episode(conn, true)
+    }
+
+    fn fixture_from_connection_with_episode(
+        conn: Mutex<Connection>,
+        with_episode: bool,
+    ) -> Fixture {
         crate::db::setup_db(&conn.lock().unwrap()).unwrap();
         let target_a = activate(&conn, "https://dav.example.test/a/", "alice", 1);
         crate::db::insert_record(
@@ -1049,16 +1056,18 @@ mod tests {
         .unwrap();
         let episode_id =
             crate::s2_lite::canonical::sha256_hex(b"episode-completion:v1\x00record-1\x001");
-        conn.lock()
-            .unwrap()
-            .execute(
-                "INSERT INTO episode_completions(
+        if with_episode {
+            conn.lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO episode_completions(
                      id, recordId, episodeNumber, completedAt, createdAt,
                      updatedAt, rev, revActor
                  ) VALUES(?1, 'record-1', 1, NULL, ?2, ?2, 0, '')",
-                rusqlite::params![episode_id, CREATED],
-            )
-            .unwrap();
+                    rusqlite::params![episode_id, CREATED],
+                )
+                .unwrap();
+        }
         let admitted =
             admit_and_capture_migration_v1(&conn, &target_a, 1, MIGRATION, WRITER, CREATED)
                 .unwrap();
@@ -1163,6 +1172,33 @@ mod tests {
             |_, _| Ok(fake),
             CREATED,
         )
+    }
+
+    #[test]
+    fn empty_stage_b_sqlite_production_bootstrap_continues_activation_publication() {
+        let fixture = fixture_from_connection_with_episode(
+            Mutex::new(Connection::open_in_memory().unwrap()),
+            false,
+        );
+        let planned = activation_state(&fixture);
+        assert_eq!(planned.stage_a.len(), 1);
+        assert!(planned.stage_b.is_empty());
+        assert_eq!(
+            run(&fixture),
+            BootstrapExecutionResultV1::ActivationDeferred
+        );
+        let completed = activation_state(&fixture);
+        assert_eq!(completed.status, MigrationStatusV1::ActivationPublishing);
+        assert_eq!(completed.stage_a[0].intent, planned.stage_a[0].intent);
+        assert!(completed.stage_a[0].receipt.is_some());
+        assert_eq!(
+            run_activation(&fixture),
+            ActivationExecutionResultV1::ActivationVerified
+        );
+        let verified = activation_state(&fixture);
+        assert_eq!(verified.activation_intent, planned.activation_intent);
+        assert!(verified.activation_receipt.is_some());
+        assert_eq!(fixture.remote_state.lock().unwrap().put_calls, 2);
     }
 
     fn assert_activation_admission_rejects_authority_change<F>(mutate: F) -> ProtocolError
