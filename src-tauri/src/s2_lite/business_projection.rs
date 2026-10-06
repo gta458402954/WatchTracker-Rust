@@ -93,36 +93,95 @@ fn key_episode(value: &Value) -> ProtocolResult<i32> {
         .ok_or(ProtocolError("projector_invalid_entity_key"))
 }
 
-fn apply_live(conn: &Connection, entity: &MaterializedProjectionEntityV1) -> ProtocolResult<()> {
+enum LocalLiveRowV1 {
+    Record(Box<WatchRecord>),
+    Collection(Collection),
+    Member(CollectionMember),
+    Episode(EpisodeCompletion),
+}
+
+// Reconstruct and deserialize before executing any application phase.
+fn prepare_live(entity: &MaterializedProjectionEntityV1) -> ProtocolResult<LocalLiveRowV1> {
     let value = super::business_reconstruction::reconstruct_local_business_value_v1(entity)?;
     let (kind, key) = key_parts(&entity.entity_key)?;
     match kind {
-        "record" if key.len() == 1 => remote_upsert_record_no_stage_tx(
-            conn,
-            serde_json::from_value(value)
-                .map_err(|_| ProtocolError("projector_record_value_invalid"))?,
-        )
-        .map_err(failure),
-        "collection" if key.len() == 1 => remote_upsert_collection_no_stage_tx(
-            conn,
-            &serde_json::from_value(value)
-                .map_err(|_| ProtocolError("projector_collection_value_invalid"))?,
-        )
-        .map_err(failure),
-        "collection-member" if key.len() == 2 => remote_upsert_member_no_stage_tx(
-            conn,
-            &serde_json::from_value(value)
-                .map_err(|_| ProtocolError("projector_member_value_invalid"))?,
-        )
-        .map_err(failure),
-        "episode-completion" if key.len() == 2 => remote_upsert_episode_completion_no_stage_tx(
-            conn,
-            &serde_json::from_value(value)
-                .map_err(|_| ProtocolError("projector_completion_value_invalid"))?,
-        )
-        .map_err(failure),
+        "record" if key.len() == 1 => serde_json::from_value(value)
+            .map(|row| LocalLiveRowV1::Record(Box::new(row)))
+            .map_err(|_| ProtocolError("projector_record_value_invalid")),
+        "collection" if key.len() == 1 => serde_json::from_value(value)
+            .map(LocalLiveRowV1::Collection)
+            .map_err(|_| ProtocolError("projector_collection_value_invalid")),
+        "collection-member" if key.len() == 2 => serde_json::from_value(value)
+            .map(LocalLiveRowV1::Member)
+            .map_err(|_| ProtocolError("projector_member_value_invalid")),
+        "episode-completion" if key.len() == 2 => serde_json::from_value(value)
+            .map(LocalLiveRowV1::Episode)
+            .map_err(|_| ProtocolError("projector_completion_value_invalid")),
         _ => Err(ProtocolError("projector_invalid_entity_key")),
     }
+}
+
+fn apply_prepared_live(conn: &Connection, row: LocalLiveRowV1) -> ProtocolResult<()> {
+    match row {
+        LocalLiveRowV1::Record(row) => remote_upsert_record_no_stage_tx(conn, *row),
+        LocalLiveRowV1::Collection(row) => remote_upsert_collection_no_stage_tx(conn, &row),
+        LocalLiveRowV1::Member(row) => remote_upsert_member_no_stage_tx(conn, &row),
+        LocalLiveRowV1::Episode(row) => remote_upsert_episode_completion_no_stage_tx(conn, &row),
+    }
+    .map_err(failure)
+}
+
+fn apply_live(conn: &Connection, entity: &MaterializedProjectionEntityV1) -> ProtocolResult<()> {
+    apply_prepared_live(conn, prepare_live(entity)?)
+}
+
+fn application_phase(entity: &MaterializedProjectionEntityV1, live: bool) -> ProtocolResult<u8> {
+    let (kind, key) = key_parts(&entity.entity_key)?;
+    let dependent = match kind {
+        "record" | "collection" if key.len() == 1 => {
+            key_string(&key[0])?;
+            false
+        }
+        "collection-member" if key.len() == 2 => {
+            key_string(&key[0])?;
+            key_string(&key[1])?;
+            true
+        }
+        "episode-completion" if key.len() == 2 => {
+            key_string(&key[0])?;
+            key_episode(&key[1])?;
+            true
+        }
+        _ => return Err(ProtocolError("projector_invalid_entity_key")),
+    };
+    Ok(match (live, dependent) {
+        (false, true) => 0,  // explicit dependent tombstones
+        (false, false) => 1, // guarded parent deletes also release unique keys
+        (true, false) => 2,  // live parents
+        (true, true) => 3,   // live dependents
+    })
+}
+
+// Production FKs cascade. Never let that erase a row preserved by an overlay,
+// conflict, or missing explicit dependent tombstone. Reject the generation.
+fn apply_planned_tombstone(
+    conn: &Connection,
+    entity: &MaterializedProjectionEntityV1,
+) -> ProtocolResult<()> {
+    let (kind, key) = key_parts(&entity.entity_key)?;
+    let remaining: bool = match kind {
+        "record" => conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collection_members WHERE recordId=?1) OR EXISTS(SELECT 1 FROM episode_completions WHERE recordId=?1)",
+            [key_string(&key[0])?], |row| row.get(0)),
+        "collection" => conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collection_members WHERE collectionId=?1)",
+            [key_string(&key[0])?], |row| row.get(0)),
+        _ => return apply_tombstone(conn, entity),
+    }.map_err(|_| ProtocolError("business_projection_failed"))?;
+    if remaining {
+        return Err(ProtocolError("projector_parent_delete_has_dependents"));
+    }
+    apply_tombstone(conn, entity)
 }
 
 fn apply_tombstone(
@@ -210,12 +269,62 @@ pub fn apply_complete_projection_v1(
                 .map(key_id)
                 .collect::<ProtocolResult<BTreeSet<_>>>()?;
             let mut outcomes = Vec::with_capacity(projection.state.entities.len());
-            for entity in &projection.state.entities {
+            let mut plan = Vec::new();
+            // Plan/validate the entire applicable generation before any SQL write.
+            // Keep diagnostic outcomes in projection order, independent of execution.
+            for (index, entity) in projection.state.entities.iter().enumerate() {
                 let id = key_id(&entity.entity_key)?;
                 let outcome = if entity.conflict || relation_conflicts.contains(&id) {
                     BusinessProjectionOutcomeV1::ConflictPreserved
                 } else if overlays.contains(&id) {
-                    if let Some(target_id) = target_id.as_deref() {
+                    BusinessProjectionOutcomeV1::OverlayPreserved
+                } else {
+                    let state = entity
+                        .semantic_state
+                        .as_ref()
+                        .and_then(|state| state.get("state"))
+                        .and_then(Value::as_str);
+                    let live = match state {
+                        Some("live") => true,
+                        Some("tombstone") => false,
+                        _ => return Err(ProtocolError("projector_unresolved_entity")),
+                    };
+                    let phase = application_phase(entity, live)?;
+                    let prepared = if live {
+                        Some(prepare_live(entity)?)
+                    } else {
+                        None
+                    };
+                    plan.push((phase, id, index, prepared));
+                    if live {
+                        BusinessProjectionOutcomeV1::AppliedRemoteValue
+                    } else {
+                        BusinessProjectionOutcomeV1::AppliedRemoteTombstone
+                    }
+                };
+                outcomes.push(outcome);
+            }
+            plan.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            for (_, _, index, prepared) in plan {
+                let entity = &projection.state.entities[index];
+                if let Some(row) = prepared {
+                    apply_prepared_live(conn, row)?;
+                } else {
+                    apply_planned_tombstone(conn, entity)?;
+                }
+                if let Some(target_id) = target_id.as_deref() {
+                    super::durable_persistence::clear_entity_projection_overlay_blocker_v1(
+                        conn,
+                        &projection.physical_root_id,
+                        target_id,
+                        &entity.entity_key,
+                    )?;
+                }
+            }
+            // Overlay bookkeeping also waits until all reconstruction succeeds.
+            if let Some(target_id) = target_id.as_deref() {
+                for (entity, outcome) in projection.state.entities.iter().zip(&outcomes) {
+                    if *outcome == BusinessProjectionOutcomeV1::OverlayPreserved {
                         super::durable_persistence::upsert_entity_projection_overlay_blocker_v1(
                             conn,
                             &projection.physical_root_id,
@@ -224,41 +333,7 @@ pub fn apply_complete_projection_v1(
                             entity,
                         )?;
                     }
-                    BusinessProjectionOutcomeV1::OverlayPreserved
-                } else if entity
-                    .semantic_state
-                    .as_ref()
-                    .is_some_and(|state| state["state"] == "live")
-                {
-                    apply_live(conn, entity)?;
-                    if let Some(target_id) = target_id.as_deref() {
-                        super::durable_persistence::clear_entity_projection_overlay_blocker_v1(
-                            conn,
-                            &projection.physical_root_id,
-                            target_id,
-                            &entity.entity_key,
-                        )?;
-                    }
-                    BusinessProjectionOutcomeV1::AppliedRemoteValue
-                } else if entity
-                    .semantic_state
-                    .as_ref()
-                    .is_some_and(|state| state["state"] == "tombstone")
-                {
-                    apply_tombstone(conn, entity)?;
-                    if let Some(target_id) = target_id.as_deref() {
-                        super::durable_persistence::clear_entity_projection_overlay_blocker_v1(
-                            conn,
-                            &projection.physical_root_id,
-                            target_id,
-                            &entity.entity_key,
-                        )?;
-                    }
-                    BusinessProjectionOutcomeV1::AppliedRemoteTombstone
-                } else {
-                    return Err(ProtocolError("projector_unresolved_entity"));
-                };
-                outcomes.push(outcome);
+                }
             }
             Ok(BusinessProjectionReportV1 {
                 generation: expected_projection_generation,
