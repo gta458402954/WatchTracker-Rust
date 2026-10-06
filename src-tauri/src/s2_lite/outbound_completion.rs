@@ -580,6 +580,7 @@ mod tests {
                 business_value: Some(json!({})),
                 frontier: vec![],
                 conflict: false,
+                metadata_variants: vec![],
             });
         assert!(store
             .compare_and_swap_materialized_projection(Some(1), &projection)

@@ -30,6 +30,17 @@ pub struct MaterializedProjectionEntityV1 {
     pub business_value: Option<Value>,
     pub frontier: Vec<CommitRef>,
     pub conflict: bool,
+    /// Local cache of the frozen replay's separate metadata evidence. Older
+    /// caches decode without it and must be rebuilt before live application.
+    #[serde(default)]
+    pub metadata_variants: Vec<ProjectionMetadataVariantV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectionMetadataVariantV1 {
+    pub commit_ref: CommitRef,
+    pub metadata: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -152,12 +163,25 @@ pub fn rebuild_materialized_projection_v1(
                 } => (Some(semantic_state.clone()), business_value.clone(), false),
                 MaterializedEntityV1::Conflict { .. } => (None, None, true),
             };
+            let metadata_variants = match &item.value {
+                MaterializedEntityV1::Resolved {
+                    metadata_variants, ..
+                } => metadata_variants
+                    .iter()
+                    .map(|variant| ProjectionMetadataVariantV1 {
+                        commit_ref: variant.commit_ref.clone(),
+                        metadata: variant.metadata.clone(),
+                    })
+                    .collect(),
+                _ => vec![],
+            };
             Ok(MaterializedProjectionEntityV1 {
                 entity_key: item.entity_key.clone(),
                 semantic_state,
                 business_value,
                 frontier,
                 conflict,
+                metadata_variants,
             })
         })
         .collect::<Result<Vec<_>>>()?;

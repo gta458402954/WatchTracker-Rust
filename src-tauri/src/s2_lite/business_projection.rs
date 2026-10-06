@@ -94,10 +94,7 @@ fn key_episode(value: &Value) -> ProtocolResult<i32> {
 }
 
 fn apply_live(conn: &Connection, entity: &MaterializedProjectionEntityV1) -> ProtocolResult<()> {
-    let value = entity
-        .business_value
-        .clone()
-        .ok_or(ProtocolError("projector_live_value_missing"))?;
+    let value = super::business_reconstruction::reconstruct_local_business_value_v1(entity)?;
     let (kind, key) = key_parts(&entity.entity_key)?;
     match kind {
         "record" if key.len() == 1 => remote_upsert_record_no_stage_tx(
@@ -382,7 +379,7 @@ pub fn remote_upsert_collection_no_stage_tx(
     conn.execute(
         "INSERT INTO collections(id,name,normalizedName,description,sourceKind,sourceKey,collectionKind,orderMode,createdAt,updatedAt,rev,revActor)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
-         ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalizedName=excluded.normalizedName,description=excluded.description,sourceKind=excluded.sourceKind,sourceKey=excluded.sourceKey,collectionKind=excluded.collectionKind,orderMode=excluded.orderMode,updatedAt=excluded.updatedAt,rev=excluded.rev,revActor=excluded.revActor",
+         ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalizedName=excluded.normalizedName,description=excluded.description,sourceKind=excluded.sourceKind,sourceKey=excluded.sourceKey,collectionKind=excluded.collectionKind,orderMode=excluded.orderMode,createdAt=excluded.createdAt,updatedAt=excluded.updatedAt,rev=excluded.rev,revActor=excluded.revActor",
         params![value.id,value.name,value.normalized_name,value.description,value.source_kind,value.source_key,value.collection_kind,value.order_mode,value.created_at,value.updated_at,value.rev,value.rev_actor],
     )?;
     Ok(())
@@ -401,7 +398,7 @@ pub fn remote_upsert_member_no_stage_tx(
     conn.execute(
         "INSERT INTO collection_members(id,collectionId,recordId,position,sourceKind,createdAt,updatedAt,rev,revActor)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
-         ON CONFLICT(id) DO UPDATE SET collectionId=excluded.collectionId,recordId=excluded.recordId,position=excluded.position,sourceKind=excluded.sourceKind,updatedAt=excluded.updatedAt,rev=excluded.rev,revActor=excluded.revActor",
+         ON CONFLICT(id) DO UPDATE SET collectionId=excluded.collectionId,recordId=excluded.recordId,position=excluded.position,sourceKind=excluded.sourceKind,createdAt=excluded.createdAt,updatedAt=excluded.updatedAt,rev=excluded.rev,revActor=excluded.revActor",
         params![value.id,value.collection_id,value.record_id,value.position,value.source_kind,value.created_at,value.updated_at,value.rev,value.rev_actor],
     )?;
     Ok(())
@@ -426,7 +423,7 @@ pub fn remote_upsert_episode_completion_no_stage_tx(
     conn.execute(
         "INSERT INTO episode_completions(id,recordId,episodeNumber,completedAt,createdAt,updatedAt,rev,revActor)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
-         ON CONFLICT(recordId,episodeNumber) DO UPDATE SET id=excluded.id,completedAt=excluded.completedAt,updatedAt=excluded.updatedAt,rev=excluded.rev,revActor=excluded.revActor",
+         ON CONFLICT(recordId,episodeNumber) DO UPDATE SET id=excluded.id,completedAt=excluded.completedAt,createdAt=excluded.createdAt,updatedAt=excluded.updatedAt,rev=excluded.rev,revActor=excluded.revActor",
         params![value.id,value.record_id,value.episode_number,value.completed_at,value.created_at,value.updated_at,value.rev,value.rev_actor],
     )?;
     Ok(())
@@ -467,29 +464,66 @@ mod tests {
         semantic: Value,
         business: Option<Value>,
     ) -> MaterializedProjectionEntityV1 {
+        let reference = super::super::types::CommitRef {
+            writer_id: "30000000-0000-4000-8000-000000000001".into(),
+            writer_seq: "1".into(),
+            commit_id: "30000000-0000-4000-8000-000000000002".into(),
+            content_hash: "a".repeat(64),
+        };
+        let (semantic, business, metadata_variants, frontier) = if let Some(mut full) = business {
+            for field in ["rev", "position", "tmdbId", "tmdbParentId"] {
+                if let Some(value) = full.get_mut(field) {
+                    if let Some(integer) = value.as_i64() {
+                        *value = Value::String(integer.to_string());
+                    }
+                }
+            }
+            let metadata = ["id", "createdAt", "updatedAt", "rev", "revActor"]
+                .into_iter()
+                .filter_map(|field| {
+                    full.get(field)
+                        .map(|value| (field.to_string(), value.clone()))
+                })
+                .collect::<serde_json::Map<_, _>>();
+            let payload = super::super::semantic::canonical_semantic_value(&full).unwrap();
+            (
+                json!({"state":"live","value":payload}),
+                Some(payload),
+                vec![
+                    super::super::materialized_projection::ProjectionMetadataVariantV1 {
+                        commit_ref: reference.clone(),
+                        metadata: Value::Object(metadata),
+                    },
+                ],
+                vec![reference],
+            )
+        } else {
+            (semantic, None, vec![], vec![])
+        };
         MaterializedProjectionEntityV1 {
             entity_key: key,
             semantic_state: Some(semantic),
             business_value: business,
-            frontier: vec![],
+            frontier,
             conflict: false,
+            metadata_variants,
         }
     }
 
     fn record(id: &str, name: &str) -> Value {
-        json!({"id":id,"originalName":name,"chineseName":"","progress":"","totalEpisodes":2,"episodeTrackingEnabled":false,"nextEpisode":null,"movieProgress":null,"movieDuration":null,"releaseYear":null,"posterPath":null,"status":"未看","platform":"","rating":null,"startDate":null,"endDate":null,"notes":"","createdAt":"2026-09-17T00:00:00Z","updatedAt":null,"imdbId":null,"isLocked":false,"genres":null,"originCountry":null,"imdbRating":null,"tmdbStatus":null,"interestLevel":null,"episodeRuntime":null,"mediaType":"剧集","contentTags":null,"tmdbMediaKind":null,"tmdbId":null,"tmdbParentId":null,"tmdbSeasonNumber":null,"seriesRecordKind":null,"rev":1,"revActor":"remote"})
+        json!({"id":id,"originalName":name,"chineseName":"","progress":"","totalEpisodes":2,"episodeTrackingEnabled":false,"nextEpisode":null,"movieProgress":null,"movieDuration":null,"releaseYear":null,"posterPath":null,"status":"未看","platform":"","rating":null,"startDate":null,"endDate":null,"notes":"","createdAt":"2026-09-17T00:00:00.000Z","updatedAt":null,"imdbId":null,"isLocked":false,"genres":null,"originCountry":null,"imdbRating":null,"tmdbStatus":null,"interestLevel":null,"episodeRuntime":null,"mediaType":"剧集","contentTags":null,"tmdbMediaKind":null,"tmdbId":null,"tmdbParentId":null,"tmdbSeasonNumber":null,"seriesRecordKind":null,"rev":1,"revActor":"remote"})
     }
 
     fn collection(id: &str, name: &str) -> Value {
-        json!({"id":id,"name":name,"normalizedName":name.to_lowercase(),"description":"","sourceKind":"manual","sourceKey":null,"collectionKind":"manual","orderMode":"manual","createdAt":"2026-09-17T00:00:00Z","updatedAt":"2026-09-17T00:00:00Z","rev":1,"revActor":"remote"})
+        json!({"id":id,"name":name,"normalizedName":name.to_lowercase(),"description":null,"sourceKind":"manual","sourceKey":null,"collectionKind":"manual","orderMode":"manual","createdAt":"2026-09-17T00:00:00.000Z","updatedAt":"2026-09-17T00:00:00.000Z","rev":1,"revActor":"remote"})
     }
 
     fn member(id: &str, collection_id: &str, record_id: &str) -> Value {
-        json!({"id":id,"collectionId":collection_id,"recordId":record_id,"position":0,"sourceKind":"manual","createdAt":"2026-09-17T00:00:00Z","updatedAt":"2026-09-17T00:00:00Z","rev":1,"revActor":"remote"})
+        json!({"id":id,"collectionId":collection_id,"recordId":record_id,"position":0,"sourceKind":"manual","createdAt":"2026-09-17T00:00:00.000Z","updatedAt":"2026-09-17T00:00:00.000Z","rev":1,"revActor":"remote"})
     }
 
     fn completion(id: &str, record_id: &str, episode: i32, completed_at: Option<&str>) -> Value {
-        json!({"id":id,"recordId":record_id,"episodeNumber":episode,"completedAt":completed_at,"createdAt":"2026-09-17T00:00:00Z","updatedAt":"2026-09-17T00:00:00Z","rev":1,"revActor":"remote"})
+        json!({"id":id,"recordId":record_id,"episodeNumber":episode,"completedAt":completed_at,"createdAt":"2026-09-17T00:00:00.000Z","updatedAt":"2026-09-17T00:00:00.000Z","rev":1,"revActor":"remote"})
     }
 
     fn store_with_projection(
@@ -690,6 +724,7 @@ mod tests {
                     business_value: None,
                     frontier: vec![],
                     conflict: true,
+                    metadata_variants: vec![],
                 },
                 entity(
                     json!(["record", "relation-conflict"]),
@@ -747,9 +782,9 @@ mod tests {
 
     #[test]
     fn collection_member_and_uncompleted_episode_are_live_values() {
-        let collection = json!({"id":"collection-1","name":"C","normalizedName":"c","description":"","sourceKind":"manual","sourceKey":null,"collectionKind":"manual","orderMode":"manual","createdAt":"2026-09-17T00:00:00Z","updatedAt":"2026-09-17T00:00:00Z","rev":1,"revActor":"remote"});
-        let member = json!({"id":"member-1","collectionId":"collection-1","recordId":"record-1","position":0,"sourceKind":"manual","createdAt":"2026-09-17T00:00:00Z","updatedAt":"2026-09-17T00:00:00Z","rev":1,"revActor":"remote"});
-        let completion = json!({"id":"completion-1","recordId":"record-1","episodeNumber":1,"completedAt":null,"createdAt":"2026-09-17T00:00:00Z","updatedAt":"2026-09-17T00:00:00Z","rev":1,"revActor":"remote"});
+        let collection = json!({"id":"collection-1","name":"C","normalizedName":"c","description":null,"sourceKind":"manual","sourceKey":null,"collectionKind":"manual","orderMode":"manual","createdAt":"2026-09-17T00:00:00.000Z","updatedAt":"2026-09-17T00:00:00.000Z","rev":1,"revActor":"remote"});
+        let member = json!({"id":super::super::canonical::sha256_hex(b"collection-member:v1\0collection-1\0record-1"),"collectionId":"collection-1","recordId":"record-1","position":0,"sourceKind":"manual","createdAt":"2026-09-17T00:00:00.000Z","updatedAt":"2026-09-17T00:00:00.000Z","rev":1,"revActor":"remote"});
+        let completion = json!({"id":super::super::canonical::sha256_hex(b"episode-completion:v1\0record-1\x001"),"recordId":"record-1","episodeNumber":1,"completedAt":null,"createdAt":"2026-09-17T00:00:00.000Z","updatedAt":"2026-09-17T00:00:00.000Z","rev":1,"revActor":"remote"});
         let (conn, generation) = store_with_projection(vec![
             entity(
                 json!(["record", "record-1"]),
@@ -946,7 +981,7 @@ mod tests {
                 "completion-1",
                 "record-1",
                 1,
-                Some("2026-09-17T00:00:00Z"),
+                Some("2026-09-17T00:00:00.000Z"),
             ))
             .unwrap(),
         )
@@ -967,7 +1002,7 @@ mod tests {
                             id: "member-1".into(),
                             collection_id: "collection-1".into(),
                             record_id: "record-1".into(),
-                            deleted_at: "2026-09-17T00:00:00Z".into(),
+                            deleted_at: "2026-09-17T00:00:00.000Z".into(),
                             rev: 2,
                             rev_actor: "local".into(),
                         },
@@ -985,7 +1020,7 @@ mod tests {
                         "completion-1",
                         "record-1",
                         1,
-                        Some("2026-09-17T00:00:00Z"),
+                        Some("2026-09-17T00:00:00.000Z"),
                     )),
                     first_generation: 1,
                     last_generation: 1,
@@ -1054,7 +1089,7 @@ mod tests {
                 "completion-1",
                 "record-1",
                 1,
-                Some("2026-09-17T00:00:00Z"),
+                Some("2026-09-17T00:00:00.000Z"),
             ))
             .unwrap(),
         )

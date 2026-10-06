@@ -2,6 +2,9 @@ pub mod activation_cutover;
 pub mod bootstrap;
 pub mod bootstrap_execution;
 pub mod business_projection;
+#[cfg(test)]
+mod business_projection_reconstruction_tests;
+mod business_reconstruction;
 pub mod canonical;
 pub mod causal;
 pub mod conflict;

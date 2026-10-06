@@ -578,6 +578,32 @@ mod tests {
             business_value: Some(value),
             frontier,
             conflict: false,
+            metadata_variants: vec![],
+        }
+    }
+
+    fn verified_record_entity(
+        mut wire: serde_json::Value,
+        reference: CommitRef,
+    ) -> MaterializedProjectionEntityV1 {
+        wire["rev"] = json!(wire["rev"].as_i64().unwrap().to_string());
+        let payload = canonical_semantic_value(&wire).unwrap();
+        let metadata = ["id", "createdAt", "updatedAt", "rev", "revActor"]
+            .into_iter()
+            .map(|field| (field.to_string(), wire[field].clone()))
+            .collect::<serde_json::Map<_, _>>();
+        MaterializedProjectionEntityV1 {
+            entity_key: json!(["record", wire["id"]]),
+            semantic_state: Some(json!({"state":"live","value":payload})),
+            business_value: Some(payload),
+            frontier: vec![reference.clone()],
+            conflict: false,
+            metadata_variants: vec![
+                super::super::materialized_projection::ProjectionMetadataVariantV1 {
+                    commit_ref: reference,
+                    metadata: serde_json::Value::Object(metadata),
+                },
+            ],
         }
     }
 
@@ -742,11 +768,7 @@ mod tests {
             projection_state(
                 MaterializedProjectionStatusV1::Complete,
                 vec![],
-                vec![live_entity(
-                    json!(["record", "record-1"]),
-                    vec![reference(2)],
-                    remote.clone(),
-                )],
+                vec![verified_record_entity(remote.clone(), reference(2))],
             ),
         );
 
@@ -855,19 +877,6 @@ mod tests {
                 .notes,
             "Remote note"
         );
-        replace_projection_state(
-            &stale_conn,
-            &stale_root,
-            projection_state(
-                MaterializedProjectionStatusV1::Complete,
-                vec![],
-                vec![live_entity(
-                    json!(["record", "record-1"]),
-                    vec![reference(2)],
-                    canonical_semantic_value(&remote).unwrap(),
-                )],
-            ),
-        );
         let mut resolved_local = remote.clone();
         resolved_local["originalName"] = json!("Resolved local title");
         crate::db_atomic_crud::insert_record_atomic(
@@ -902,32 +911,11 @@ mod tests {
             projection_state(
                 MaterializedProjectionStatusV1::Complete,
                 vec![],
-                vec![live_entity(
-                    json!(["record", "record-1"]),
-                    vec![reference(2)],
-                    applied_remote.clone(),
-                )],
+                vec![verified_record_entity(applied_remote.clone(), reference(2))],
             ),
         );
         let mut store = SqliteS2LiteStoreV1::open(&applied_conn, &applied_root).unwrap();
         apply_complete_projection_v1(&mut store, 2).unwrap();
-        // The projector consumes the application-shaped record while the
-        // frozen ordinary mapper consumes its canonical semantic form.  Keep
-        // the same fully-applied generation while expressing that test value
-        // in the latter representation for the freeze assertion.
-        replace_projection_state(
-            &applied_conn,
-            &applied_root,
-            projection_state(
-                MaterializedProjectionStatusV1::Complete,
-                vec![],
-                vec![live_entity(
-                    json!(["record", "record-1"]),
-                    vec![reference(2)],
-                    canonical_semantic_value(&applied_remote).unwrap(),
-                )],
-            ),
-        );
         let mut applied_local = applied_remote;
         applied_local["originalName"] = json!("Local title");
         crate::db_atomic_crud::insert_record_atomic(
@@ -1452,6 +1440,7 @@ mod tests {
             business_value: None,
             frontier: vec![reference(3)],
             conflict: true,
+            metadata_variants: vec![],
         };
         replace_projection_state(
             &conflict_conn,
